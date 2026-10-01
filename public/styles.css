@@ -449,3 +449,38 @@ table.sbs tr.hunk td { background: var(--bg2); color: var(--muted); padding: 2px
 .keys dd { margin: 0; color: var(--fg2); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--line2); box-shadow: 0 8px 24px rgba(0,0,0,.25); z-index: 20; font-size: 12.5px; }
 .toast button { border: 0; background: none; padding: 0; color: var(--info-fg); font-weight: 500; }
+
+/* ---------------------------------------------------------------- launch screen
+   Shown over the deck when the backend can't be reached (or won't take this
+   window's token). The installed app opens to it from the cached shell. */
+.launch { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; overflow: auto;
+  background: radial-gradient(ellipse 70% 55% at 50% 38%, color-mix(in srgb, var(--ok) 13%, transparent), transparent 70%), color-mix(in srgb, var(--bg0) 88%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); animation: launch-in .25s ease-out; }
+.launch[hidden] { display: none; }
+@keyframes launch-in { from { opacity: 0; } }
+.launch-card { width: min(440px, 100%); background: var(--bg1); border: 1px solid var(--line2); border-radius: 16px; padding: 32px 30px 22px; text-align: center; box-shadow: 0 24px 70px rgba(0,0,0,.28); }
+.launch-logo { display: block; margin: 0 auto 16px; }
+.launch h1 { margin: 0 0 8px; font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
+.launch-b { margin: 0 auto 20px; max-width: 34ch; color: var(--fg2); font-size: 13.5px; line-height: 1.5; }
+.launch-status { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 20px; padding: 5px 12px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line); font-size: 12px; color: var(--fg2); }
+.launch-status .ldot { width: 7px; height: 7px; border-radius: 50%; background: var(--err); }
+.launch-status[data-s="starting"] .ldot { background: var(--turn); animation: ldot-pulse 1s ease-in-out infinite; }
+.launch-status[data-s="auth"] .ldot { background: var(--turn); }
+.launch-status[data-s="up"] .ldot { background: var(--ok); }
+@keyframes ldot-pulse { 50% { opacity: .3; } }
+.launch-act { display: grid; gap: 12px; justify-items: center; }
+.launch-act[hidden] { display: none; }
+.btn.lg { height: 40px; padding: 0 22px; font-size: 14px; font-weight: 500; border-radius: 9px; }
+a.btn { text-decoration: none; }
+a.btn.primary:hover { background: color-mix(in srgb, var(--info) 88%, #000); text-decoration: none; }
+.launch-help, .launch-lbl { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; text-align: left; }
+.launch-help { padding: 10px 12px; border-radius: 9px; background: var(--bg2); border: 1px solid var(--line); }
+.launch-row { display: flex; gap: 8px; width: 100%; }
+.launch-row .field { height: 32px; }
+.launch code, .launch pre { font: 11.5px var(--mono); }
+.launch :not(pre) > code { padding: 1px 5px; border-radius: 4px; background: var(--bg3); color: var(--fg); white-space: nowrap; }
+.launch-manual { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); text-align: left; font-size: 12.5px; color: var(--muted); }
+.launch-manual summary { cursor: pointer; text-align: center; color: var(--fg2); }
+.launch-manual p { margin: 10px 0 6px; }
+.launch-manual pre { margin: 0; padding: 8px 10px; border-radius: 7px; background: var(--bg2); border: 1px solid var(--line); color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .launch, .launch-status .ldot { animation: none; } }

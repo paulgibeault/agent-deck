@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // agent-deck server: http + sse + transcript tailing + git + pilot shell.
-// Zero dependencies. Binds 127.0.0.1 only; every request needs the launch token.
+// Zero dependencies. Binds 127.0.0.1 only; every API request needs the launch
+// token. The static app shell is public so the installed web app can load it
+// (and show its launch screen) before it has a token.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,7 +31,6 @@ function arg(name, dflt) {
 const PORT = Number(arg('port', process.env.DECK_PORT || 7777));
 const HOST = '127.0.0.1';
 const RECENT_DAYS = Number(arg('days', 3));
-const TOKEN = String(arg('token', process.env.DECK_TOKEN || randomBytes(18).toString('base64url')));
 const EDITOR_CMD = process.env.DECK_EDITOR || 'code';
 const OPEN = argv.includes('--open');
 const NARRATOR = !argv.includes('--no-narrator') && process.env.DECK_NARRATOR !== 'off';
@@ -37,13 +38,16 @@ const NARRATOR = !argv.includes('--no-narrator') && process.env.DECK_NARRATOR !=
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json',
+  '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.map': 'application/json',
 };
 
 // ------------------------------------------------------------- services
 const index = new SessionIndex({ recentDays: RECENT_DAYS }).start();
 const shell = new ShellRunner();
 const deck = new DeckState();
+// The token persists in the deck state dir so the installed app's cookie
+// survives backend restarts. --token / DECK_TOKEN override it.
+const TOKEN = String(arg('token', process.env.DECK_TOKEN || deck.token()));
 const narrator = new Narrator();
 const briefs = new BriefService({ index, narrator, enabled: NARRATOR }).start();
 briefs.isHidden = (id) => deck.hidden.has(id);
@@ -110,12 +114,6 @@ function serveStatic(res, rel) {
 async function route(req, res, url) {
   const p = url.pathname;
   const q = url.searchParams;
-
-  if (req.method === 'GET' && p === '/') {
-    res.setHeader('Set-Cookie', `deck=${encodeURIComponent(TOKEN)}; Path=/; HttpOnly; SameSite=Strict`);
-    return serveStatic(res, 'index.html');
-  }
-  if (req.method === 'GET' && !p.startsWith('/api/')) return serveStatic(res, p.slice(1));
 
   if (p === '/api/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
@@ -246,12 +244,22 @@ async function route(req, res, url) {
 const STARTED = Date.now();
 const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
 
+const COOKIE = `deck=${encodeURIComponent(TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${60 * 60 * 24 * 365}`;
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
-  if (!authorized(req, url)) {
-    return send(res, 401, url.pathname.startsWith('/api/') ? { error: 'missing or wrong token' }
-      : 'agent-deck: open the URL printed by the server (it carries the launch token).');
+  const p = url.pathname;
+  if (req.method === 'GET' && !p.startsWith('/api/')) {
+    if (p === '/') {
+      // ?t=<token> signs this browser in, then drops the token from the URL so
+      // an installed app's start URL stays clean.
+      if (url.searchParams.get('t') === TOKEN) return send(res, 302, '', { 'Set-Cookie': COOKIE, Location: '/' });
+      if (authorized(req, url)) res.setHeader('Set-Cookie', COOKIE);
+      return serveStatic(res, 'index.html');
+    }
+    return serveStatic(res, p.slice(1));
   }
+  if (!authorized(req, url)) return send(res, 401, { error: 'missing or wrong token' });
   try { await route(req, res, url); }
   catch (e) { console.error(e); if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
 });
@@ -265,4 +273,10 @@ server.listen(PORT, HOST, () => {
     spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
   }
 });
+server.on('error', (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  console.error(`agent-deck: port ${PORT} is already in use (is the deck already running?)`);
+  process.exit(1);
+});
+process.on('SIGTERM', () => { index.stop(); server.close(); process.exit(0); });
 process.on('SIGINT', () => { index.stop(); server.close(); process.exit(0); });
