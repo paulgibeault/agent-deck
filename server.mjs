@@ -10,6 +10,10 @@ import { spawn } from 'node:child_process';
 import { SessionIndex } from './lib/sessions.mjs';
 import { ShellRunner } from './lib/shell.mjs';
 import * as gitinfo from './lib/gitinfo.mjs';
+import { Narrator } from './lib/narrator.mjs';
+import { BriefService } from './lib/briefs.mjs';
+import { ask } from './lib/ask.mjs';
+import { DeckState } from './lib/deckstate.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -28,6 +32,7 @@ const RECENT_DAYS = Number(arg('days', 3));
 const TOKEN = String(arg('token', process.env.DECK_TOKEN || randomBytes(18).toString('base64url')));
 const EDITOR_CMD = process.env.DECK_EDITOR || 'code';
 const OPEN = argv.includes('--open');
+const NARRATOR = !argv.includes('--no-narrator') && process.env.DECK_NARRATOR !== 'off';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -38,6 +43,11 @@ const MIME = {
 // ------------------------------------------------------------- services
 const index = new SessionIndex({ recentDays: RECENT_DAYS }).start();
 const shell = new ShellRunner();
+const deck = new DeckState();
+const narrator = new Narrator();
+const briefs = new BriefService({ index, narrator, enabled: NARRATOR }).start();
+briefs.isHidden = (id) => deck.hidden.has(id);
+const snapshot = () => index.snapshot(deck.hidden);
 
 // ---------------------------------------------------------------- SSE
 const clients = new Set();
@@ -48,7 +58,7 @@ function broadcast(event, data) {
 let snapshotTimer = null;
 function scheduleSnapshot() {
   if (snapshotTimer) return;
-  snapshotTimer = setTimeout(() => { snapshotTimer = null; broadcast('sessions.snapshot', index.snapshot()); }, 150);
+  snapshotTimer = setTimeout(() => { snapshotTimer = null; broadcast('sessions.snapshot', snapshot()); }, 150);
 }
 index.on('sessions', scheduleSnapshot);
 index.on('events', ({ sessionId, appended, updated }) => {
@@ -56,6 +66,7 @@ index.on('events', ({ sessionId, appended, updated }) => {
   for (const ev of updated) broadcast('event.update', { sessionId, event: ev });
 });
 index.on('session', (payload) => broadcast('session.update', payload));
+briefs.on('brief', (b) => broadcast('brief.update', { ...b, narrator: narrator.status() }));
 shell.on('output', (d) => broadcast('shell.output', d));
 shell.on('exit', (d) => broadcast('shell.exit', d));
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 15_000).unref();
@@ -108,14 +119,31 @@ async function route(req, res, url) {
 
   if (p === '/api/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    res.write(`event: hello\ndata: ${JSON.stringify({ serverStartedAt: STARTED, token: TOKEN.slice(0, 4), version: VERSION })}\n\n`);
-    res.write(`event: sessions.snapshot\ndata: ${JSON.stringify(index.snapshot())}\n\n`);
+    const clientId = randomBytes(6).toString('hex');
+    res.write(`event: hello\ndata: ${JSON.stringify({ serverStartedAt: STARTED, token: TOKEN.slice(0, 4), version: VERSION, clientId, narrator: { enabled: NARRATOR, ...narrator.status() } })}\n\n`);
+    res.write(`event: sessions.snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
+    res.write(`event: briefs.snapshot\ndata: ${JSON.stringify(briefs.all())}\n\n`);
     clients.add(res);
-    req.on('close', () => clients.delete(res));
+    req.on('close', () => { clients.delete(res); briefs.dropClient(clientId); });
     return;
   }
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
-  if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, index.snapshot());
+  if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
+  if (p === '/api/briefs' && req.method === 'GET') return send(res, 200, { briefs: briefs.all(), narrator: { enabled: NARRATOR, ...narrator.status() } });
+  if (p === '/api/view' && req.method === 'POST') {
+    const { clientId, sessionId } = await readBody(req);
+    if (!clientId) return send(res, 400, { error: 'clientId required' });
+    if (sessionId) index.load(sessionId);
+    briefs.setView(clientId, sessionId || null);
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/api/ask' && req.method === 'POST') {
+    const { question, scope, sessionId } = await readBody(req);
+    if (!question || !Array.isArray(scope)) return send(res, 400, { error: 'question and scope required' });
+    if (!NARRATOR) return send(res, 409, { error: 'model calls are off (started with --no-narrator)' });
+    try { return send(res, 200, await ask({ index, briefs, narrator, question, scope, sessionId })); }
+    catch (e) { return send(res, 502, { error: e.message }); }
+  }
 
   let m;
   if ((m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {
@@ -124,6 +152,28 @@ async function route(req, res, url) {
     if (!summary) return send(res, 404, { error: 'unknown session' });
     index.load(id);
     return send(res, 200, { summary: index.summary(id), meta: index.metaOf(id), brief: index.brief(id) });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/brief\/refresh$/.exec(p)) && req.method === 'POST') {
+    if (!NARRATOR) return send(res, 409, { error: 'model calls are off (started with --no-narrator)' });
+    return briefs.refresh(decodeURIComponent(m[1])) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'unknown session' });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/hide$/.exec(p)) && req.method === 'POST') {
+    const id = decodeURIComponent(m[1]);
+    if (!index.files.has(id)) return send(res, 404, { error: 'unknown session' });
+    const { hidden = true } = await readBody(req);
+    deck.setHidden(id, !!hidden);
+    scheduleSnapshot();
+    return send(res, 200, { ok: true, hidden: !!hidden });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/delete$/.exec(p)) && req.method === 'POST') {
+    const id = decodeURIComponent(m[1]);
+    const where = index.fileOf(id);
+    if (!where) return send(res, 404, { error: 'unknown session' });
+    if (index.registry.get(id)?.alive) return send(res, 409, { error: 'session is still running; end it first' });
+    const trashedTo = deck.trashSession(id, where);
+    index.forget(id);
+    briefs.forget(id);
+    return send(res, 200, { ok: true, trashedTo });
   }
   if ((m = /^\/api\/sessions\/([^/]+)\/events$/.exec(p))) {
     const r = index.events(decodeURIComponent(m[1]), Number(q.get('from') || 0), Number(q.get('limit') || 5000));
@@ -208,8 +258,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}/?t=${TOKEN}`;
-  const snap = index.snapshot();
-  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed`);
+  const snap = snapshot();
+  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed\n  brief + ask: ${NARRATOR ? `claude -p (${narrator.briefModel} / ${narrator.askModel})` : 'off'}`);
   if (OPEN) {
     const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
     spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();

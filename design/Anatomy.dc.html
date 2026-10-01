@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tokens and parts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1200px; height: 1180px; box-sizing: border-box; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px 48px; align-content: start; padding: 44px 48px; background: #0C0D0F; color: #E8E9EB; font-family: Geist, system-ui, sans-serif; font-size: 13px">
+
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <h2 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Surfaces and text · dark</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+      <sc-for list="{{dark}}" as="s" hint-placeholder-count="8">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="height: 44px; border-radius: 8px; box-shadow: inset 0 0 0 1px #2E333A; background: {{s.hex}}"></span>
+          <span style="font-size: 12px">{{s.name}}</span>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 11px; color: #8B919B">{{s.hex}}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <h2 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Signals · one hue per meaning</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+      <sc-for list="{{signals}}" as="s" hint-placeholder-count="5">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="height: 44px; border-radius: 8px; background: {{s.hex}}"></span>
+          <span style="font-size: 12px">{{s.name}}</span>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 11px; color: #8B919B">{{s.hex}}</span>
+        </div>
+      </sc-for>
+    </div>
+    <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #8B919B">Green only means "an agent is working". Amber only means "it is your turn". Red only means "something failed". Blue is finished or informational.</p>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <h2 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Session state</h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 10px">
+      <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: #173324; color: #8FD9B0; font-size: 12px; font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 3px; background: #4CC38A"></span>Working</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: #3A2D14; color: #F0BC62; font-size: 12px; font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 3px; background: #E8A63A"></span>Your turn</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: #1C2433; color: #A9C4FA; font-size: 12px; font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 3px; background: #7AA7F7"></span>Done</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: #1A1D22; color: #B4B9C1; font-size: 12px; font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 3px; border: 1.5px solid #5A606A; box-sizing: border-box"></span>Ended</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: #3A1A1D; color: #F29B9B; font-size: 12px; font-weight: 500">8 errors</span>
+    </div>
+    <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #8B919B">Replaces the eight separate states (running, responding, thinking, busy, starting…) with four the eye can tell apart. The detail moves to the NOW line.</p>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 14px">
+    <h2 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Event kinds</h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 8px">
+      <sc-for list="{{tags}}" as="t" hint-placeholder-count="7">
+        <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 4px; font-family: 'Geist Mono', monospace; font-size: 11.5px; {{t.css}}">{{t.name}}</span>
+      </sc-for>
+    </div>
+    <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #8B919B">Text tags instead of glyph icons: scannable in a dense list and readable without a legend. Write shares Edit's colour; WebFetch, Grep and Glob share Read's.</p>
+  </section>
+
+  <section style="grid-column: 1 / -1; display: flex; flex-direction: column; gap: 10px">
+    <h2 style="margin: 0 0 4px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Event rows · turn header, default, selected, running, error, turn end</h2>
+    <div style="display: flex; flex-direction: column; gap: 2px; padding: 12px 0; border-radius: 10px; background: #0C0D0F; border: 1px solid #23262C; font-size: 12.5px">
+      <div style="display: flex; align-items: center; gap: 10px; margin: 0 14px 6px; padding: 10px 12px; border-radius: 8px; background: #141A26; border: 1px solid #25324A">
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; background: #23314D; color: #A9C4FA; font-size: 11px; font-weight: 500">You</span>
+        <span style="flex-grow: 1; font-weight: 500">merge and use Sunflower Field</span>
+        <span style="font-size: 11.5px; color: #8B919B">Turn 14 · 22:27:05 · live 0:38</span>
+      </div>
+      <sc-for list="{{rows}}" as="e" hint-placeholder-count="4">
+        <div style="display: grid; grid-template-columns: 64px 52px minmax(0, 1fr) 70px 56px 150px; gap: 10px; align-items: center; height: 30px; margin: 0 14px; padding: 0 10px; border-radius: 6px; {{e.rowCss}}">
+          <span style="font-family: 'Geist Mono', monospace; font-size: 11px; color: #8B919B">{{e.ts}}</span>
+          <span style="justify-self: start; display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: 'Geist Mono', monospace; font-size: 10.5px; background: #1E2A22; color: #7FD6A4">Bash</span>
+          <span style="min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: 'Geist Mono', monospace; font-size: 12px; {{e.bodyCss}}">{{e.body}}</span>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 11px; {{e.durCss}}">{{e.dur}}</span>
+          <span style="justify-self: end; font-family: 'Geist Mono', monospace; font-size: 11px; color: #8B919B">{{e.tok}}</span>
+          <span style="justify-self: end; font-size: 11px; color: #8B919B">{{e.label}}</span>
+        </div>
+      </sc-for>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 24px 2px; font-size: 11.5px; color: #8B919B">
+        <span style="flex-grow: 1; height: 1px; background: #23262C"></span>
+        <span>Turn 13 ended · 22 events · 4m 51s · 18.6k tokens · 2 hooks</span>
+        <span style="flex-grow: 1; height: 1px; background: #23262C"></span>
+      </div>
+    </div>
+  </section>
+  <section style="display: flex; flex-direction: column; gap: 12px">
+    <h2 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Brief refresh cadence</h2>
+    <div style="display: flex; flex-direction: column; border-radius: 10px; border: 1px solid #23262C; overflow: hidden">
+      <sc-for list="{{cadence}}" as="c" hint-placeholder-count="5">
+        <div style="display: grid; grid-template-columns: 14px minmax(0, 1fr) 170px; gap: 10px; align-items: center; padding: 9px 12px; border-bottom: 1px solid #1A1D22; background: #131519">
+          <span style="width: 8px; height: 8px; border-radius: 4px; box-sizing: border-box; {{c.dot}}"></span>
+          <span style="font-size: 12.5px">{{c.when}}</span>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 11.5px; color: #B4B9C1">{{c.rate}}</span>
+        </div>
+      </sc-for>
+    </div>
+    <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #8B919B">The brief is generated from the transcript to date and is incremental: each refresh sends the previous brief plus only the new events. A refresh also fires on turn end, on a new error and when a subagent finishes.</p>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 12px">
+    <h2 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Ask about this</h2>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+      <button type="button" style="display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11.5px; cursor: pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask about this</button>
+      <button type="button" style="display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11px; cursor: pointer"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask</button>
+      <button type="button" aria-label="Ask about this" style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; cursor: pointer"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg></button>
+      <button type="button" style="display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid #6B5BB0; background: #2A2440; color: #DCD0FF; font: inherit; font-size: 11px; cursor: pointer"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Asking</button>
+      <span style="font-size: 12px; color: #8B919B">or press <kbd style="font-family: 'Geist Mono', monospace; border: 1px solid #2E333A; border-radius: 4px; padding: 0 5px">a</kbd> on anything focused</span>
+    </div>
+    <ul style="margin: 0; padding: 0 0 0 16px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; line-height: 1.45; color: #B4B9C1">
+      <li>Labelled on the brief, compact <span style="color: #C9B8F8">Ask</span> on a hovered or selected row, icon-only on section headers (a list, a buffer, a diff, a file table, a shell run).</li>
+      <li>Opening it rings the item in violet and docks the composer in the details pane, so the thing you are asking about stays visible.</li>
+      <li>Context starts as just that item. Chips add its parents (its command, its turn, the session brief) one tap at a time; nothing else is sent.</li>
+      <li>Two suggested questions are generated from the item. Answers come from a separate read-only model call and never reach the session.</li>
+    </ul>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1200,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      dark: [
+        { name: 'Ground', hex: '#0C0D0F' },
+        { name: 'Panel', hex: '#131519' },
+        { name: 'Raised', hex: '#1A1D22' },
+        { name: 'Selected', hex: '#22262C' },
+        { name: 'Line', hex: '#23262C' },
+        { name: 'Text', hex: '#E8E9EB' },
+        { name: 'Text 2', hex: '#B4B9C1' },
+        { name: 'Muted', hex: '#8B919B' },
+      ],
+      signals: [
+        { name: 'Working', hex: '#4CC38A' },
+        { name: 'Your turn', hex: '#E8A63A' },
+        { name: 'Failed', hex: '#F27A7A' },
+        { name: 'Done / info', hex: '#7AA7F7' },
+      ],
+      tags: [
+        { name: 'Bash', css: 'background: #1E2A22; color: #7FD6A4;' },
+        { name: 'Read', css: 'background: #1C2433; color: #8FB5F8;' },
+        { name: 'Edit', css: 'background: #2E2618; color: #EDB65A;' },
+        { name: 'Agent', css: 'background: #261F36; color: #C3AEF7;' },
+        { name: 'Said', css: 'background: #22262C; color: #E8E9EB;' },
+        { name: 'Think', css: 'color: #8B919B; box-shadow: inset 0 0 0 1px #2E333A;' },
+        { name: 'Queue', css: 'color: #8B919B; box-shadow: inset 0 0 0 1px #2E333A;' },
+      ],
+      cadence: [
+        { when: 'Shown, agent working', rate: 'every 20s', dot: 'background: #4CC38A;' },
+        { when: 'Shown, your turn', rate: 'once at turn end', dot: 'background: #E8A63A;' },
+        { when: 'Not shown, agent working', rate: 'every 2m', dot: 'background: #2F6B4D;' },
+        { when: 'Not shown, idle', rate: 'paused, on open', dot: 'border: 1.5px solid #5A606A;' },
+        { when: 'Ended', rate: 'once, final', dot: 'background: #7AA7F7;' },
+      ],
+      rows: [
+        { ts: '22:27:08', body: 'gh pr checks 27 2>&1 | tail -20', dur: '2.8s', tok: '159', label: 'default', rowCss: 'background: transparent;', bodyCss: '', durCss: 'color: #8B919B;' },
+        { ts: '22:25:29', body: 'git add main.js tests/repo-gates.test.js tools/stage.mjs', dur: '4.3s', tok: '1.4k', label: 'selected', rowCss: 'background: #1D2129; box-shadow: inset 0 0 0 1px #3A4048;', bodyCss: '', durCss: 'color: #8B919B;' },
+        { ts: '22:27:13', body: 'gh pr merge 27 --merge && git worktree remove…', dur: 'running', tok: '280', label: 'running', rowCss: 'background: transparent;', bodyCss: '', durCss: 'color: #8FD9B0;' },
+        { ts: '22:25:09', body: 'npx playwright test tests/e2e.spec.ts — exit 1', dur: '12.1s', tok: '612', label: 'error', rowCss: 'background: #1A1214;', bodyCss: 'color: #F2B0B0;', durCss: 'color: #F29B9B;' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

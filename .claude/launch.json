@@ -2,11 +2,43 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "agent-deck",
+      "name": "agent-deck-main",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.mjs", "--port", "7777", "--token", "devtoken"],
+      "runtimeArgs": [
+        "server.mjs",
+        "--open"
+      ],
       "port": 7777,
       "url": "http://127.0.0.1:7777"
+    },
+    {
+      "name": "agent-deck",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "server.mjs",
+        "--port",
+        "7778",
+        "--token",
+        "devtoken"
+      ],
+      "port": 7778,
+      "url": "http://127.0.0.1:7778"
+    },
+    {
+      "name": "agent-deck-fake-model",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "server.mjs",
+        "--port",
+        "7779",
+        "--token",
+        "devtoken"
+      ],
+      "env": {
+        "DECK_CLAUDE_BIN": "test/fixtures/fake-claude.mjs"
+      },
+      "port": 7779,
+      "url": "http://127.0.0.1:7779"
     }
   ]
 }

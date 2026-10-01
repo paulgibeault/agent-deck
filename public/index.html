@@ -4,98 +4,163 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agent-deck</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2322c55e'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect x='1' y='1' width='18' height='18' rx='5' fill='%231F2A24' stroke='%234CC38A'/%3E%3Cpath d='M6 7h8M6 10h5M6 13h7' stroke='%234CC38A' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/vendor/github.min.css" media="(prefers-color-scheme: light)">
 <link rel="stylesheet" href="/vendor/github-dark.min.css" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-star" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14" stroke-linecap="round"/></g></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.5 4.5h11M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4 4.5l.7 8.6a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.6M6.8 7v4.5M9.2 7v4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-code" viewBox="0 0 16 16"><path d="M5 5 2 8l3 3M11 5l3 3-3 3M9.5 3l-3 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h6.5"/></g></symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-right" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-logo" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--logo-bg)" stroke="var(--ok)"/><path d="M6 7h8M6 10h5M6 13h7" stroke="var(--ok)" stroke-width="1.6" stroke-linecap="round"/></symbol>
+</svg>
+
 <div id="deck">
-  <aside id="sessions" class="pane">
-    <header class="pane-h">
-      <span class="brand">agent-deck</span>
-      <span id="conn" class="conn" title="connection">●</span>
-      <input id="tree-filter" type="search" placeholder="filter" spellcheck="false">
+  <aside id="sessions" class="pane rail" aria-label="Sessions">
+    <header class="rail-h">
+      <button id="home" class="brand" type="button" title="Overview (Esc)"><svg width="20" height="20"><use href="#i-logo"/></svg>agent-deck</button>
+      <span class="spacer"></span>
+      <span id="conn" class="conn" title="connection to the deck server"><span class="cdot"></span><span class="clbl">Offline</span></span>
     </header>
-    <div id="tree" class="tree">
-      <section class="bucket" data-bucket="active"><h3><span class="tri">▾</span> Active <span class="count"></span></h3><ul></ul></section>
-      <section class="bucket" data-bucket="recent"><h3><span class="tri">▾</span> Recent <span class="count"></span></h3><ul></ul></section>
-      <section class="bucket collapsed" data-bucket="closed"><h3><span class="tri">▾</span> Closed <span class="count"></span></h3><ul></ul></section>
+    <div class="rail-search">
+      <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter sessions</span><input id="tree-filter" type="search" placeholder="Filter sessions" spellcheck="false"></label>
     </div>
-    <footer class="pane-f muted" id="tree-foot"></footer>
+    <div class="counters" id="counters">
+      <button type="button" data-c="working" class="ctr c-ok"><b>0</b><span>working</span></button>
+      <button type="button" data-c="turn" class="ctr c-turn"><b>0</b><span>your turn</span></button>
+      <button type="button" data-c="errors" class="ctr c-err"><b>0</b><span>with errors</span></button>
+    </div>
+    <div id="tree" class="tree">
+      <section class="bucket" data-bucket="active"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Active <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="active" aria-label="Ask about active sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
+      <section class="bucket" data-bucket="recent"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Recent <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="recent" aria-label="Ask about recent sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
+      <section class="bucket collapsed" data-bucket="closed"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Closed <span class="count"></span></button></h3><ul></ul></section>
+      <section class="bucket collapsed" data-bucket="hidden"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Hidden <span class="count"></span></button></h3><ul></ul></section>
+    </div>
+    <footer class="rail-f"><span id="tree-foot"></span><span class="spacer"></span><button id="keys-btn" type="button" class="icon-btn sm mono" aria-label="Keyboard shortcuts">?</button></footer>
   </aside>
   <div class="gutter" data-gutter="left"></div>
 
   <main id="stream" class="pane">
-    <section id="brief" class="brief">
-      <div class="brief-empty muted">Select a session.</div>
-    </section>
-    <section id="prompt" class="prompt collapsed">
-      <div class="prompt-h" id="prompt-toggle"><span class="tri">▾</span> Prompt <span id="queue-count" class="count"></span><span class="muted" id="prompt-note"></span></div>
-      <div class="prompt-b">
+    <section id="overview" class="overview" aria-label="Overview"></section>
+
+    <div id="session-view" class="session-view" hidden>
+      <header id="shead" class="shead"></header>
+
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Session views">
+        <button class="tab-b active" data-tab="events" role="tab">Events <span class="count" id="events-count"></span></button>
+        <button class="tab-b" data-tab="files" role="tab">Files <span class="count" id="files-count"></span></button>
+        <button class="tab-b" data-tab="changes" role="tab">Changes <span class="count" id="changes-count"></span></button>
+        <button class="tab-b" data-tab="shell" role="tab">Shell</button>
+        <span class="spacer"></span>
+        <button id="prompt-toggle" type="button" class="btn sm"><svg width="13" height="13"><use href="#i-list"/></svg>Prompt queue <span id="queue-count" class="muted"></span></button>
+      </nav>
+
+      <section id="prompt" class="queue-panel" hidden>
+        <div class="qp-h"><span class="sec-t">Prompt queue</span><span class="muted" id="prompt-note"></span><span class="spacer"></span>
+          <button type="button" class="ask-ico" data-ask-list="queue" aria-label="Ask about the prompt queue"><svg width="11" height="11"><use href="#i-star"/></svg></button></div>
         <ul id="queue" class="queue"></ul>
         <div class="compose">
-          <textarea id="compose" rows="2" placeholder="Send is disabled for sessions the deck did not launch (phase 3)." disabled></textarea>
+          <textarea id="compose" rows="2" placeholder="Sending is for sessions the deck launches (phase 3). This one is observe-only." disabled></textarea>
           <div class="compose-actions">
-            <button id="send" class="btn" disabled title="This session was launched outside the deck; the deck can only observe it. Phase 3 adds deck-launched sessions with send/queue/interrupt.">Send</button>
-            <button id="interrupt" class="btn" disabled title="Observe-only session.">Interrupt</button>
+            <button id="send" class="btn" disabled title="This session was launched outside the deck; the deck can only observe it.">Send</button>
             <button id="copy-last" class="btn" title="copy last prompt">Copy last prompt</button>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <nav class="tabs" id="tabs">
-      <button class="tab-b active" data-tab="events">Events <span class="count" id="events-count"></span></button>
-      <button class="tab-b" data-tab="files">Files <span class="count" id="files-count"></span></button>
-      <button class="tab-b" data-tab="changes">Changes <span class="count" id="changes-count"></span></button>
-      <button class="tab-b" data-tab="shell">Shell</button>
-      <span class="spacer"></span>
-      <span class="muted kbd-hint" title="j/k move · Enter details · Space follow · / filter">j k ⏎ ␣ /</span>
-    </nav>
+      <section id="tab-events" class="tab active">
+        <div class="toolbar">
+          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter events</span><input id="ev-filter" type="search" placeholder="Filter by text, tool or path" spellcheck="false"></label>
+          <div class="seg" role="group" aria-label="Event kind" id="kind-seg">
+            <button type="button" data-k="all" aria-pressed="true">All</button>
+            <button type="button" data-k="tools" aria-pressed="false">Tools</button>
+            <button type="button" data-k="messages" aria-pressed="false">Messages</button>
+            <button type="button" data-k="errors" aria-pressed="false" class="seg-err">Errors <span id="err-count"></span></button>
+          </div>
+          <button id="show-thinking" type="button" class="btn toggle" aria-pressed="true" title="show thinking rows">Thinking</button>
+          <button id="follow" type="button" class="btn toggle follow" aria-pressed="true" title="keep the newest event in view (Space)"><span class="fdot"></span>Following</button>
+          <button type="button" class="ask-ico lg" data-ask-list="events" aria-label="Ask about these events" title="Ask about these events"><svg width="13" height="13"><use href="#i-star"/></svg></button>
+        </div>
+        <div id="vlist" class="vlist" tabindex="0">
+          <div id="vspacer" class="vspacer"></div>
+          <div id="vrows" class="vrows"></div>
+        </div>
+      </section>
 
-    <section id="tab-events" class="tab active">
-      <div class="toolbar">
-        <input id="ev-filter" type="search" placeholder="filter events (text, tool, path)" spellcheck="false">
-        <label class="chk"><input type="checkbox" id="hide-thinking"> hide thinking</label>
-        <label class="chk"><input type="checkbox" id="hide-queue"> hide queue</label>
-        <span class="spacer"></span>
-        <button id="follow" class="btn toggle active" title="keep the newest event in view (Space)">⤒ follow</button>
-      </div>
-      <div id="vlist" class="vlist" tabindex="0">
-        <div id="vspacer" class="vspacer"></div>
-        <div id="vrows" class="vrows"></div>
-      </div>
-    </section>
+      <section id="tab-files" class="tab">
+        <div class="toolbar"><span class="muted">Files this session read or wrote</span><span class="spacer"></span>
+          <button type="button" class="ask-ico lg" data-ask-list="files" aria-label="Ask about these files" title="Ask about these files"><svg width="13" height="13"><use href="#i-star"/></svg></button>
+          <button id="files-refresh" class="icon-btn" aria-label="Refresh files"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></div>
+        <div id="files" class="table-wrap"></div>
+      </section>
 
-    <section id="tab-files" class="tab">
-      <div class="toolbar"><span class="muted">Files touched by this session (Read / Edit / Write / history snapshots).</span><span class="spacer"></span><button id="files-refresh" class="btn">↻</button></div>
-      <div id="files" class="table-wrap"></div>
-    </section>
+      <section id="tab-changes" class="tab">
+        <div class="toolbar"><span id="changes-head" class="changes-head"></span><span class="spacer"></span>
+          <button type="button" class="ask-ico lg" data-ask-list="changes" aria-label="Ask about these changes" title="Ask about these changes"><svg width="13" height="13"><use href="#i-star"/></svg></button>
+          <button id="changes-refresh" class="icon-btn" aria-label="Refresh changes"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></div>
+        <div id="changes" class="table-wrap"></div>
+      </section>
 
-    <section id="tab-changes" class="tab">
-      <div class="toolbar"><span id="changes-head" class="muted"></span><span class="spacer"></span><button id="changes-refresh" class="btn">↻</button></div>
-      <div id="changes" class="table-wrap"></div>
-    </section>
-
-    <section id="tab-shell" class="tab">
-      <div class="toolbar shell-bar">
-        <label class="lbl">cwd</label><input id="sh-cwd" type="text" spellcheck="false" placeholder="working directory">
-        <button id="sh-cwd-session" class="btn" title="use selected session's cwd">session cwd</button>
-      </div>
-      <div class="toolbar shell-bar">
-        <label class="lbl">$</label><input id="sh-cmd" type="text" spellcheck="false" placeholder="command (Enter to run, ↑/↓ history)" autocomplete="off">
-        <button id="sh-run" class="btn primary">Run</button>
-      </div>
-      <div id="sh-runs" class="runs"></div>
-    </section>
+      <section id="tab-shell" class="tab">
+        <div class="toolbar shell-bar">
+          <label class="lbl" for="sh-cwd">cwd</label><input id="sh-cwd" class="field grow" type="text" spellcheck="false" placeholder="working directory">
+          <button id="sh-cwd-session" class="btn sm" title="use selected session's cwd">session cwd</button>
+        </div>
+        <div class="toolbar shell-bar">
+          <label class="lbl" for="sh-cmd">$</label><input id="sh-cmd" class="field grow" type="text" spellcheck="false" placeholder="command (Enter to run, ↑/↓ history)" autocomplete="off">
+          <button id="sh-run" class="btn primary sm">Run</button>
+        </div>
+        <div id="sh-runs" class="runs"></div>
+      </section>
+    </div>
   </main>
   <div class="gutter" data-gutter="right"></div>
 
-  <aside id="details" class="pane">
-    <div id="details-body" class="details-body"><div class="muted pad">Select an event, file or change.</div></div>
+  <aside id="details" class="pane" aria-label="Details">
+    <div id="details-body" class="details-body"></div>
+    <section id="ask" class="ask" hidden aria-labelledby="ask-h"></section>
   </aside>
 </div>
+
+<dialog id="confirm" class="dialog">
+  <form method="dialog">
+    <h2 id="confirm-t"></h2>
+    <p id="confirm-b"></p>
+    <div class="dialog-a">
+      <button value="cancel" class="btn">Cancel</button>
+      <button value="ok" id="confirm-ok" class="btn danger">Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="keys" class="dialog">
+  <form method="dialog">
+    <h2>Keyboard</h2>
+    <dl class="keys">
+      <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>next / previous event</dd>
+      <dt><kbd>Enter</kbd></dt><dd>show details</dd>
+      <dt><kbd>a</kbd></dt><dd>ask about the selected event (or the brief)</dd>
+      <dt><kbd>Space</kbd></dt><dd>follow newest</dd>
+      <dt><kbd>/</kbd></dt><dd>filter events</dd>
+      <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Events, Files, Changes, Shell</dd>
+      <dt><kbd>Esc</kbd></dt><dd>close Ask, then back to the overview</dd>
+    </dl>
+    <div class="dialog-a"><button value="ok" class="btn">Close</button></div>
+  </form>
+</dialog>
+
 <script src="/vendor/highlight.min.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
