@@ -69,8 +69,8 @@ const recentErr = (s) => s.glance?.errors && s.glance.lastErrorTs && Date.now() 
 let es = null;
 function connect() {
   es = new EventSource('/api/stream');
-  es.onopen = () => { setConn(true); if (state.selected) catchUp(state.selected); for (const id of state.expanded) catchUp(id); };
-  es.onerror = () => setConn(false);
+  es.onopen = () => { setConn(true); hideLaunch(); if (state.selected) catchUp(state.selected); for (const id of state.expanded) catchUp(id); };
+  es.onerror = () => { setConn(false); watchBackend(); };
   es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.narrator = d.narrator || state.narrator; reportView(); });
   es.addEventListener('sessions.snapshot', (e) => applySnapshot(JSON.parse(e.data)));
   es.addEventListener('briefs.snapshot', (e) => { const all = JSON.parse(e.data); for (const [id, b] of Object.entries(all)) state.briefs.set(id, b); refreshBriefViews(); });
@@ -85,6 +85,90 @@ function setConn(on) {
   $('conn').classList.toggle('on', on);
   $('conn').querySelector('.clbl').textContent = on ? 'Live' : 'Offline';
 }
+
+// ------------------------------------------------------------ backend / launch screen
+// The installed app can open with no backend (the service worker serves the
+// shell). Probe first; if it isn't reachable, show the welcome screen with a
+// Launch button (an agent-deck:// link, see scripts/install-app.sh) and keep
+// probing until it answers.
+async function probe() {
+  try {
+    const r = await fetch('/api/health', { cache: 'no-store' });
+    return r.ok ? 'up' : r.status === 401 ? 'auth' : 'down';
+  } catch { return 'down'; }
+}
+
+const launch = { timer: null, launchedAt: 0 };
+function setLaunchStatus(s) {
+  const text = { down: `Backend isn't running on ${location.host}`, starting: 'Starting the backend…', auth: 'Backend running · not signed in', up: 'Connected' }[s];
+  $('launch-status').dataset.s = s;
+  $('launch-status-t').textContent = text;
+  $('launch-down').hidden = s === 'auth' || s === 'up';
+  $('launch-auth').hidden = s !== 'auth';
+  $('launch-help').hidden = !(launch.launchedAt && Date.now() - launch.launchedAt > 8000 && s !== 'auth');
+}
+function showLaunch(s) {
+  const el = $('launch');
+  if (el.hidden) { el.hidden = false; (s === 'auth' ? $('launch-token') : $('launch-go')).focus(); }
+  setLaunchStatus(s === 'down' && launch.launchedAt ? 'starting' : s);
+}
+function hideLaunch() {
+  $('launch').hidden = true;
+  launch.launchedAt = 0;
+  clearTimeout(launch.timer); launch.timer = null;
+}
+
+/** Poll until the backend answers, then (re)connect the stream. */
+function watchBackend(delay = 2500) {
+  if (launch.timer) return;
+  launch.timer = setTimeout(async () => {
+    launch.timer = null;
+    if (es && es.readyState === EventSource.OPEN) return hideLaunch();
+    const s = await probe();
+    if (s === 'up') {
+      if (!es || es.readyState === EventSource.CLOSED) { es?.close(); start(); } // EventSource gives up after a 401
+      return;
+    }
+    showLaunch(s);
+    watchBackend(launch.launchedAt ? 1000 : 2000);
+  }, delay);
+}
+
+$('launch-go').addEventListener('click', () => {
+  launch.launchedAt = Date.now();
+  setLaunchStatus('starting');
+  setTimeout(() => { if (!$('launch').hidden) setLaunchStatus($('launch-status').dataset.s); }, 8500);
+  clearTimeout(launch.timer); launch.timer = null; watchBackend(600);
+});
+$('launch-auth').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const t = $('launch-token').value.trim();
+  if (t) location.href = `/?t=${encodeURIComponent(t)}`; // the server sets the cookie and redirects back to /
+});
+
+let started = false;
+/** First contact with a live backend: open the stream and load the initial state. */
+function start() {
+  hideLaunch();
+  connect();
+  if (started) return;
+  started = true;
+  loadShellHistory();
+  api.get('/api/briefs').then(r => { for (const [id, b] of Object.entries(r.briefs)) state.briefs.set(id, b); state.narrator = { ...state.narrator, ...r.narrator }; refreshBriefViews(); }).catch(() => {});
+  api.get('/api/sessions').then(snap => {
+    applySnapshot(snap);
+    if (prefs.selected && state.byId.has(prefs.selected)) select(prefs.selected);
+    else goOverview();
+  }).catch(() => goOverview());
+}
+
+async function boot() {
+  const s = await probe();
+  if (s === 'up') start();
+  else { goOverview(); showLaunch(s); watchBackend(); }
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => { /* app still works, just not offline */ });
 
 /** Tell the server which session this tab shows, so its brief refreshes on the fast cadence. */
 function reportView() {
@@ -1152,12 +1236,5 @@ function initLayout() {
 initLayout();
 setTab(prefs.tab || 'events');
 showDetailsEmpty();
-connect();
-loadShellHistory();
+boot();
 setInterval(() => { if (state.selected) renderHeader(); else renderOverview(); renderTree(); }, 5000);
-api.get('/api/briefs').then(r => { for (const [id, b] of Object.entries(r.briefs)) state.briefs.set(id, b); state.narrator = { ...state.narrator, ...r.narrator }; refreshBriefViews(); }).catch(() => {});
-api.get('/api/sessions').then(snap => {
-  applySnapshot(snap);
-  if (prefs.selected && state.byId.has(prefs.selected)) select(prefs.selected);
-  else goOverview();
-});
