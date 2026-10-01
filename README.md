@@ -29,18 +29,46 @@ Flags and environment:
 | `--open` | off | open the browser on start |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps its state |
 | `DECK_EDITOR` | `code` | command for "open in editor" (`<cmd> -g file:line`) |
+| `--no-narrator` / `DECK_NARRATOR=off` | on | turn off the generated Brief and Ask (no model calls) |
+| `DECK_BRIEF_MODEL` | `haiku` | model for the generated Brief |
+| `DECK_ASK_MODEL` | `sonnet` | model for Ask about this |
+| `DECK_CLAUDE_BIN` | `claude` | CLI used for model calls |
+| `DECK_STATE_DIR` | `~/.agent-deck` | hidden sessions and the delete trash |
 
-Tests: `npm test` (parser and index against `test/fixtures/session.jsonl`).
+The Brief and Ask call `claude -p` with no tools, no MCP servers and no
+session persistence, using whatever login the CLI already has. If that login
+has expired the deck says so in the Brief; run `claude` in a terminal and
+`/login`. To try both flows without a login, point `DECK_CLAUDE_BIN` at
+`test/fixtures/fake-claude.mjs` (the `agent-deck-fake-model` preview config
+does this).
+
+Tests: `npm test` (parser, index, brief scheduler, Ask and trash against
+`test/fixtures/session.jsonl`).
 
 ## What you get
 
-- **Sessions tree.** Active (process alive, from `~/.claude/sessions`),
-  Recent, Closed. Subagents nest under their parent with
-  running / done / stale status, worktree branch and agent type.
-- **Brief.** Heuristic, instant, no model calls: state (running `npm test`,
-  waiting on 2 subagents, idle 4m, ended), last assistant sentence, tokens
-  this turn and session, Claude Code's own cost figure, files touched,
-  errors, branch, PR link, queue depth.
+- **Overview.** What shows when no session is open: sessions waiting on you
+  or failing, cards for working agents with their brief, recently finished.
+- **Sessions rail.** Active sessions grouped by repo, Recent, Closed, Hidden.
+  Counters for working / your turn / with errors filter the list. Subagents
+  show as a progress bar under their parent, running first.
+- **States.** Four, one colour each: working (green), your turn (amber),
+  done (blue), ended (grey). Red only means something failed.
+- **Brief.** A model-written summary of the session to date: what it has
+  done, a progress bar when the work has countable units, done / now / next,
+  and a Watch line for risks that links to the event. Refreshed
+  incrementally (previous brief + new events only): every 20s while you
+  look at a working session, once per new activity when it is idle, every
+  2m in the background for live sessions, paused otherwise. The heuristic
+  NOW line (current tool and how long it has run) and token, cost and error
+  figures stay instant and free.
+- **Ask about this.** On every list, message, command, output, file, diff,
+  shell run and the brief (or press `a`). Context starts as just that item;
+  chips add its turn or the session brief. Answers come from a separate
+  read-only call and never reach the session.
+- **Close / delete.** Close hides a session from the deck (Undo, or find it
+  under Hidden). Delete moves a finished session's transcript and subagent
+  files to `~/.agent-deck/trash/` after a confirm.
 - **Prompt.** Read-only mirror of the session's prompt queue with copy
   buttons. Send/interrupt are disabled for sessions the deck did not launch
   (that is phase 3).
@@ -49,8 +77,9 @@ Tests: `npm test` (parser and index against `test/fixtures/session.jsonl`).
   one row with a tool-specific one-liner, duration, error chip, token cost.
   Thinking collapses to a faint row. Agent rows can be opened as a session or
   expanded inline. Prompts and turn ends are visual separators. Filter box,
-  hide thinking/queue toggles, follow-tail. Keys: `j`/`k` move, `Enter`
-  details, `Space` follow, `/` filter, `1`–`4` tabs.
+  All / Tools / Messages / Errors, thinking toggle, follow-tail. Keys:
+  `j`/`k` move, `Enter` details, `a` ask, `Space` follow, `/` filter,
+  `1`–`4` tabs, `Esc` overview, `?` help.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +
   stdout/stderr for Bash; decoded images; subagent card for Agent; JSON for
@@ -70,10 +99,16 @@ Tests: `npm test` (parser and index against `test/fixtures/session.jsonl`).
 server.mjs            http + sse + tail + git + shell
 lib/transcript.mjs    the ONLY file that knows Claude Code's file formats
 lib/sessions.mjs      registry, buckets, subagent tree, watching, loading
-lib/brief.mjs         heuristic brief
+lib/brief.mjs         heuristic brief (instant state, NOW line, figures)
+lib/briefs.mjs        generated brief: cadence, incremental prompts
+lib/narrator.mjs      one-shot `claude -p` calls
+lib/digest.mjs        events -> compact text for the model
+lib/ask.mjs           Ask about this: scope resolution + answer
+lib/deckstate.mjs     hidden sessions, delete trash
 lib/gitinfo.mjs       status / diff / log
 lib/shell.mjs         pilot shell runner
 public/               index.html, app.js, events.js, styles.css, vendor/
+design/               Claude Design canvas source for the current look
 test/                 node --test; fixtures/ holds a sanitized transcript
 ```
 

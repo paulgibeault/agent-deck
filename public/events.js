@@ -21,7 +21,7 @@ export function relPath(p, cwd) {
   const c = cwd.endsWith('/') ? cwd : cwd + '/';
   return p.startsWith(c) ? p.slice(c.length) : p;
 }
-const oneLine = (s, max = 160) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max - 1) + '…' : t; };
+export const oneLine = (s, max = 160) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max - 1) + '…' : t; };
 
 export const h = (tag, attrs = {}, ...children) => {
   const el = document.createElement(tag);
@@ -37,73 +37,123 @@ export const h = (tag, attrs = {}, ...children) => {
   return el;
 };
 
-// ------------------------------------------------------------ icons
-const ICONS = {
-  Bash: '⌘', Read: '📄', Write: '✎', Edit: '✎', MultiEdit: '✎', NotebookEdit: '✎', Glob: '🔍', Grep: '🔍', Agent: '🤖',
-  WebFetch: '🌐', WebSearch: '🌐', TodoWrite: '☑', ToolSearch: '🧰', Skill: '✨', AskUserQuestion: '❓', SendUserFile: '📎',
-  Artifact: '🖼', text: '💬', thinking: '…', prompt: '▶', turn_end: '■', queue: '⏳', system: 'ℹ', raw: '{}',
+// ------------------------------------------------------------ tags
+// Text tags instead of glyphs: scannable in a dense list, no legend needed.
+const FAMILY = {
+  Bash: 'bash', Read: 'read', Glob: 'read', Grep: 'read', ToolSearch: 'read', LS: 'read',
+  Write: 'edit', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', TodoWrite: 'edit',
+  Agent: 'agent', Task: 'agent', Skill: 'agent', SendMessage: 'agent',
+  WebFetch: 'web', WebSearch: 'web',
 };
-export function iconFor(ev) {
-  if (ev.kind === 'tool') return ICONS[ev.tool.name] || (ev.tool.name.startsWith('mcp__') ? '🔌' : '⚙');
-  return ICONS[ev.kind] || '•';
+export function tagFor(ev) {
+  switch (ev.kind) {
+    case 'tool': {
+      const n = ev.tool.name;
+      if (n.startsWith('mcp__')) {
+        const short = n.split('__').pop();
+        return { label: short.length > 7 ? short.slice(0, 6) + '…' : short, fam: 'web', title: ev.tool.display };
+      }
+      return { label: n.length > 7 ? n.slice(0, 6) + '…' : n, fam: ev.tool.isError ? 'err' : FAMILY[n] || 'said', title: n };
+    }
+    case 'text': return { label: 'Said', fam: 'said' };
+    case 'thinking': return { label: 'Think', fam: 'muted' };
+    case 'prompt': return { label: 'You', fam: 'you' };
+    case 'queue': return { label: 'Queue', fam: 'muted' };
+    case 'system': return ev.error ? { label: 'Error', fam: 'err' } : { label: 'Note', fam: 'muted' };
+    default: return { label: 'Raw', fam: 'muted' };
+  }
+}
+export function tagEl(ev) {
+  const t = tagFor(ev);
+  return h('span', { class: `tag f-${t.fam}`, title: t.title || null }, t.label);
+}
+export const askMini = (label = 'Ask') => h('button', { class: 'ask-mini', type: 'button', dataset: { askRow: '1' }, title: 'Ask about this' }, starIcon(11), label);
+export function starIcon(n = 11) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', n); svg.setAttribute('height', n); svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#i-star'); svg.append(use);
+  return svg;
 }
 
+// Row heights for the virtualized list (variable by kind).
+export const ROW_HEIGHTS = { prompt: 50, turn_end: 34, default: 30 };
+export const rowHeight = (ev) => ROW_HEIGHTS[ev.kind] || ROW_HEIGHTS.default;
+
 // ------------------------------------------------------------ Events rows
-/** One dense row for the virtualized Events list. */
-export function renderRow(ev, { depth = 0, selected = false, cwd = null, agentStatus = null, expanded = false } = {}) {
-  const row = h('div', { class: `row k-${ev.kind}${selected ? ' selected' : ''}${ev.kind === 'tool' && ev.tool.isError ? ' error' : ''}${ev.error ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
+/**
+ * One row for the virtualized Events list. `turn` carries turn numbering for
+ * prompt rows ({ n, meta }) and the summary for turn_end rows ({ text }).
+ */
+export function renderRow(ev, { depth = 0, selected = false, agentStatus = null, expanded = false, turn = null } = {}) {
+  const isErr = (ev.kind === 'tool' && ev.tool.isError) || ev.error;
+  const row = h('div', { class: `row k-${ev.kind}${selected ? ' selected' : ''}${isErr ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
   row.style.setProperty('--depth', depth);
+  row.style.height = rowHeight(ev) + 'px';
+
+  if (ev.kind === 'prompt') {
+    const card = h('div', { class: 'turn-card' });
+    card.append(tagEl(ev), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
+    if (ev.origin && ev.origin !== 'human') card.append(h('span', { class: 'chip' }, ev.origin));
+    card.append(h('span', { class: 'meta' }, turn?.meta || fmtTime(ev.ts)), askMini());
+    row.append(card);
+    return row;
+  }
+  if (ev.kind === 'turn_end') {
+    row.append(h('span', { class: 'rule' }), h('span', { class: 'body' }, turn?.text || `Turn ended${ev.text ? ' · ' + ev.text : ''}`), h('span', { class: 'rule' }));
+    return row;
+  }
+
   row.append(h('span', { class: 'ts' }, fmtTime(ev.ts)));
-  row.append(h('span', { class: 'ico' }, iconFor(ev)));
+  row.append(h('span', { class: 'tg' }, tagEl(ev)));
   const body = h('span', { class: 'body' });
   row.append(body);
   const chips = h('span', { class: 'chips' });
+  let dur = null;
 
   switch (ev.kind) {
     case 'tool': {
       const t = ev.tool;
-      body.append(h('span', { class: 'tname' }, t.display));
-      body.append(' ');
-      body.append(h('span', { class: 'tsum', title: t.name === 'Bash' ? (t.input.description || t.input.command || '') : t.summary }, t.summary));
+      const desc = t.name === 'Bash' ? (t.input.description || t.input.command || '') : t.summary;
+      body.title = desc;
+      body.append(t.summary || t.display);
       if (t.name === 'Agent' && t.agentId) {
-        chips.append(h('button', { class: 'mini agent-open', dataset: { agent: t.agentId }, title: 'open as session' }, '↗ open'));
-        chips.append(h('button', { class: 'mini agent-toggle', dataset: { agent: t.agentId }, title: 'expand subagent events inline' }, expanded ? '▾ inline' : '▸ inline'));
+        chips.append(h('button', { class: 'mini agent-open', dataset: { agent: t.agentId }, title: 'open as session' }, 'open'));
+        chips.append(h('button', { class: 'mini agent-toggle', dataset: { agent: t.agentId }, title: 'show subagent events inline' }, expanded ? 'hide inline' : 'inline'));
         if (agentStatus) chips.append(h('span', { class: `chip st-${agentStatus}` }, agentStatus));
       }
-      if (t.pending) chips.append(h('span', { class: 'chip pending' }, '…'));
+      if (t.pending) dur = h('span', { class: 'dur run' }, 'running');
       else {
-        if (t.durationMs != null) chips.append(h('span', { class: 'chip dur' }, fmtMs(t.durationMs)));
         if (t.isError) chips.append(h('span', { class: 'chip err' }, 'error'));
         else if (t.meta?.interrupted) chips.append(h('span', { class: 'chip err' }, 'interrupted'));
         if (t.result?.images?.length) chips.append(h('span', { class: 'chip' }, `${t.result.images.length} img`));
+        if (t.durationMs != null) dur = h('span', { class: 'dur' + (t.isError ? ' bad' : '') }, fmtMs(t.durationMs));
       }
       break;
     }
     case 'text':
-      body.append(h('span', { class: 'txt' }, oneLine(ev.text, 220)));
+      body.classList.add('sans');
+      body.append(oneLine(ev.text, 260));
       break;
     case 'thinking':
-      body.append(h('span', { class: 'txt muted' }, ev.redacted ? 'thinking (redacted)' : `thinking · ${fmtTokens(ev.text.length)} chars`));
-      break;
-    case 'prompt':
-      body.append(h('span', { class: 'txt' }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 220)));
-      if (ev.origin && ev.origin !== 'human') chips.append(h('span', { class: 'chip' }, ev.origin));
-      break;
-    case 'turn_end':
-      body.append(h('span', { class: 'txt muted' }, `turn end${ev.text ? ' · ' + ev.text : ''}`));
+      body.append(ev.redacted ? 'thinking (redacted)' : `thinking · ${fmtTokens(ev.text.length)} chars`);
       break;
     case 'queue':
-      body.append(h('span', { class: 'txt muted' }, `${ev.op}${ev.text ? ': ' + oneLine(ev.text, 160) : ''}`));
+      body.append(`${ev.op}${ev.text ? ': ' + oneLine(ev.text, 160) : ''}`);
       if (ev.queueDepth != null) chips.append(h('span', { class: 'chip' }, `q${ev.queueDepth}`));
       break;
     case 'system':
-      body.append(h('span', { class: 'txt' + (ev.error ? '' : ' muted') }, `${ev.subtype || 'system'} · ${oneLine(ev.text, 200)}`));
+      body.append(`${ev.subtype || 'system'} · ${oneLine(ev.text, 200)}`);
       break;
     default:
-      body.append(h('span', { class: 'txt muted' }, `${ev.subtype || 'raw'} · ${oneLine(ev.text, 200)}`));
+      body.append(`${ev.subtype || 'raw'} · ${oneLine(ev.text, 200)}`);
   }
-  if (ev.usage?.output_tokens) chips.append(h('span', { class: 'chip tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, `${fmtTokens(ev.usage.output_tokens)}↑`));
-  row.append(chips);
+  if (chips.childNodes.length) row.append(chips);
+  if (dur) row.append(dur);
+  const end = h('span', { class: 'end' });
+  if (ev.usage?.output_tokens) end.append(h('span', { class: 'tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, fmtTokens(ev.usage.output_tokens)));
+  end.append(askMini());
+  row.append(end);
   return row;
 }
 
@@ -263,8 +313,13 @@ export function renderSideBySide(ops, { lang = null, startA = 1, startB = 1 } = 
 }
 
 // ------------------------------------------------------------ details
-const copyBtn = (text, label = 'copy') => h('button', { class: 'mini', onclick: (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); e.target.textContent = 'copied'; setTimeout(() => e.target.textContent = label, 900); } }, label);
-const openBtn = (path, line, api) => path ? h('button', { class: 'mini', title: 'open in editor', onclick: () => api.openEditor(path, line) }, '↗ editor') : null;
+const copyBtn = (text, label = 'Copy') => h('button', { class: 'mini', type: 'button', onclick: (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); e.currentTarget.textContent = 'Copied'; const b = e.currentTarget; setTimeout(() => b.textContent = label, 900); } }, label);
+const openBtn = (path, line, api) => path ? h('button', { class: 'mini', type: 'button', title: 'open in editor', onclick: () => api.openEditor(path, line) }, 'Open') : null;
+
+/** Icon-only Ask button; `spec` is the scope item app.js resolves. */
+export function askIco(spec, label = 'Ask about this') {
+  return h('button', { class: 'ask-ico', type: 'button', 'aria-label': label, title: label, dataset: { ask: JSON.stringify(spec) } }, starIcon(11));
+}
 
 function stripReadNumbers(text) {
   // Read tool output is "   12\tline"; keep content, remember the start line.
@@ -274,100 +329,151 @@ function stripReadNumbers(text) {
   return { text: lines.map(l => l.replace(/^\s*\d+\t/, '')).join('\n'), start: +m[1] };
 }
 
-function section(title, ...children) {
-  return h('section', { class: 'dsec' }, h('div', { class: 'dsec-h' }, title), ...children);
+/**
+ * A details section: title, action buttons, an Ask button scoped to it.
+ * `ask` is a scope spec ({ kind: 'event', ..., label }) or null.
+ */
+function section(title, { actions = [], ask = null, note = null } = {}, ...children) {
+  const head = h('div', { class: 'dsec-h' }, h('span', { class: 'dsec-t', title }, title));
+  if (note) head.append(h('span', { class: 'note' }, note));
+  head.append(h('span', { class: 'dsec-sp' }), ...actions.filter(Boolean));
+  if (ask) head.append(askIco(ask, `Ask about ${ask.what || 'this'}`));
+  return h('section', { class: 'dsec' }, head, ...children);
+}
+
+function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null }) {
+  const head = h('div', { class: 'dhead' });
+  const row = h('div', { class: 'dh-row' }, tag, ...chips.filter(Boolean), h('span', { class: 'spacer' }));
+  if (nav) {
+    row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '-1' }, 'aria-label': 'Previous event (k)', title: 'Previous event (k)' }, svgUse('i-up', 12)));
+    row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '1' }, 'aria-label': 'Next event (j)', title: 'Next event (j)' }, svgUse('i-down', 12)));
+  }
+  if (raw) row.append(raw);
+  head.append(row, h('h2', { class: 'dtitle' }, title));
+  const m = meta.filter(Boolean);
+  if (m.length) head.append(h('div', { class: 'dmeta' }, ...m.map(x => h('span', {}, x))));
+  return head;
+}
+export function svgUse(id, n = 12) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', n); svg.setAttribute('height', n); svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#' + id); svg.append(use);
+  return svg;
+}
+
+function titleOf(ev) {
+  if (ev.kind === 'tool') {
+    const t = ev.tool;
+    if (t.name === 'Bash' && t.input.description) return t.input.description;
+    if (t.name === 'Agent') return t.input.description || 'Subagent';
+    return `${t.display} ${t.summary}`.trim();
+  }
+  if (ev.kind === 'text') return 'Assistant message';
+  if (ev.kind === 'prompt') return oneLine(ev.text.replace(/<[^>]+>/g, ' '), 140);
+  if (ev.kind === 'thinking') return 'Thinking';
+  return ev.subtype || ev.kind;
 }
 
 /**
  * Details pane content for one event. `detail` is the server's full record
- * (may be null while loading); `ctx` carries cwd, api helpers, session ids.
+ * (may be null while loading); `ctx` carries cwd, api helpers, session ids,
+ * and `position` ("step 18 of 22 in turn 13").
  */
 export function renderDetails(ev, detail, ctx) {
   const root = h('div', { class: 'details' });
-  const head = h('div', { class: 'dhead' });
-  head.append(h('span', { class: 'ico' }, iconFor(ev)));
-  head.append(h('span', { class: 'dtitle' }, ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary}` : ev.kind));
-  head.append(h('span', { class: 'dmeta' }, [fmtTime(ev.ts), ev.model, ev.kind === 'tool' && ev.tool.durationMs != null ? fmtMs(ev.tool.durationMs) : null].filter(Boolean).join(' · ')));
-  const rawToggle = h('button', { class: 'mini', onclick: () => root.classList.toggle('show-raw') }, '{ } raw');
-  head.append(h('span', { class: 'dactions' }, rawToggle));
-  root.append(head);
+  const t = ev.tool;
+  const when = fmtTime(ev.ts);
+  const at = `${tagFor(ev).label} ${when}`;
+  const evSpec = (part, what) => ({ kind: 'event', sessionId: ev.sessionId, eventId: ev.id, label: part ? `${part} of ${at}` : at, what });
+  const statusChip = ev.kind !== 'tool' ? null
+    : t.pending ? h('span', { class: 'chip st-running' }, 'running')
+    : t.isError ? h('span', { class: 'chip err' }, t.name === 'Bash' && detail?.toolUseResult?.returnCodeInterpretation ? detail.toolUseResult.returnCodeInterpretation : 'error')
+    : h('span', { class: 'chip ok' }, t.name === 'Bash' ? 'exit 0' : 'ok');
+  const rawToggle = h('button', { class: 'icon-btn sm mono', type: 'button', 'aria-label': 'Show raw record', title: 'Raw record', onclick: () => root.classList.toggle('show-raw') }, '{ }');
+  const tokens = ev.usage?.output_tokens ? `${fmtTokens(ev.usage.output_tokens)} tokens` : null;
+  root.append(headerFor({
+    tag: tagEl(ev), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
+    meta: [when, ev.kind === 'tool' && t.durationMs != null ? fmtMs(t.durationMs) : null, tokens, ev.model ? ev.model.replace('claude-', '') : null, ctx.position],
+  }));
 
   const body = h('div', { class: 'dbody' });
   root.append(body);
-  const t = ev.tool;
   const resultText = detail?.resultText ?? ev.tool?.result?.text ?? '';
   const truncated = !detail && ev.tool?.result?.truncated;
+  const loading = truncated ? h('span', { class: 'chip' }, 'loading full…') : null;
 
   if (ev.kind === 'text') {
-    body.append(section(['assistant', copyBtn(ev.text)], h('div', { class: 'md', html: markdown(ev.text) })));
+    body.append(section('Assistant', { actions: [copyBtn(ev.text)], ask: evSpec(null, 'this message') }, h('div', { class: 'md', html: markdown(ev.text) })));
   } else if (ev.kind === 'thinking') {
-    body.append(section(['thinking', copyBtn(ev.text)], h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text)));
+    body.append(section('Thinking', { actions: [copyBtn(ev.text)], ask: ev.redacted ? null : evSpec(null, 'this reasoning') }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text)));
   } else if (ev.kind === 'prompt') {
-    body.append(section(['prompt', copyBtn(ev.text)], h('pre', { class: 'plain' }, ev.text)));
+    body.append(section('Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
   } else if (ev.kind === 'tool') {
     const path = t.input.file_path || t.input.notebook_path || null;
     switch (t.name) {
       case 'Edit': {
         const ops = lineDiff(t.input.old_string ?? '', t.input.new_string ?? '');
         const start = detail?.toolUseResult?.structuredPatch?.[0]?.oldStart ?? t.meta?.structuredPatch?.[0]?.oldStart ?? 1;
-        body.append(section([relPath(path, ctx.cwd), openBtn(path, start, ctx.api), copyBtn(t.input.new_string ?? '', 'copy new')],
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, start, ctx.api), copyBtn(t.input.new_string ?? '', 'Copy new')], ask: evSpec('Edit', 'this change') },
           renderSideBySide(ops, { lang: langFor(path), startA: start, startB: detail?.toolUseResult?.structuredPatch?.[0]?.newStart ?? start })));
         if (t.input.replace_all) body.append(h('div', { class: 'note' }, 'replace_all'));
         break;
       }
       case 'MultiEdit': {
-        for (const e of t.input.edits || []) body.append(section([relPath(path, ctx.cwd)], renderSideBySide(lineDiff(e.old_string ?? '', e.new_string ?? ''), { lang: langFor(path) })));
+        for (const e of t.input.edits || []) body.append(section(relPath(path, ctx.cwd), { ask: evSpec('Edit', 'these edits') }, renderSideBySide(lineDiff(e.old_string ?? '', e.new_string ?? ''), { lang: langFor(path) })));
         break;
       }
       case 'Write': {
-        body.append(section([relPath(path, ctx.cwd), openBtn(path, 1, ctx.api), copyBtn(t.input.content ?? '')], codeBlock(t.input.content ?? '', langFor(path))));
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), copyBtn(t.input.content ?? '')], ask: evSpec('Written file', 'this file') }, codeBlock(t.input.content ?? '', langFor(path))));
         break;
       }
       case 'Read': {
         const { text, start } = stripReadNumbers(resultText);
-        body.append(section([relPath(path, ctx.cwd), openBtn(path, start, ctx.api), copyBtn(text), truncated ? h('span', { class: 'chip' }, 'loading full…') : null],
+        body.append(section(relPath(path, ctx.cwd), { actions: [loading, openBtn(path, start, ctx.api), copyBtn(text)], ask: evSpec('Read', 'this file') },
           t.result?.images?.length ? renderImages(ev, ctx) : codeBlock(text, langFor(path), { start })));
         break;
       }
       case 'Bash': {
-        body.append(section(['command', copyBtn(t.input.command ?? '')], codeBlock(t.input.command ?? '', 'bash', { numbers: false })));
-        if (t.input.description) body.append(h('div', { class: 'note' }, t.input.description));
+        body.append(section('Command', { actions: [copyBtn(t.input.command ?? ''), h('button', { class: 'mini', type: 'button', onclick: () => ctx.runInShell?.(t.input.command ?? '') }, 'Run in Shell')], ask: evSpec('Command', 'this command') },
+          codeBlock(t.input.command ?? '', 'bash', { numbers: false })));
         const r = detail?.toolUseResult;
         const stdout = r?.stdout ?? resultText; const stderr = r?.stderr ?? '';
-        body.append(section([t.isError ? 'output (error)' : 'output', copyBtn(stdout), t.pending ? h('span', { class: 'chip pending' }, 'running…') : null, truncated ? h('span', { class: 'chip' }, 'loading full…') : null],
+        const lines = stdout ? stdout.split('\n').length : 0;
+        body.append(section(t.isError ? 'Output (error)' : 'Output', { note: t.pending ? 'running…' : `stdout · ${lines} line${lines === 1 ? '' : 's'}`, actions: [loading, copyBtn(stdout)], ask: evSpec('Output', 'this output') },
           h('pre', { class: 'plain out' + (t.isError ? ' err' : '') }, stdout || '(no output)')));
-        if (stderr) body.append(section(['stderr'], h('pre', { class: 'plain out err' }, stderr)));
+        if (stderr) body.append(section('stderr', { ask: evSpec('stderr', 'stderr') }, h('pre', { class: 'plain out err' }, stderr)));
         if (r?.interrupted) body.append(h('div', { class: 'note err' }, 'interrupted'));
         break;
       }
       case 'Agent': {
-        const card = h('div', { class: 'card' });
+        const card = h('div', { class: 'agent-card' });
         card.append(h('div', { class: 'card-t' }, t.input.description || '(no description)'));
         card.append(h('div', { class: 'muted' }, [t.input.subagent_type || 'general-purpose', t.input.model, t.input.isolation ? `isolation: ${t.input.isolation}` : null, t.meta?.resolvedModel].filter(Boolean).join(' · ')));
         if (t.agentId) {
-          card.append(h('div', { class: 'card-row' }, h('span', { class: `chip st-${ctx.agentStatus?.(t.agentId) || 'unknown'}` }, ctx.agentStatus?.(t.agentId) || 'unknown'),
-            h('button', { class: 'mini', onclick: () => ctx.selectSession(t.agentId) }, '↗ open as session')));
+          const st = ctx.agentStatus?.(t.agentId) || 'unknown';
+          card.append(h('div', { class: 'card-row' }, h('span', { class: `chip st-${st}` }, st), h('button', { class: 'mini', type: 'button', onclick: () => ctx.selectSession(t.agentId) }, 'Open as session')));
         }
-        body.append(section(['subagent'], card));
-        body.append(section(['prompt', copyBtn(t.input.prompt ?? '')], h('details', {}, h('summary', {}, `${fmtTokens((t.input.prompt || '').length)} chars`), h('pre', { class: 'plain' }, t.input.prompt ?? ''))));
-        body.append(section(['result'], h('pre', { class: 'plain' }, resultText || (t.pending ? '(running)' : '(none)'))));
+        body.append(section('Subagent', { ask: evSpec('Subagent', 'this subagent') }, card));
+        body.append(section('Prompt', { actions: [copyBtn(t.input.prompt ?? '')] }, h('details', {}, h('summary', {}, `${fmtTokens((t.input.prompt || '').length)} chars`), h('pre', { class: 'plain' }, t.input.prompt ?? ''))));
+        body.append(section('Result', { ask: evSpec('Result', 'this result') }, h('pre', { class: 'plain' }, resultText || (t.pending ? '(running)' : '(none)'))));
         break;
       }
       default: {
-        body.append(section(['input', copyBtn(() => JSON.stringify(t.input, null, 2))], h('pre', { class: 'plain' }, JSON.stringify(t.input, null, 2))));
-        if (t.result?.images?.length) body.append(section(['images'], renderImages(ev, ctx)));
-        if (resultText || !t.pending) body.append(section([t.isError ? 'result (error)' : 'result', copyBtn(resultText), truncated ? h('span', { class: 'chip' }, 'loading full…') : null],
+        body.append(section('Input', { actions: [copyBtn(() => JSON.stringify(t.input, null, 2))], ask: evSpec('Input', 'this input') }, h('pre', { class: 'plain' }, JSON.stringify(t.input, null, 2))));
+        if (t.result?.images?.length) body.append(section('Images', {}, renderImages(ev, ctx)));
+        if (resultText || !t.pending) body.append(section(t.isError ? 'Result (error)' : 'Result', { actions: [loading, copyBtn(resultText)], ask: evSpec('Result', 'this result') },
           h('pre', { class: 'plain out' + (t.isError ? ' err' : '') }, resultText || '(empty)')));
         if (t.pending) body.append(h('div', { class: 'note' }, 'running…'));
       }
     }
-    if (t.meta && Object.keys(t.meta).length) body.append(section(['result metadata'], h('details', {}, h('summary', {}, 'toolUseResult (slim)'), h('pre', { class: 'plain' }, JSON.stringify(t.meta, null, 2)))));
+    if (t.meta && Object.keys(t.meta).length) body.append(section('Result metadata', {}, h('details', {}, h('summary', {}, 'toolUseResult (slim)'), h('pre', { class: 'plain' }, JSON.stringify(t.meta, null, 2)))));
   } else {
-    body.append(section([ev.subtype || ev.kind, copyBtn(ev.text ?? '')], h('pre', { class: 'plain' + (ev.error ? ' err' : '') }, ev.text ?? '')));
+    body.append(section(ev.subtype || ev.kind, { actions: [copyBtn(ev.text ?? '')], ask: evSpec(null, 'this') }, h('pre', { class: 'plain' + (ev.error ? ' err' : '') }, ev.text ?? '')));
   }
 
   const rawPane = h('div', { class: 'raw' });
-  rawPane.append(section(['raw records', copyBtn(() => JSON.stringify(detail?.raw ?? ev, null, 2))],
+  rawPane.append(section('Raw records', { actions: [copyBtn(() => JSON.stringify(detail?.raw ?? ev, null, 2))] },
     h('pre', { class: 'plain' }, detail ? JSON.stringify(detail.raw, (k, v) => typeof v === 'string' && v.length > 20000 ? v.slice(0, 20000) + `…[${v.length}]` : v, 2) : JSON.stringify(ev, null, 2) + (detail === null ? '\n\n(loading full record…)' : ''))));
   root.append(rawPane);
   highlightIn(root);
@@ -386,11 +492,12 @@ function renderImages(ev, ctx) {
 /** Details content for a file from the Files tab. */
 export function renderFileDetails(file, ctx, highlightLine = null) {
   const root = h('div', { class: 'details' });
-  root.append(h('div', { class: 'dhead' }, h('span', { class: 'ico' }, '📄'), h('span', { class: 'dtitle' }, relPath(file.path, ctx.cwd)),
-    h('span', { class: 'dmeta' }, `${fmtTokens(file.size)} B${file.truncated ? ' · truncated' : ''}`),
-    h('span', { class: 'dactions' }, openBtn(file.path, highlightLine || 1, ctx.api), copyBtn(file.content ?? ''))));
+  const name = relPath(file.path, ctx.cwd);
+  root.append(headerFor({ tag: h('span', { class: 'tag f-read' }, 'File'), title: name, nav: false,
+    meta: [file.size != null ? `${fmtTokens(file.size)} bytes` : null, file.truncated ? 'truncated' : null] }));
   const body = h('div', { class: 'dbody' });
-  body.append(file.binary ? h('div', { class: 'note' }, 'binary file') : file.error ? h('div', { class: 'note err' }, file.error) : codeBlock(file.content ?? '', langFor(file.path)));
+  body.append(section('Contents', { actions: [openBtn(file.path, highlightLine || 1, ctx.api), copyBtn(file.content ?? '')], ask: file.content ? { kind: 'text', label: `File ${name}`, fromSection: true, what: 'this file' } : null },
+    file.binary ? h('div', { class: 'note' }, 'binary file') : file.error ? h('div', { class: 'note err' }, file.error) : codeBlock(file.content ?? '', langFor(file.path))));
   root.append(body);
   highlightIn(root);
   return root;
@@ -400,10 +507,10 @@ export function renderFileDetails(file, ctx, highlightLine = null) {
 export function renderDiffDetails(diff, ctx) {
   const root = h('div', { class: 'details' });
   const full = ctx.cwd && diff.file ? `${ctx.root || ctx.cwd}/${diff.file}` : diff.file;
-  root.append(h('div', { class: 'dhead' }, h('span', { class: 'ico' }, '±'), h('span', { class: 'dtitle' }, diff.file || ''),
-    h('span', { class: 'dmeta' }, diff.untracked ? 'untracked' : 'vs HEAD'), h('span', { class: 'dactions' }, openBtn(full, 1, ctx.api), copyBtn(diff.diff ?? ''))));
+  root.append(headerFor({ tag: h('span', { class: 'tag f-edit' }, 'Diff'), title: diff.file || '', nav: false, meta: [diff.untracked ? 'untracked' : 'vs HEAD'] }));
   const body = h('div', { class: 'dbody' });
-  body.append(diff.diff ? renderSideBySide(parseUnified(diff.diff), { lang: langFor(diff.file) }) : h('div', { class: 'note' }, 'no diff'));
+  body.append(section('Changes', { actions: [openBtn(full, 1, ctx.api), copyBtn(diff.diff ?? '')], ask: diff.diff ? { kind: 'text', label: `Diff of ${diff.file}`, text: diff.diff, what: 'this diff' } : null },
+    diff.diff ? renderSideBySide(parseUnified(diff.diff), { lang: langFor(diff.file) }) : h('div', { class: 'note' }, 'no diff')));
   root.append(body);
   return root;
 }

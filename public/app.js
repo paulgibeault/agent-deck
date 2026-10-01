@@ -1,71 +1,117 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
-import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, h, esc, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename, codeBlock } from './events.js';
+import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
+  markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon } from './events.js';
 
 const $ = (id) => document.getElementById(id);
-const ROW_H = 26;
 
 // ------------------------------------------------------------ api
+async function req(path, opts) {
+  const r = await fetch(path, opts);
+  let body = null; try { body = await r.json(); } catch { /* not json */ }
+  if (!r.ok) throw new Error(body?.error || `${r.status} ${path}`);
+  return body;
+}
 const api = {
-  async get(path) { const r = await fetch(path); if (!r.ok) throw new Error(`${r.status} ${path}`); return r.json(); },
-  async post(path, body) { const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); if (!r.ok) throw new Error(`${r.status} ${path}`); return r.json(); },
-  openEditor(path, line) { return api.post('/api/open-editor', { path, line }).catch(e => toast(`open editor failed: ${e.message}`)); },
+  get: (path) => req(path),
+  post: (path, body) => req(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }),
+  openEditor(path, line) { return api.post('/api/open-editor', { path, line }).catch(e => toast(`Open in editor failed: ${e.message}`)); },
 };
 const sid = (id) => encodeURIComponent(id);
 
 // ------------------------------------------------------------ state
+const prefs = (() => { try { return JSON.parse(localStorage.getItem('deck.prefs') || '{}'); } catch { return {}; } })();
+function savePrefs() { try { localStorage.setItem('deck.prefs', JSON.stringify(prefs)); } catch { /* private mode */ } }
+
 const state = {
-  snapshot: { active: [], recent: [], closed: [] },
+  snapshot: { active: [], recent: [], closed: [], hidden: [] },
   byId: new Map(),            // id -> summary (sessions and agents)
   selected: null,
-  cache: new Map(),           // id -> { events: [], byId: Map, lastSeq, meta, brief, summary, loaded }
-  expanded: new Set(),        // agentIds expanded inline
+  cache: new Map(),           // id -> { events, byId, lastSeq, meta, brief, summary, loaded }
+  expanded: new Set(),        // agentIds expanded inline in the events list
   tab: 'events',
   follow: true,
   cursor: null,               // selected event id
-  rows: [],
-  filter: '',
-  hideThinking: false,
-  hideQueue: false,
-  treeFilter: '',
+  rows: [], offsets: [], total: 0,
+  filter: '', kind: 'all', showThinking: prefs.showThinking !== false,
+  treeFilter: '', ctr: null,
+  subsOpen: new Set(), subsAll: new Set(),
   files: null, changes: null,
-  shell: { runs: new Map(), order: [], history: JSON.parse(localStorage.getItem('deck.shhist') || '[]'), hi: -1 },
+  shell: { runs: new Map(), order: [], history: (() => { try { return JSON.parse(localStorage.getItem('deck.shhist') || '[]'); } catch { return []; } })(), hi: -1 },
   detailsKey: null,
+  briefs: new Map(),          // id -> generated brief (server publicBrief)
+  narrator: { enabled: true },
+  clientId: null,
+  ask: null,                  // { spec, primary, extras, thread, sessionId, ring }
 };
-const prefs = JSON.parse(localStorage.getItem('deck.prefs') || '{}');
-function savePrefs() { localStorage.setItem('deck.prefs', JSON.stringify(prefs)); }
 
-function toast(msg) {
-  const t = h('div', { class: 'toast' }, msg);
-  Object.assign(t.style, { position: 'fixed', bottom: '12px', left: '50%', transform: 'translateX(-50%)', background: 'var(--bg3)', border: '1px solid var(--line)', padding: '6px 10px', borderRadius: '4px', zIndex: 9 });
-  document.body.append(t); setTimeout(() => t.remove(), 2500);
+function toast(msg, action = null) {
+  document.querySelector('.toast')?.remove();
+  const t = h('div', { class: 'toast', role: 'status' }, msg);
+  if (action) t.append(h('button', { type: 'button', onclick: () => { action.fn(); t.remove(); } }, action.label));
+  document.body.append(t); setTimeout(() => t.remove(), action ? 6000 : 3000);
 }
+
+// ------------------------------------------------------------ phases
+// Four states the eye can tell apart: working, turn (your turn), done, ended.
+function phaseOf(s) {
+  if (!s) return 'ended';
+  if (s.kind === 'agent') return s.status === 'running' ? 'working' : s.status === 'done' ? 'done' : 'ended';
+  if (!s.alive) return 'ended';
+  const c = state.cache.get(s.id);
+  return c?.brief?.phase || s.glance?.phase || (s.status === 'busy' ? 'working' : 'turn');
+}
+const PHASE_LABEL = { working: 'Working', turn: 'Your turn', done: 'Done', ended: 'Ended' };
+const pill = (phase) => h('span', { class: `pill ${phase}` }, h('span', { class: 'pd' }), PHASE_LABEL[phase]);
+const tilde = (p) => String(p || '').replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, '~');
+const recentErr = (s) => s.glance?.errors && s.glance.lastErrorTs && Date.now() - Date.parse(s.glance.lastErrorTs) < 30 * 60_000;
 
 // ------------------------------------------------------------ SSE
 let es = null;
 function connect() {
   es = new EventSource('/api/stream');
-  es.onopen = () => { $('conn').classList.add('on'); if (state.selected) catchUp(state.selected); for (const id of state.expanded) catchUp(id); };
-  es.onerror = () => { $('conn').classList.remove('on'); };
-  es.addEventListener('sessions.snapshot', (e) => { applySnapshot(JSON.parse(e.data)); });
+  es.onopen = () => { setConn(true); if (state.selected) catchUp(state.selected); for (const id of state.expanded) catchUp(id); };
+  es.onerror = () => setConn(false);
+  es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.narrator = d.narrator || state.narrator; reportView(); });
+  es.addEventListener('sessions.snapshot', (e) => applySnapshot(JSON.parse(e.data)));
+  es.addEventListener('briefs.snapshot', (e) => { const all = JSON.parse(e.data); for (const [id, b] of Object.entries(all)) state.briefs.set(id, b); refreshBriefViews(); });
+  es.addEventListener('brief.update', (e) => { const b = JSON.parse(e.data); if (b.narrator) state.narrator = { ...state.narrator, ...b.narrator }; state.briefs.set(b.id, b); refreshBriefViews(b.id); });
   es.addEventListener('event.batch', (e) => { const { sessionId, events } = JSON.parse(e.data); onEvents(sessionId, events); });
   es.addEventListener('event.update', (e) => { const { sessionId, event } = JSON.parse(e.data); onUpdate(sessionId, event); });
-  es.addEventListener('session.update', (e) => { const d = JSON.parse(e.data); onSession(d); });
+  es.addEventListener('session.update', (e) => onSession(JSON.parse(e.data)));
   es.addEventListener('shell.output', (e) => shellOutput(JSON.parse(e.data)));
   es.addEventListener('shell.exit', (e) => shellExit(JSON.parse(e.data)));
 }
+function setConn(on) {
+  $('conn').classList.toggle('on', on);
+  $('conn').querySelector('.clbl').textContent = on ? 'Live' : 'Offline';
+}
+
+/** Tell the server which session this tab shows, so its brief refreshes on the fast cadence. */
+function reportView() {
+  if (!state.clientId) return;
+  api.post('/api/view', { clientId: state.clientId, sessionId: document.visibilityState === 'visible' ? state.selected : null }).catch(() => {});
+}
+document.addEventListener('visibilitychange', reportView);
 
 function applySnapshot(snap) {
-  state.snapshot = snap;
+  state.snapshot = { hidden: [], ...snap };
   state.byId.clear();
-  for (const b of ['active', 'recent', 'closed']) for (const s of snap[b]) { state.byId.set(s.id, s); for (const a of s.subagents || []) state.byId.set(a.id, a); }
+  for (const b of ['active', 'recent', 'closed', 'hidden']) for (const s of state.snapshot[b]) { state.byId.set(s.id, s); for (const a of s.subagents || []) state.byId.set(a.id, a); }
   renderTree();
-  if (state.selected) { renderBrief(); }
+  if (state.selected) renderHeader(); else scheduleOverview();
 }
 
 function onSession({ id, meta, brief, summary }) {
   const c = ensureCache(id);
-  c.meta = meta; c.brief = brief; if (summary) { c.summary = summary; state.byId.set(id, summary); for (const a of summary.subagents || []) state.byId.set(a.id, a); updateTreeRow(summary); }
-  if (id === state.selected) { renderBrief(); renderQueue(); }
+  c.meta = meta; c.brief = brief;
+  if (summary) {
+    const prev = state.byId.get(id);
+    if (prev?.glance && !summary.glance) summary.glance = prev.glance;
+    c.summary = summary; state.byId.set(id, summary); for (const a of summary.subagents || []) state.byId.set(a.id, a);
+    for (const b of ['active', 'recent', 'closed', 'hidden']) { const i = state.snapshot[b].findIndex(x => x.id === id); if (i >= 0) state.snapshot[b][i] = summary; }
+    scheduleTree();
+  }
+  if (id === state.selected) { renderHeader(); renderQueue(); }
   if (summary?.subagents?.some(a => state.expanded.has(a.id)) && state.selected === id) scheduleRows();
 }
 
@@ -124,200 +170,517 @@ async function loadSession(id) {
     c.loaded = true; c.loading = null;
     return c;
   })();
-  return c.loading;
+  try { return await c.loading; } catch (e) { c.loading = null; throw e; }
 }
 
-// ------------------------------------------------------------ tree
-function dotClass(s) {
-  if (s.kind === 'agent') return s.status;
-  if (!s.alive) return 'dead';
-  return s.status || 'idle';
+// ------------------------------------------------------------ rail
+let treeTimer = null;
+function scheduleTree() { if (!treeTimer) treeTimer = requestAnimationFrame(() => { treeTimer = null; renderTree(); }); }
+
+function sessRow(s) {
+  const phase = phaseOf(s);
+  const isAgent = s.kind === 'agent';
+  const meta = isAgent ? [s.agentType, s.worktreeBranch].filter(Boolean).join(' · ')
+    : s.bucket === 'active' && !state.snapshot.hidden.includes(s)
+      ? [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, phase === 'turn' ? 'your turn' : null, s.subagents?.length ? `${s.subagents.length} subagent${s.subagents.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
+      : [s.project, s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ');
+  const btn = h('button', { type: 'button', class: `sess${isAgent ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, title: s.cwd || s.title },
+    h('span', { class: `dot ${phase}` }),
+    h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), !isAgent || meta ? h('span', { class: 'sub' }, meta || ' ') : null),
+    h('span', { class: 'r', title: new Date(s.mtime).toLocaleString() }, ago(Date.now() - (s.mtime || 0))));
+  return h('li', {}, btn);
 }
-function treeRow(s, depth = 0) {
-  const li = h('li', { class: `sess${s.kind === 'agent' ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}`, dataset: { id: s.id }, onclick: () => select(s.id) });
-  li.append(h('span', { class: `dot ${dotClass(s)}`, title: s.kind === 'agent' ? s.status : (s.alive ? `${s.status || 'alive'} · pid ${s.pid}` : 'not running') }));
-  const t = h('span', { class: 't' });
-  t.append(h('span', { class: 'title', title: s.title }, s.title));
-  const sub = s.kind === 'agent'
-    ? [s.agentType, s.worktreeBranch ? `⎇ ${s.worktreeBranch}` : null].filter(Boolean).join(' · ')
-    : [s.project, s.gitBranch ? `⎇ ${s.gitBranch}` : null, s.entrypoint === 'claude-desktop' ? 'desktop' : s.entrypoint].filter(Boolean).join(' · ');
-  t.append(h('span', { class: 'sub', title: s.cwd || '' }, sub));
-  li.append(t);
-  const r = h('span', { class: 'r' });
-  if (s.kind === 'session' && s.running) r.append(h('span', { class: 'chip runs', title: 'subagents running' }, `${s.running}⚡`), ' ');
-  if (s.pr) r.append(h('a', { href: s.pr.url, target: '_blank', title: s.pr.url, onclick: (e) => e.stopPropagation() }, `#${s.pr.number}`), ' ');
-  r.append(h('span', { title: new Date(s.mtime).toLocaleString() }, ago(Date.now() - (s.mtime || 0))));
-  li.append(r);
-  return li;
+
+function subsBlock(s, alwaysOpen) {
+  const subs = s.subagents || [];
+  const done = subs.filter(a => a.status === 'done').length;
+  const run = subs.filter(a => a.status === 'running').length;
+  const containsSel = subs.some(a => a.id === state.selected);
+  const open = state.subsOpen.has(s.id) ? true : state.subsOpen.has('!' + s.id) ? false : (alwaysOpen || containsSel || s.id === state.selected);
+  const li = h('li', { class: `subs${open ? '' : ' collapsed'}`, dataset: { parent: s.id } });
+  li.append(h('button', { type: 'button', class: 'subs-h', dataset: { subs: s.id }, 'aria-expanded': String(open) },
+    svgUse('i-down', 10), h('span', {}, 'Subagents'), h('span', { class: 'muted' }, `${done} of ${subs.length} done${run ? ` · ${run} running` : ''}`)));
+  const bar = h('div', { class: 'bar', 'aria-hidden': 'true' });
+  if (done) bar.append(h('span', { class: 'b-done', style: `flex-grow:${done}` }));
+  if (run) bar.append(h('span', { class: 'b-run', style: `flex-grow:${run}` }));
+  if (subs.length - done - run) bar.append(h('span', { class: 'b-other', style: `flex-grow:${subs.length - done - run}` }));
+  li.append(bar);
+  const out = [li];
+  if (open) {
+    const order = [...subs].sort((a, b) => (b.status === 'running') - (a.status === 'running') || b.mtime - a.mtime);
+    const all = state.subsAll.has(s.id) || containsSel;
+    const shown = all ? order : order.slice(0, 4);
+    for (const a of shown) out.push(sessRow(a));
+    if (order.length > 4 && !containsSel) out.push(h('li', {}, h('button', { type: 'button', class: 'more', dataset: { more: s.id } }, all ? 'Show fewer' : `+ ${order.length - 4} more`)));
+  }
+  return out;
 }
+
 function matchesTree(s) {
+  if (state.ctr) {
+    if (s.bucket !== 'active') return false;
+    const p = phaseOf(s);
+    if (state.ctr === 'errors' ? !recentErr(s) : p !== state.ctr) return false;
+  }
   if (!state.treeFilter) return true;
   const q = state.treeFilter.toLowerCase();
   return [s.title, s.project, s.cwd, s.gitBranch, s.id].some(x => x && String(x).toLowerCase().includes(q))
     || (s.subagents || []).some(a => a.title?.toLowerCase().includes(q));
 }
+
 function renderTree() {
-  for (const b of ['active', 'recent', 'closed']) {
+  const snap = state.snapshot;
+  for (const b of ['active', 'recent', 'closed', 'hidden']) {
     const sec = document.querySelector(`.bucket[data-bucket=${b}]`);
-    const ul = sec.querySelector('ul'); ul.replaceChildren();
-    const list = state.snapshot[b].filter(matchesTree);
-    sec.querySelector('.count').textContent = list.length ? `(${list.length})` : '';
-    for (const s of list) {
-      ul.append(treeRow(s));
-      const subs = (s.subagents || []);
-      const show = b === 'active' ? subs : subs.filter(a => a.id === state.selected);
-      for (const a of show) ul.append(treeRow(a, 1));
-      if (b !== 'active' && subs.length && show.length < subs.length) {
-        const more = h('li', { class: 'sess agent muted', onclick: () => { s._showAll = !s._showAll; renderTree(); } }, h('span'), h('span', { class: 't' }, s._showAll ? '' : `${subs.length} subagent${subs.length === 1 ? '' : 's'} ▸`));
-        if (s._showAll) { more.remove(); for (const a of subs) ul.append(treeRow(a, 1)); } else ul.append(more);
+    const ul = sec.querySelector('ul');
+    const list = (snap[b] || []).filter(matchesTree);
+    sec.querySelector('.count').textContent = list.length || '';
+    sec.hidden = b === 'hidden' && !snap.hidden.length;
+    const frag = document.createDocumentFragment();
+    let lastRepo = null;
+    const groups = b === 'active' ? groupByRepo(list) : [[null, list]];
+    for (const [repo, items] of groups) {
+      if (repo && repo !== lastRepo) { frag.append(h('li', { class: 'repo', title: repo }, svgUse('i-folder', 12), tilde(repo))); lastRepo = repo; }
+      for (const s of items) {
+        frag.append(sessRow(s));
+        const subs = s.subagents || [];
+        if (subs.length && (b === 'active' || s.id === state.selected || subs.some(a => a.id === state.selected))) frag.append(...subsBlock(s, false));
       }
     }
+    ul.replaceChildren(frag);
   }
-  const total = state.snapshot.active.length + state.snapshot.recent.length + state.snapshot.closed.length;
-  $('tree-foot').textContent = `${total} sessions · ${state.snapshot.active.length} live`;
+  const total = snap.active.length + snap.recent.length + snap.closed.length;
+  $('tree-foot').textContent = `${total} sessions · ${snap.active.length} live${snap.hidden.length ? ` · ${snap.hidden.length} hidden` : ''}`;
+  renderCounters();
 }
-function updateTreeRow(s) {
-  const li = document.querySelector(`.sess[data-id="${CSS.escape(s.id)}"]`);
-  if (!li) return;
-  const fresh = treeRow(s);
-  li.replaceWith(fresh);
+function groupByRepo(list) {
+  const m = new Map();
+  for (const s of list) { const k = s.cwd || s.project || '?'; if (!m.has(k)) m.set(k, []); m.get(k).push(s); }
+  return [...m];
 }
+function renderCounters() {
+  const act = state.snapshot.active;
+  const n = { working: act.filter(s => phaseOf(s) === 'working').length, turn: act.filter(s => phaseOf(s) === 'turn').length, errors: act.filter(recentErr).length };
+  for (const b of $('counters').querySelectorAll('.ctr')) {
+    const k = b.dataset.c;
+    b.querySelector('b').textContent = n[k];
+    b.classList.toggle('lit', n[k] > 0);
+    b.setAttribute('aria-pressed', String(state.ctr === k));
+    b.disabled = !n[k] && state.ctr !== k;
+  }
+}
+
+$('tree').addEventListener('click', (e) => {
+  const t = e.target.closest('button');
+  if (!t) return;
+  if (t.classList.contains('bk-t')) { t.closest('.bucket').classList.toggle('collapsed'); return; }
+  if (t.dataset.askList) { askList(t.dataset.askList, t); return; }
+  if (t.dataset.subs) {
+    const id = t.dataset.subs; const open = t.getAttribute('aria-expanded') === 'true';
+    state.subsOpen.delete(id); state.subsOpen.delete('!' + id); state.subsOpen.add(open ? '!' + id : id);
+    renderTree(); return;
+  }
+  if (t.dataset.more) { const id = t.dataset.more; state.subsAll.has(id) ? state.subsAll.delete(id) : state.subsAll.add(id); renderTree(); return; }
+  if (t.dataset.id) select(t.dataset.id);
+});
+$('counters').addEventListener('click', (e) => {
+  const b = e.target.closest('.ctr'); if (!b) return;
+  state.ctr = state.ctr === b.dataset.c ? null : b.dataset.c;
+  if (state.ctr) document.querySelector('.bucket[data-bucket=active]').classList.remove('collapsed');
+  renderTree();
+});
+
+// ------------------------------------------------------------ overview
+let ovTimer = null;
+function scheduleOverview() { if (!state.selected && !ovTimer) ovTimer = requestAnimationFrame(() => { ovTimer = null; renderOverview(); }); }
+
+function briefLine(id) {
+  const pb = state.briefs.get(id);
+  return pb?.brief?.summary || null;
+}
+function freshness(id, shownHere) {
+  const pb = state.briefs.get(id);
+  const s = state.byId.get(id);
+  const phase = phaseOf(s);
+  if (!state.narrator.enabled) return { text: 'Model briefs are off (server started with --no-narrator)' };
+  if (pb?.pending) return { text: pb.brief ? 'Updating…' : 'Writing the first brief…', spin: true };
+  // A per-session failure, or a CLI-wide one (bad login) that pauses all briefs.
+  const error = pb?.error || (state.narrator.error?.fatal ? state.narrator.error.message : null);
+  if (error && !pb?.brief) {
+    const auth = /authenticat|login|oauth/i.test(error);
+    return { text: `Brief unavailable: ${error}${auth ? '. Run claude in a terminal and sign in (/login), then refresh.' : ''}`, err: true };
+  }
+  const live = s?.kind === 'session' ? !!s.alive : phase === 'working';
+  const cad = shownHere
+    ? (phase === 'working' ? 'refreshes every 20s while working' : phase === 'turn' ? 'refreshes on new activity' : 'final')
+    : (phase === 'working' && live && s?.kind === 'session' ? 'every 2m in background' : 'paused · refreshes when opened');
+  if (!pb?.brief) return { text: `No brief yet · ${cad}` };
+  return { text: `Session to date · updated ${ago(Date.now() - pb.updatedAt)} ago · ${cad}${pb.error ? ' · last refresh failed' : ''}`, live: phase === 'working' };
+}
+
+function nowText(s) {
+  const g = s.glance || {};
+  if (g.activeTool) return { tag: g.activeTool.name, text: g.activeTool.summary || g.activeTool.name };
+  if (phaseOf(s) === 'turn') return { tag: null, text: `Waiting for you${g.idleMs != null ? ` · idle ${ago(g.idleMs + (Date.now() - (g._at || Date.now())))}` : ''}` };
+  return { tag: null, text: [g.state, g.detail].filter(Boolean).join(' · ') || '—' };
+}
+
+function renderOverview() {
+  const ov = $('overview');
+  const act = state.snapshot.active;
+  const working = act.filter(s => phaseOf(s) === 'working');
+  const turn = act.filter(s => phaseOf(s) === 'turn');
+  const errs = act.filter(recentErr);
+  const runningSubs = act.reduce((n, s) => n + (s.running || 0), 0);
+  const spent = act.reduce((n, s) => n + (s.glance?.cost || 0), 0);
+  const repos = new Set(act.map(s => s.cwd)).size;
+  const askBtn = (key, what) => h('button', { type: 'button', class: 'ask-mini', dataset: { askList: key }, title: `Ask about ${what}` }, starIcon(10), 'Ask');
+
+  const head = h('header', { class: 'ov-h' },
+    h('h1', {}, act.length ? `${working.length} agent${working.length === 1 ? '' : 's'} working, ${turn.length} waiting on you` : 'No agents running'),
+    h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
+      : 'Start a session with claude in a terminal or the desktop app and it shows up here.'));
+  const out = [head];
+
+  if (turn.length || errs.length) {
+    const sec = h('section', { class: 'ov-sec', dataset: { ov: 'needs' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Needs you'), askBtn('ov-needs', 'what needs you')));
+    for (const s of turn) {
+      sec.append(h('button', { type: 'button', class: 'need turn', dataset: { open: s.id } },
+        pill('turn'),
+        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.gitBranch ? ' · ' + s.gitBranch : ''}`)), h('span', { class: 'nl' }, briefLine(s.id) || s.glance?.lastText || '')),
+        h('span', { class: 'age' }, s.glance?.idleMs != null ? `idle ${ago(s.glance.idleMs)}` : ''),
+        h('span', { class: 'go' }, 'Open')));
+    }
+    for (const s of errs) {
+      if (turn.includes(s)) continue;
+      sec.append(h('button', { type: 'button', class: 'need err', dataset: { open: s.id, errors: '1' } },
+        h('span', { class: 'pill err' }, `${s.glance.errors} error${s.glance.errors === 1 ? '' : 's'}`),
+        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.pr ? ' · PR #' + s.pr.number : ''}`)), h('span', { class: 'nl' }, briefLine(s.id) || s.glance?.lastText || '')),
+        h('span', { class: 'age' }, `latest ${ago(Date.now() - Date.parse(s.glance.lastErrorTs))} ago`),
+        h('span', { class: 'go' }, 'Review')));
+    }
+    out.push(sec);
+  }
+
+  if (working.length) {
+    const cards = h('div', { class: 'cards' });
+    for (const s of working) {
+      const nt = nowText(s);
+      const f = freshness(s.id, false);
+      const g = s.glance || {};
+      cards.append(h('button', { type: 'button', class: 'card', dataset: { open: s.id } },
+        h('span', { class: 'ch' }, h('span', { class: 'dot working' }), h('b', {}, s.title), h('span', { class: 'muted' }, ago(Date.now() - s.mtime))),
+        h('span', { class: 'cw' }, [tilde(s.cwd), s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ')),
+        h('span', { class: 'nowbox' }, nt.tag ? h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: nt.tag, isError: false, display: nt.tag } }).fam}` }, nt.tag) : null, h('span', { class: 'nb' }, nt.text)),
+        h('span', { class: 'fresh' }, h('span', { class: `fdot2${f.live ? ' live' : ''}` }), `Brief · ${f.text.replace(/^Session to date · /, '')}`),
+        h('span', { class: 'cs' }, briefLine(s.id) || g.lastText || ''),
+        h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
+    }
+    out.push(h('section', { class: 'ov-sec', dataset: { ov: 'working' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Working'), askBtn('ov-working', 'the working sessions')), cards));
+  }
+
+  const recent = state.snapshot.recent.slice(0, 8);
+  if (recent.length) {
+    const sec = h('section', { class: 'ov-sec', dataset: { ov: 'recent' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Recently finished'), askBtn('ov-recent', 'recently finished sessions')));
+    for (const s of recent) sec.append(h('button', { type: 'button', class: 'recent-row', dataset: { open: s.id } }, h('span', {}, s.title), h('span', { class: 'w' }, [s.project, s.gitBranch].filter(Boolean).join(' · ')), h('span', { class: 'a' }, ago(Date.now() - s.mtime))));
+    out.push(sec);
+  }
+  if (!act.length && !recent.length) out.push(h('div', { class: 'empty' }, 'Nothing to show yet.'));
+  ov.replaceChildren(...out);
+  applyRing();
+}
+$('overview').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.askList) { e.stopPropagation(); askList(b.dataset.askList, b); return; }
+  if (b.dataset.open) { const errs = !!b.dataset.errors; select(b.dataset.open).then(() => { if (errs) setKind('errors'); }); }
+});
+
+function goOverview() {
+  state.selected = null; state.cursor = null;
+  prefs.selected = null; savePrefs();
+  $('session-view').hidden = true; $('overview').hidden = false;
+  showDetailsEmpty();
+  renderTree(); renderOverview(); reportView();
+}
+$('home').onclick = goOverview;
 
 // ------------------------------------------------------------ selection
 async function select(id) {
   if (!state.byId.has(id) && !state.cache.has(id)) return;
+  const changed = state.selected !== id;
   state.selected = id;
-  state.cursor = null;
-  state.follow = true; $('follow').classList.add('active');
+  if (changed) { state.cursor = null; setFollow(true, true); }
   prefs.selected = id; savePrefs();
+  $('overview').hidden = true; $('session-view').hidden = false;
   renderTree();
-  const s = state.byId.get(id);
-  $('brief').innerHTML = `<div class="brief-top"><span class="title">${esc(s?.title || id)}</span><span class="muted">loading…</span></div>`;
-  $('vrows').replaceChildren();
-  try {
-    await loadSession(id);
-  } catch (e) { toast(`load failed: ${e.message}`); return; }
+  reportView();
+  renderHeader();
+  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); }
+  try { await loadSession(id); }
+  catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
-  renderBrief(); renderQueue(); scheduleRows(true);
-  state.files = null; state.changes = null;
-  $('files-count').textContent = ''; $('changes-count').textContent = '';
-  $('files').replaceChildren(); $('changes').replaceChildren(); $('changes-head').textContent = '';
-  if (state.tab === 'files') loadFiles();
-  if (state.tab === 'changes') loadChanges();
-  $('sh-cwd').value = $('sh-cwd').value || s?.cwd || '';
-  if (!$('sh-cwd').dataset.user) $('sh-cwd').value = s?.cwd || '';
-}
-
-// ------------------------------------------------------------ brief
-function chip(label, title, cls = '') { return h('span', { class: `chip ${cls}`, title }, label); }
-function renderBrief() {
-  const id = state.selected; const c = state.cache.get(id); const s = state.byId.get(id) || c?.summary;
-  const el = $('brief');
-  if (!c || !s) return;
-  const b = c.brief; const m = c.meta;
-  el.replaceChildren();
-  const top = h('div', { class: 'brief-top' });
-  top.append(h('span', { class: 'title', title: s.cwd || '' }, s.title || id));
-  if (b) top.append(h('span', { class: `state ${b.state.split(' ')[0]}` }, b.state));
-  if (b?.detail) top.append(h('span', { class: 'detail', title: b.detail }, b.detail));
-  el.append(top);
-  if (b?.lastText) el.append(h('div', { class: 'last', title: m?.lastText || '' }, `“${b.lastText}”`));
-  const chips = h('div', { class: 'chips' });
-  if (s.kind === 'agent') {
-    const parent = state.byId.get(s.parentId);
-    chips.append(chip(`↑ ${parent?.title || s.parentId}`, 'parent session', ''), );
-    chips.lastChild.style.cursor = 'pointer'; chips.lastChild.onclick = () => select(s.parentId);
-    if (s.agentType) chips.append(chip(s.agentType, 'agent type'));
-  } else {
-    chips.append(chip(s.alive ? `pid ${s.pid}` : 'not running', s.alive ? `${s.entrypoint || ''} · ${s.sessionKind || ''}` : 'process gone; transcript only', s.alive ? 'ok' : ''));
-    chips.append(chip('observe-only', 'Launched outside the deck. The deck can read but not drive this session (phase 3).'));
+  renderHeader(); renderQueue(); scheduleRows(true);
+  if (changed) {
+    state.files = null; state.changes = null;
+    $('files-count').textContent = ''; $('changes-count').textContent = '';
+    $('files').replaceChildren(); $('changes').replaceChildren(); $('changes-head').textContent = '';
+    if (state.tab === 'files') loadFiles();
+    if (state.tab === 'changes') loadChanges();
+    const s = state.byId.get(id);
+    if (!$('sh-cwd').dataset.user) $('sh-cwd').value = s?.cwd || '';
   }
-  if (b?.model) chips.append(chip(b.model.replace('claude-', ''), 'model'));
-  if (b?.effort) chips.append(chip(`effort ${b.effort}`, 'effort'));
-  if (b?.mode && b.mode !== 'normal') chips.append(chip(b.mode, 'permission mode'));
-  if (b?.turnUsage) chips.append(chip(`turn ${fmtTokens(b.turnUsage.output)}↑ ${fmtTokens(b.turnUsage.cacheRead + b.turnUsage.input + b.turnUsage.cacheCreate)}↓`, `this turn: ${b.turnUsage.messages} messages · out ${fmtTokens(b.turnUsage.output)} · in ${fmtTokens(b.turnUsage.input)} · cache read ${fmtTokens(b.turnUsage.cacheRead)} · cache write ${fmtTokens(b.turnUsage.cacheCreate)} · thinking ${fmtTokens(b.turnUsage.thinking)}${b.turnMs ? ' · ' + fmtMs(b.turnMs) : ''}`));
-  if (b?.usage) chips.append(chip(`session ${fmtTokens(b.usage.output)}↑ ${fmtTokens(b.usage.cacheRead + b.usage.input + b.usage.cacheCreate)}↓`, `session: ${b.usage.messages} messages · ${b.turns} turns · out ${fmtTokens(b.usage.output)} · in ${fmtTokens(b.usage.input)} · cache read ${fmtTokens(b.usage.cacheRead)} · cache write ${fmtTokens(b.usage.cacheCreate)} · thinking ${fmtTokens(b.usage.thinking)}`));
-  if (b?.cost?.totalCostUSD != null) chips.append(chip(fmtUsd(b.cost.totalCostUSD), `cost-state from Claude Code · +${b.cost.linesAdded} −${b.cost.linesRemoved} lines · models ${b.cost.models.join(', ')}`));
-  if (b) chips.append(chip(`${b.filesTouched} files`, 'files touched'));
-  if (b?.errors) chips.append(chip(`${b.errors} errors`, 'tool errors + api errors', 'err'));
-  if (b?.branch) chips.append(chip(`⎇ ${b.branch}`, 'git branch (from transcript)'));
-  if (b?.pr) { const a = h('a', { href: b.pr.url, target: '_blank' }, `PR #${b.pr.number}`); chips.append(h('span', { class: 'chip', title: b.pr.url }, a)); }
-  if (b?.subagents?.total) chips.append(chip(`${b.subagents.running}/${b.subagents.total} subagents`, 'running / total'));
-  if (b?.queueDepth) chips.append(chip(`${b.queueDepth} queued`, 'prompts queued', 'ok'));
-  if (s.cwd) chips.append(chip(s.cwd.replace(/^\/Users\/[^/]+/, '~'), s.cwd));
-  el.append(chips);
 }
 
-// ------------------------------------------------------------ prompt / queue
+// ------------------------------------------------------------ session header + brief
+function renderHeader() {
+  const id = state.selected; if (!id) return;
+  const c = state.cache.get(id); const s = state.byId.get(id) || c?.summary;
+  const el = $('shead');
+  if (!s) { el.replaceChildren(h('div', { class: 'muted' }, 'Loading…')); return; }
+  const b = c?.brief; const phase = phaseOf(s);
+  const isAgent = s.kind === 'agent';
+
+  const win = h('div', { class: 'sh-win' });
+  win.append(h('button', { type: 'button', class: 'icon-btn ghost', 'aria-label': isAgent ? 'Back to parent session' : 'Close session (hide it from the deck)', title: isAgent ? 'Back to parent session' : 'Close (hide from the deck)', onclick: closeSession }, svgUse('i-x', 14)));
+  if (!isAgent) win.append(h('button', { type: 'button', class: 'icon-btn ghost danger', 'aria-label': 'Delete session', title: s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', disabled: s.alive || null, onclick: deleteSession }, svgUse('i-trash', 14)));
+  const top = h('div', { class: 'sh-top' }, win, h('h1', { title: s.title }, s.title || id), pill(phase));
+  if (isAgent) {
+    const parent = state.byId.get(s.parentId);
+    top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.parentId) }, `subagent of ${parent?.title || s.parentId}`));
+  } else {
+    top.append(h('span', { class: 'pill outline', title: 'Launched outside the deck. The deck can read it but not drive it (phase 3).' }, 'Observe only'));
+  }
+  top.append(h('span', { class: 'spacer' }));
+  if (s.cwd) top.append(h('button', { type: 'button', class: 'btn', onclick: () => api.openEditor(s.cwd) }, svgUse('i-code', 14), 'Open in editor'));
+  if (!isAgent) top.append(h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Copy resume command', title: 'Copy resume command', onclick: () => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); toast('Copied resume command'); } }, svgUse('i-copy', 14)));
+
+  const out = [top, renderNow(s, b, phase), renderBriefBox(id, s, b)];
+
+  const meta = h('div', { class: 'metaline' });
+  if (s.cwd) meta.append(h('span', { class: 'mono', title: s.cwd }, tilde(s.cwd)));
+  if (b?.branch || s.gitBranch) meta.append(h('span', {}, b?.branch || s.gitBranch));
+  if (b?.pr) meta.append(h('a', { href: b.pr.url, target: '_blank', rel: 'noopener' }, `PR #${b.pr.number}`));
+  if (b?.model) meta.append(h('span', {}, [b.model.replace('claude-', ''), b.effort].filter(Boolean).join(' · ')));
+  if (b?.turnUsage?.messages) meta.append(h('span', { title: `cache read ${fmtTokens(b.turnUsage.cacheRead)} · cache write ${fmtTokens(b.turnUsage.cacheCreate)} · thinking ${fmtTokens(b.turnUsage.thinking)}` }, `turn ${fmtTokens(b.turnUsage.input + b.turnUsage.cacheRead + b.turnUsage.cacheCreate)} in / ${fmtTokens(b.turnUsage.output)} out`));
+  if (b?.usage?.messages) meta.append(h('span', { title: `${b.usage.messages} messages · ${b.turns} turns` }, `session ${fmtTokens(b.usage.output)} out`));
+  if (b?.cost?.totalCostUSD != null) meta.append(h('span', { title: `+${b.cost.linesAdded} −${b.cost.linesRemoved} lines · ${b.cost.models.join(', ')}` }, fmtUsd(b.cost.totalCostUSD)));
+  if (b?.subagents?.total) meta.append(h('span', {}, `${b.subagents.running} / ${b.subagents.total} subagents running`));
+  if (b?.errors) meta.append(h('button', { type: 'button', onclick: () => setKind('errors') }, `${b.errors} error${b.errors === 1 ? '' : 's'}`));
+  out.push(meta);
+  el.replaceChildren(...out);
+  applyRing();
+}
+
+function renderNow(s, b, phase) {
+  const box = h('div', { class: `nowline ${phase}` });
+  if (b?.activeTool) {
+    const t = b.activeTool;
+    box.append(h('span', { class: 'nl-k' }, 'NOW'), h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: t.name, isError: false } }).fam}` }, t.name),
+      h('span', { class: 'nl-t', title: t.summary }, t.summary || t.name),
+      h('span', { class: 'nl-e', dataset: { started: String(Date.now() - (t.startedMs || 0)) } }, fmtClock(t.startedMs || 0)));
+  } else if (phase === 'turn') {
+    box.append(h('span', { class: 'nl-k' }, 'YOUR TURN'), h('span', { class: 'nl-t' }, b?.lastPrompt ? `Finished: ${b.lastPrompt}` : 'Waiting for your next prompt'), h('span', { class: 'nl-e' }, b?.idleMs != null ? `idle ${ago(b.idleMs)}` : ''));
+  } else if (phase === 'working') {
+    box.append(h('span', { class: 'nl-k' }, 'NOW'), h('span', { class: 'nl-t' }, [b?.state, b?.detail].filter(Boolean).join(' · ') || 'working'));
+  } else {
+    box.append(h('span', { class: 'nl-k' }, phase === 'done' ? 'DONE' : 'ENDED'), h('span', { class: 'nl-t' }, b?.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(b.lastEventTs))} ago` : 'no activity recorded'));
+  }
+  return box;
+}
+function fmtClock(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+setInterval(() => { for (const e of document.querySelectorAll('.nl-e[data-started]')) e.textContent = fmtClock(Date.now() - Number(e.dataset.started)); }, 1000);
+
+function renderBriefBox(id, s, b) {
+  const pb = state.briefs.get(id);
+  const nb = pb?.brief;
+  const f = freshness(id, true);
+  const box = h('section', { id: 'brief-box', class: `brief${prefs.briefCollapsed ? ' collapsed' : ''}`, 'aria-labelledby': 'brief-h' });
+  const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, 'Brief'),
+    h('span', { class: `fr${f.err ? ' err' : ''}`, title: f.text }, f.spin ? h('span', { class: 'spin' }) : null, f.text),
+    h('span', { class: 'spacer' }));
+  if (nb) head.append(h('button', { type: 'button', class: 'icon-btn sm', 'aria-label': prefs.briefCollapsed ? 'Expand brief' : 'Collapse brief', title: prefs.briefCollapsed ? 'Expand' : 'Collapse', onclick: () => { prefs.briefCollapsed = !prefs.briefCollapsed; savePrefs(); renderHeader(); } }, svgUse(prefs.briefCollapsed ? 'i-down' : 'i-up', 12)));
+  if (state.narrator.enabled) head.append(h('button', { type: 'button', class: 'icon-btn sm', 'aria-label': 'Refresh brief now', title: 'Refresh now', disabled: pb?.pending || null, onclick: refreshBrief }, svgUse('i-refresh', 13)));
+  head.append(h('button', { type: 'button', class: 'ask-btn', onclick: () => openAsk({ kind: 'brief', sessionId: id, label: 'Session brief', what: 'this session' }, { type: 'brief' }) }, starIcon(12), 'Ask about this'));
+  box.append(head);
+
+  if (nb?.summary) box.append(h('p', { class: 'sum' }, nb.summary));
+  else box.append(h('p', { class: 'sum fallback' }, b?.lastText ? [h('span', { class: 'lbl2' }, 'Last said · '), b.lastText] : 'No assistant message yet.'));
+
+  if (nb?.progress) {
+    const p = nb.progress;
+    const legend = h('div', { class: 'prog-l' }, h('b', {}, `${p.total} ${p.unit}`));
+    const bar = h('div', { class: 'prog-b', role: 'img', 'aria-label': p.segments.map(x => `${x.count} ${x.label}`).join(', ') });
+    for (const sg of p.segments) {
+      legend.append(h('span', {}, h('i', { class: `tone-${sg.tone}` }), `${sg.count} ${sg.label}`));
+      bar.append(h('span', { class: `tone-${sg.tone}`, style: `flex-grow:${sg.count}` }));
+    }
+    box.append(h('div', { class: 'prog' }, legend, bar));
+  }
+  if (nb && (nb.done.length || nb.now || nb.next)) {
+    box.append(h('div', { class: 'dnn' },
+      h('div', {}, h('h3', {}, 'Done so far'), nb.done.length ? h('ul', {}, ...nb.done.map(x => h('li', {}, x))) : h('p', { class: 'muted' }, '—')),
+      h('div', { class: 'now' }, h('h3', {}, 'Now'), h('p', {}, nb.now || '—')),
+      h('div', {}, h('h3', {}, 'Next'), h('p', {}, nb.next || '—'))));
+  }
+  if (nb?.watch) {
+    const w = h('div', { class: 'watch' }, h('span', { class: 'wk' }, 'WATCH'), h('span', { class: 'wt' }, nb.watch.text));
+    if (nb.watch.seq) w.append(h('button', { type: 'button', onclick: () => jumpToSeq(nb.watch.seq) }, 'Jump to event'));
+    box.append(w);
+  }
+  return box;
+}
+async function refreshBrief() {
+  try { await api.post(`/api/sessions/${sid(state.selected)}/brief/refresh`); }
+  catch (e) { toast(`Refresh failed: ${e.message}`); }
+}
+function refreshBriefViews(id) {
+  if (state.selected && (!id || id === state.selected)) renderHeader();
+  if (!state.selected) scheduleOverview();
+}
+
+// ------------------------------------------------------------ close / delete
+async function closeSession() {
+  const s = state.byId.get(state.selected); if (!s) return;
+  if (s.kind === 'agent') { select(s.parentId); return; }
+  const id = s.id;
+  try {
+    await api.post(`/api/sessions/${sid(id)}/hide`, { hidden: true });
+    goOverview();
+    toast(`Hid “${oneLine(s.title, 40)}” from the deck`, { label: 'Undo', fn: () => api.post(`/api/sessions/${sid(id)}/hide`, { hidden: false }).then(() => select(id)) });
+  } catch (e) { toast(`Close failed: ${e.message}`); }
+}
+function confirmDialog(title, body, okLabel) {
+  const d = $('confirm');
+  $('confirm-t').textContent = title; $('confirm-b').textContent = body; $('confirm-ok').textContent = okLabel;
+  return new Promise((resolve) => { d.onclose = () => resolve(d.returnValue === 'ok'); d.returnValue = ''; d.showModal(); });
+}
+async function deleteSession() {
+  const s = state.byId.get(state.selected); if (!s || s.kind !== 'session') return;
+  const ok = await confirmDialog('Delete this session?', `“${s.title}” and its subagent transcripts move to ~/.agent-deck/trash. Claude Code will no longer list or resume it. You can restore it by moving the files back.`, 'Delete');
+  if (!ok) return;
+  try {
+    const r = await api.post(`/api/sessions/${sid(s.id)}/delete`);
+    state.cache.delete(s.id);
+    goOverview();
+    toast(`Deleted. Files are in ${tilde(r.trashedTo)}`);
+  } catch (e) { toast(`Delete failed: ${e.message}`); }
+}
+
+// ------------------------------------------------------------ prompt queue
 function renderQueue() {
   const c = state.cache.get(state.selected);
   const q = c?.meta?.queue || [];
-  const ul = $('queue'); ul.replaceChildren();
-  $('queue-count').textContent = q.length ? `(${q.length})` : '';
-  $('prompt-note').textContent = q.length ? 'read-only mirror of the session queue' : 'queue empty';
-  q.forEach((item, i) => {
-    ul.append(h('li', {}, h('span', { class: 'n' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
-      h('button', { class: 'mini', onclick: () => navigator.clipboard?.writeText(item.content) }, 'copy')));
-  });
+  $('queue-count').textContent = q.length ? `· ${q.length}` : '· empty';
+  $('prompt-note').textContent = q.length ? 'read-only mirror of the session queue' : 'nothing queued';
+  $('queue').replaceChildren(...q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
+    h('button', { class: 'mini', type: 'button', onclick: () => navigator.clipboard?.writeText(item.content) }, 'Copy'))));
 }
-$('prompt-toggle').onclick = () => $('prompt').classList.toggle('collapsed');
-$('copy-last').onclick = () => { const p = state.cache.get(state.selected)?.meta?.lastPrompt; if (p) { navigator.clipboard?.writeText(p); toast('copied last prompt'); } };
+$('prompt-toggle').onclick = () => { const p = $('prompt'); p.hidden = !p.hidden; $('prompt-toggle').setAttribute('aria-expanded', String(!p.hidden)); };
+$('copy-last').onclick = () => { const p = state.cache.get(state.selected)?.meta?.lastPrompt; if (p) { navigator.clipboard?.writeText(p); toast('Copied last prompt'); } };
 
 // ------------------------------------------------------------ events list
 let rowsTimer = null;
 function scheduleRows(jump = false) {
-  if (rowsTimer) return;
-  rowsTimer = requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderRows(jump); });
+  if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
+  const t = { jump };
+  rowsTimer = t;
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderRows(t.jump); });
 }
+const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 function evMatches(ev, q) {
   if (!q) return true;
   const hay = ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary} ${JSON.stringify(ev.tool.input).slice(0, 2000)}` : `${ev.kind} ${ev.text || ''} ${ev.subtype || ''}`;
   return hay.toLowerCase().includes(q);
 }
+function keepKind(ev) {
+  if (!state.showThinking && ev.kind === 'thinking') return false;
+  switch (state.kind) {
+    case 'tools': return ev.kind === 'tool' || ev.kind === 'prompt';
+    case 'messages': return ev.kind === 'text' || ev.kind === 'prompt';
+    case 'errors': return isErr(ev);
+    default: return true;
+  }
+}
+/** Turn numbering and per-turn totals, chronological. */
+function turnInfo(events, live) {
+  const info = new Map(); let n = 0; let cur = null;
+  for (const ev of events) {
+    if (ev.kind === 'prompt') { n++; cur = { n, start: ev.ts, count: 0, prompt: ev }; info.set(ev.id, cur); }
+    else if (ev.kind === 'turn_end') {
+      if (cur) {
+        const dur = cur.start && ev.ts ? Date.parse(ev.ts) - Date.parse(cur.start) : null;
+        cur.done = { count: cur.count, dur };
+        info.set(ev.id, { text: `Turn ${cur.n} ended · ${cur.count} events${dur != null ? ' · ' + fmtMs(dur) : ''}${ev.text ? ' · ' + ev.text : ''}` });
+        cur = null;
+      }
+    } else if (cur && ev.kind !== 'thinking') cur.count++;
+  }
+  for (const v of info.values()) {
+    if (!v.prompt) continue;
+    const t = fmtTime(v.prompt.ts);
+    v.meta = v.done ? `Turn ${v.n} · ${t} · ${v.done.count} events${v.done.dur != null ? ' · ' + fmtMs(v.done.dur) : ''}` : `Turn ${v.n} · ${t}${live ? ' · live' : ''} · ${v.count} events so far`;
+  }
+  return info;
+}
 function buildRows() {
   const c = state.cache.get(state.selected);
   const rows = [];
-  if (!c) { state.rows = rows; return; }
+  if (!c) { state.rows = rows; state.offsets = []; state.total = 0; return; }
   const q = state.filter.toLowerCase();
-  const push = (ev, depth) => {
-    if (state.hideThinking && ev.kind === 'thinking') return;
-    if (state.hideQueue && ev.kind === 'queue') return;
+  const s = state.byId.get(state.selected);
+  const turns = turnInfo(c.events, phaseOf(s) === 'working');
+  const push = (ev, depth, turn = null) => {
+    if (ev.kind === 'turn_end' && state.kind !== 'all' && state.kind !== 'tools') return;
+    if (ev.kind !== 'prompt' && ev.kind !== 'turn_end' && !keepKind(ev)) return;
+    if (ev.kind === 'prompt' && state.kind === 'errors') return;
     if (!evMatches(ev, q)) return;
-    rows.push({ ev, depth });
+    rows.push({ ev, depth, turn });
   };
-  // Newest first. Inline subagent events sit directly under their Agent
-  // row, also newest first.
+  // Newest first. Inline subagent events sit directly under their Agent row.
   for (let i = c.events.length - 1; i >= 0; i--) {
     const ev = c.events[i];
-    push(ev, 0);
+    push(ev, 0, turns.get(ev.id) || null);
     if (ev.kind === 'tool' && ev.tool.agentId && state.expanded.has(ev.tool.agentId)) {
       const ac = state.cache.get(ev.tool.agentId);
       if (ac?.loaded) for (let j = ac.events.length - 1; j >= 0; j--) push(ac.events[j], 1);
       else rows.push({ ev: { id: `loading:${ev.tool.agentId}`, kind: 'system', subtype: 'loading', text: 'loading subagent events…', ts: null, sessionId: ev.tool.agentId }, depth: 1 });
     }
   }
-  state.rows = rows;
-  $('events-count').textContent = `(${rows.length})`;
+  const offsets = new Array(rows.length); let y = 0;
+  for (let i = 0; i < rows.length; i++) { offsets[i] = y; y += rowHeight(rows[i].ev); }
+  state.rows = rows; state.offsets = offsets; state.total = y;
+  $('events-count').textContent = rows.length;
+  const errs = c.events.reduce((n, ev) => n + (isErr(ev) ? 1 : 0), 0);
+  $('err-count').textContent = errs || '';
 }
 const vlist = $('vlist'), vspacer = $('vspacer'), vrows = $('vrows');
+function rowIndexAt(y) {
+  const o = state.offsets; let lo = 0, hi = o.length - 1, ans = 0;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (o[mid] <= y) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
 function renderRows(jump = false) {
   const n = state.rows.length;
-  vspacer.style.height = `${n * ROW_H}px`;
+  vspacer.style.height = `${state.total + 12}px`;
   if (jump || state.follow) vlist.scrollTop = 0; // newest rows live at the top
-  const first = Math.max(0, Math.floor(vlist.scrollTop / ROW_H) - 8);
-  const last = Math.min(n, Math.ceil((vlist.scrollTop + vlist.clientHeight) / ROW_H) + 8);
-  vrows.style.transform = `translateY(${first * ROW_H}px)`;
+  if (!n) {
+    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || state.kind !== 'all' ? 'No events match.' : 'No events yet.') : 'Loading…'));
+    return;
+  }
+  const first = rowIndexAt(Math.max(0, vlist.scrollTop - 200));
+  const limit = vlist.scrollTop + vlist.clientHeight + 200;
+  vrows.style.transform = `translateY(${state.offsets[first] + 6}px)`;
   const frag = document.createDocumentFragment();
-  const cwd = state.byId.get(state.selected)?.cwd;
-  for (let i = first; i < last; i++) {
-    const { ev, depth } = state.rows[i];
+  for (let i = first; i < n && state.offsets[i] < limit; i++) {
+    const { ev, depth, turn } = state.rows[i];
     const agentStatus = ev.kind === 'tool' && ev.tool.agentId ? state.byId.get(ev.tool.agentId)?.status : null;
-    frag.append(renderRow(ev, { depth, selected: ev.id === state.cursor, cwd, agentStatus, expanded: ev.kind === 'tool' && state.expanded.has(ev.tool.agentId) }));
+    frag.append(renderRow(ev, { depth, selected: ev.id === state.cursor, agentStatus, expanded: ev.kind === 'tool' && state.expanded.has(ev.tool.agentId), turn }));
   }
   vrows.replaceChildren(frag);
+  applyRing();
 }
 vlist.addEventListener('scroll', () => {
-  const atTop = vlist.scrollTop <= ROW_H;
+  const atTop = vlist.scrollTop <= 30;
   if (!atTop && state.follow) setFollow(false, true);
   else if (atTop && !state.follow) setFollow(true, true);
   renderRows();
@@ -333,71 +696,276 @@ vlist.addEventListener('click', async (e) => {
     else { state.expanded.add(id); loadSession(id).then(() => scheduleRows()).catch(err => toast(err.message)); }
     scheduleRows(); return;
   }
-  if (!row) return;
+  if (!row || row.classList.contains('k-turn_end')) return;
   const ev = findEvent(row.dataset.sid, row.dataset.id);
-  if (ev) { setCursor(ev.id); showEventDetails(ev); }
+  if (!ev) return;
+  setCursor(ev.id); showEventDetails(ev);
+  if (btn?.dataset.askRow) askEvent(ev);
 });
 function findEvent(sessionId, id) { return state.cache.get(sessionId)?.byId.get(id) || null; }
 function setCursor(id) { state.cursor = id; renderRows(); }
 function setFollow(on, quiet = false) {
-  state.follow = on; $('follow').classList.toggle('active', on);
+  state.follow = on; $('follow').setAttribute('aria-pressed', String(on));
   if (on && !quiet) { vlist.scrollTop = 0; renderRows(); }
+}
+function setKind(k) {
+  state.kind = k;
+  for (const b of $('kind-seg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.k === k));
+  setTab('events');
+  scheduleRows(true);
 }
 $('follow').onclick = () => setFollow(!state.follow);
 $('ev-filter').oninput = (e) => { state.filter = e.target.value; scheduleRows(); };
-$('hide-thinking').onchange = (e) => { state.hideThinking = e.target.checked; prefs.hideThinking = state.hideThinking; savePrefs(); scheduleRows(); };
-$('hide-queue').onchange = (e) => { state.hideQueue = e.target.checked; prefs.hideQueue = state.hideQueue; savePrefs(); scheduleRows(); };
+$('kind-seg').onclick = (e) => { const b = e.target.closest('button'); if (b) setKind(b.dataset.k); };
+$('show-thinking').setAttribute('aria-pressed', String(state.showThinking));
+$('show-thinking').onclick = () => { state.showThinking = !state.showThinking; prefs.showThinking = state.showThinking; savePrefs(); $('show-thinking').setAttribute('aria-pressed', String(state.showThinking)); scheduleRows(); };
 
+function scrollToRow(i) {
+  const top = state.offsets[i]; const hgt = rowHeight(state.rows[i].ev);
+  if (top < vlist.scrollTop) vlist.scrollTop = Math.max(0, top - 8);
+  else if (top + hgt > vlist.scrollTop + vlist.clientHeight) vlist.scrollTop = top + hgt - vlist.clientHeight + 8;
+}
 function moveCursor(delta) {
   if (!state.rows.length) return;
   let i = state.rows.findIndex(r => r.ev.id === state.cursor);
-  i = i < 0 ? (delta > 0 ? 0 : state.rows.length - 1) : Math.max(0, Math.min(state.rows.length - 1, i + delta));
+  do {
+    i = i < 0 ? (delta > 0 ? 0 : state.rows.length - 1) : Math.max(0, Math.min(state.rows.length - 1, i + delta));
+  } while (state.rows[i].ev.kind === 'turn_end' && i > 0 && i < state.rows.length - 1);
   const ev = state.rows[i].ev;
   setFollow(false, true);
-  setCursor(ev.id);
-  const top = i * ROW_H;
-  if (top < vlist.scrollTop) vlist.scrollTop = top;
-  else if (top + ROW_H > vlist.scrollTop + vlist.clientHeight) vlist.scrollTop = top + ROW_H - vlist.clientHeight;
+  state.cursor = ev.id;
+  scrollToRow(i);
   renderRows();
   showEventDetails(ev);
 }
+function jumpToSeq(seq) {
+  const c = state.cache.get(state.selected); if (!c) return;
+  const ev = c.events.find(e => e.seq === seq); if (!ev) { toast('That event is not loaded'); return; }
+  if (state.kind !== 'all' || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKind('all'); buildRows(); }
+  setTab('events');
+  const i = state.rows.findIndex(r => r.ev.id === ev.id);
+  setFollow(false, true); state.cursor = ev.id;
+  if (i >= 0) scrollToRow(i);
+  renderRows(); showEventDetails(ev);
+}
+
 document.addEventListener('keydown', (e) => {
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') { if (e.key === 'Escape') e.target.blur(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (document.querySelector('dialog[open]')) return;
+  if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
+  if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
   else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
   else if (e.key === 'Enter') { const ev = state.cursor && findEvent(state.selected, state.cursor); if (ev) showEventDetails(ev); }
   else if (e.key === ' ') { e.preventDefault(); setFollow(!state.follow); }
   else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
-  else if (e.key === 'G') { setFollow(true); }
+  else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }
+  else if (e.key === '?') $('keys').showModal();
   else if (['1', '2', '3', '4'].includes(e.key)) setTab(['events', 'files', 'changes', 'shell'][+e.key - 1]);
 });
+$('keys-btn').onclick = () => $('keys').showModal();
 
 // ------------------------------------------------------------ details
-const detailCtx = () => ({
-  cwd: state.byId.get(state.selected)?.cwd || state.cache.get(state.selected)?.meta?.cwd || null,
-  root: state.changes?.root || null,
-  api, selectSession: select,
-  agentStatus: (id) => state.byId.get(id)?.status || null,
-});
+const detailCtx = (ev) => {
+  let position = null;
+  if (ev) {
+    const c = state.cache.get(ev.sessionId);
+    if (c) {
+      const i = c.events.indexOf(c.byId.get(ev.id));
+      let a = i; while (a > 0 && c.events[a].kind !== 'prompt') a--;
+      let n = 0; for (const x of c.events) if (x.kind === 'prompt') { n++; if (x === c.events[a]) break; }
+      if (i >= 0 && c.events[a]?.kind === 'prompt') position = `Turn ${n} · step ${i - a}`;
+    }
+  }
+  return {
+    cwd: state.byId.get(state.selected)?.cwd || state.cache.get(state.selected)?.meta?.cwd || null,
+    root: state.changes?.root || null,
+    api, selectSession: select, position,
+    agentStatus: (id) => state.byId.get(id)?.status || null,
+    runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
+  };
+};
+function showDetailsEmpty() {
+  state.detailsKey = null;
+  $('details-body').replaceChildren(h('div', { class: 'd-empty' },
+    h('div', {}, state.selected ? 'Select an event, a file or a change to see it here.' : 'Pick a session on the left, or open one from the overview.'),
+    h('dl', {}, h('dt', {}, h('kbd', {}, 'j'), ' ', h('kbd', {}, 'k')), h('dd', {}, 'move between events'),
+      h('dt', {}, h('kbd', {}, 'a')), h('dd', {}, 'ask about the selected event'),
+      h('dt', {}, h('kbd', {}, 'Space')), h('dd', {}, 'follow newest'),
+      h('dt', {}, h('kbd', {}, 'Esc')), h('dd', {}, 'back to the overview'))));
+}
 async function showEventDetails(ev, refreshOnly = false) {
   const key = `${ev.sessionId}:${ev.id}`;
   const body = $('details-body');
   const needsFull = ev.kind === 'tool' && (ev.tool.result?.truncated || ev.tool.result?.images?.length || !ev.tool.pending);
-  if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx())); body.scrollTop = 0; }
+  if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx(ev))); body.scrollTop = 0; applyRing(); }
   if (!needsFull && !refreshOnly) return;
   try {
     const d = await api.get(`/api/sessions/${sid(ev.sessionId)}/events/${sid(ev.id)}`);
     if (state.detailsKey !== key) return;
     const scroll = body.scrollTop;
-    body.replaceChildren(renderDetails(d.event || ev, d, detailCtx())); body.scrollTop = scroll;
+    body.replaceChildren(renderDetails(d.event || ev, d, detailCtx(ev))); body.scrollTop = scroll;
+    applyRing();
   } catch (e) { console.warn(e); }
+}
+$('details-body').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.nav) { moveCursor(Number(b.dataset.nav)); return; }
+  if (b.dataset.ask) {
+    const spec = JSON.parse(b.dataset.ask);
+    const sec = b.closest('.dsec');
+    if (spec.fromSection) spec.text = sec?.querySelector('pre, .md, .sbs-wrap')?.innerText.slice(0, 60_000) || '';
+    openAsk(spec, { type: 'sec', key: sec?.querySelector('.dsec-t')?.textContent || '' });
+  }
+});
+
+// ------------------------------------------------------------ Ask about this
+function suggestionsFor(spec) {
+  if (spec.kind === 'brief') return ['What should I worry about right now?', 'What happened in the last ten minutes?'];
+  if (spec.kind === 'text') {
+    const l = spec.label.toLowerCase();
+    if (l.startsWith('file')) return ['What is this file for?', 'What did the agent change or rely on here?'];
+    if (l.startsWith('diff')) return ['What does this change do?', 'Could this break anything?'];
+    if (l.includes('changes')) return ['Summarize these changes', 'Is anything here risky or unfinished?'];
+    if (l.includes('files')) return ['Which of these files matter most?', 'What was the agent doing with them?'];
+    if (l.includes('events')) return ['What happened in these events?', 'Are there errors I should look at?'];
+    if (l.includes('shell')) return ['Explain this output', 'Did this succeed?'];
+    if (l.includes('queue')) return ['What will these prompts do?', 'Is anything here redundant?'];
+    return ['Which of these needs me first?', 'What is each one doing?'];
+  }
+  if (spec.kind === 'event') {
+    const ev = findEvent(spec.sessionId, spec.eventId);
+    if (!ev) return ['Explain this'];
+    if (ev.kind === 'tool') {
+      const t = ev.tool;
+      if (t.isError) return ['Why did this fail?', 'What would fix it?'];
+      if (t.name === 'Bash') return spec.label.startsWith('Command') ? ['What does this command do?', 'Is it safe?'] : ['Summarize this output', 'Did this do what the agent intended?'];
+      if (/Edit|Write/.test(t.name)) return ['What does this change do?', 'Could this break anything?'];
+      if (t.name === 'Read') return ['Why did the agent read this?', 'What is this file for?'];
+      if (t.name === 'Agent') return ['What did this subagent accomplish?', 'Is it stuck or done?'];
+      return ['What did this call do?', 'What came back?'];
+    }
+    if (ev.kind === 'prompt') return ['How far has the agent got with this?', 'Did it do what was asked?'];
+    if (ev.kind === 'thinking') return ['Summarize this reasoning', 'What did it decide?'];
+    return ['What is it claiming here, and is it supported?', 'What should I check?'];
+  }
+  return ['Explain this'];
+}
+function scopeOf(spec) {
+  if (spec.kind === 'event') return { kind: 'event', sessionId: spec.sessionId, eventId: spec.eventId, label: spec.label };
+  if (spec.kind === 'brief') return { kind: 'brief', sessionId: spec.sessionId, label: spec.label };
+  if (spec.kind === 'session') return { kind: 'session', sessionId: spec.sessionId, label: spec.label };
+  return { kind: 'text', label: spec.label, text: spec.text || '' };
+}
+function openAsk(spec, ring) {
+  const sessionId = spec.sessionId || state.selected || null;
+  const extras = [];
+  if (spec.kind === 'event') extras.push({ label: 'its turn', item: { kind: 'turn', sessionId: spec.sessionId, eventId: spec.eventId }, on: false });
+  if (spec.kind === 'brief') extras.push({ label: 'recent events', item: { kind: 'session', sessionId }, on: true });
+  else if (sessionId) extras.push({ label: 'session brief', item: { kind: 'brief', sessionId }, on: false });
+  state.ask = { spec, primary: scopeOf(spec), extras, thread: [], sessionId, ring };
+  renderAsk();
+  applyRing();
+  $('ask').querySelector('input')?.focus();
+}
+function askEvent(ev) {
+  const what = ev.kind === 'tool' ? `this ${ev.tool.display} call` : ev.kind === 'prompt' ? 'this prompt' : ev.kind === 'text' ? 'this message' : 'this event';
+  openAsk({ kind: 'event', sessionId: ev.sessionId, eventId: ev.id, label: `${tagFor(ev).label} ${fmtTime(ev.ts)}`, what }, { type: 'row', id: ev.id });
+}
+function closeAsk() { state.ask = null; $('ask').hidden = true; applyRing(); }
+function renderAsk() {
+  const a = state.ask; const el = $('ask');
+  if (!a) { el.hidden = true; return; }
+  el.hidden = false;
+  const chips = h('div', { class: 'ask-chips' }, h('span', { class: 'ask-chip primary', title: 'always included' }, a.primary.label || 'This item'));
+  a.extras.forEach((x) => chips.append(h('button', { type: 'button', class: 'ask-chip', 'aria-pressed': String(x.on), onclick: () => { x.on = !x.on; renderAsk(); } }, `${x.on ? '✓' : '+'} ${x.label}`)));
+  const thread = h('div', { class: 'ask-thread' });
+  for (const m of a.thread) {
+    thread.append(h('div', { class: 'qa-q' }, m.q));
+    if (m.pending) thread.append(h('div', { class: 'qa-a' }, h('span', { class: 'spin' })));
+    else if (m.err) thread.append(h('div', { class: 'qa-a err' }, m.err));
+    else thread.append(h('div', { class: 'qa-a' }, h('div', { class: 'md', html: markdown(m.a) }), h('div', { class: 'qa-meta' }, [fmtMs(m.ms), m.cost ? fmtUsd(m.cost) : null].filter(Boolean).join(' · '))));
+  }
+  const input = h('input', { type: 'text', placeholder: `Ask anything about ${a.spec.what || 'this'}…`, 'aria-label': 'Your question' });
+  const send = h('button', { type: 'submit', 'aria-label': 'Send question' }, svgUse('i-send', 12));
+  const form = h('form', { class: 'ask-in', onsubmit: (e) => { e.preventDefault(); sendAsk(input.value); } }, input, send);
+  const parts = [
+    h('div', { class: 'ask-h' }, starIcon(13), h('h3', { id: 'ask-h' }, `Ask about ${a.spec.what || 'this'}`), h('span', { class: 'spacer' }),
+      h('button', { type: 'button', class: 'icon-btn sm ghost', 'aria-label': 'Close Ask', onclick: closeAsk }, svgUse('i-x', 12))),
+    chips, thread,
+  ];
+  if (!a.thread.length) parts.push(h('div', { class: 'ask-sugg' }, ...suggestionsFor(a.spec).map(q => h('button', { type: 'button', onclick: () => sendAsk(q) }, q))));
+  parts.push(form, h('p', { class: 'ask-foot' }, state.narrator.enabled
+    ? `Answered by a separate read-only call (${state.narrator.askModel || 'model'}). The session is not interrupted.`
+    : 'Model calls are off (server started with --no-narrator).'));
+  el.replaceChildren(...parts);
+  thread.scrollTop = thread.scrollHeight;
+}
+async function sendAsk(q) {
+  const a = state.ask; q = String(q || '').trim();
+  if (!a || !q) return;
+  const msg = { q, pending: true };
+  a.thread.push(msg); renderAsk();
+  const scope = [a.primary, ...a.extras.filter(x => x.on).map(x => x.item)];
+  try {
+    const r = await api.post('/api/ask', { question: q, scope, sessionId: a.sessionId });
+    Object.assign(msg, { pending: false, a: r.answer, ms: r.durationMs, cost: r.costUsd });
+  } catch (e) {
+    const auth = /authenticat|login|oauth/i.test(e.message);
+    Object.assign(msg, { pending: false, err: `${e.message}${auth ? '. Run claude in a terminal and sign in (/login).' : ''}` });
+  }
+  if (state.ask === a) { renderAsk(); $('ask').querySelector('input')?.focus(); }
+}
+
+/** Ask about a whole list: the text sent is what the list shows. */
+function askList(key, btn) {
+  const sessLines = (list) => list.map(s => `- ${s.title} | ${tilde(s.cwd)} | ${PHASE_LABEL[phaseOf(s)]}${s.gitBranch ? ' | ' + s.gitBranch : ''}${s.glance?.errors ? ` | ${s.glance.errors} errors` : ''} | last said: ${oneLine(s.glance?.lastText || '', 160)}${briefLine(s.id) ? ' | brief: ' + oneLine(briefLine(s.id), 300) : ''}`).join('\n');
+  let spec, ring;
+  switch (key) {
+    case 'events': {
+      const lines = state.rows.slice(0, 400).map(({ ev }) => `${fmtTime(ev.ts)} ${tagFor(ev).label} ${ev.kind === 'tool' ? ev.tool.summary + (ev.tool.isError ? ' [error]' : '') : oneLine(ev.text || '', 200)}`);
+      spec = { kind: 'text', label: `Events (${state.kind}${state.filter ? `, filter "${state.filter}"` : ''})`, text: lines.join('\n'), what: 'these events' }; ring = { type: 'sel', sel: '#vlist' }; break;
+    }
+    case 'files': {
+      const cwd = state.byId.get(state.selected)?.cwd;
+      spec = { kind: 'text', label: 'Files touched', text: (state.files || []).map(f => `${relPath(f.path, cwd)} reads=${f.reads} writes=${f.writes} last=${f.lastTs || ''}`).join('\n'), what: 'these files' }; ring = { type: 'sel', sel: '#files' }; break;
+    }
+    case 'changes': {
+      const c = state.changes;
+      spec = { kind: 'text', label: 'Git changes', text: c?.repo ? `branch ${c.branch} ahead ${c.ahead ?? '?'} behind ${c.behind ?? '?'}\n${c.files.map(f => `${f.untracked ? '??' : (f.x + f.y).trim()} ${f.path} +${f.added ?? 0} -${f.deleted ?? 0}`).join('\n')}\nrecent commits:\n${c.commits.map(k => `${k.short} ${k.subject}`).join('\n')}` : 'not a git repository', what: 'these changes' };
+      ring = { type: 'sel', sel: '#changes' }; break;
+    }
+    case 'queue': spec = { kind: 'text', label: 'Prompt queue', text: (state.cache.get(state.selected)?.meta?.queue || []).map((x, i) => `${i + 1}. ${x.content}`).join('\n') || '(empty)', what: 'the prompt queue' }; ring = { type: 'sel', sel: '#queue' }; break;
+    case 'active': case 'recent': spec = { kind: 'text', label: `${key === 'active' ? 'Active' : 'Recent'} sessions`, text: sessLines(state.snapshot[key]), what: `${key} sessions` }; ring = { type: 'sel', sel: `.bucket[data-bucket=${key}] ul` }; break;
+    case 'ov-needs': spec = { kind: 'text', label: 'Sessions that need you', text: sessLines(state.snapshot.active.filter(s => phaseOf(s) === 'turn' || recentErr(s))), what: 'what needs you' }; ring = { type: 'sel', sel: '[data-ov=needs]' }; break;
+    case 'ov-working': spec = { kind: 'text', label: 'Working sessions', text: sessLines(state.snapshot.active.filter(s => phaseOf(s) === 'working')), what: 'the working sessions' }; ring = { type: 'sel', sel: '[data-ov=working]' }; break;
+    case 'ov-recent': spec = { kind: 'text', label: 'Recently finished sessions', text: sessLines(state.snapshot.recent.slice(0, 8)), what: 'recently finished sessions' }; ring = { type: 'sel', sel: '[data-ov=recent]' }; break;
+    default: return;
+  }
+  openAsk(spec, ring);
+}
+document.querySelector('.tabs').parentElement.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-ask-list]');
+  if (b && !b.closest('#tree') && !b.closest('#overview')) askList(b.dataset.askList, b);
+});
+
+function applyRing() {
+  document.querySelectorAll('.asking').forEach(x => x.classList.remove('asking'));
+  const r = state.ask?.ring; if (!r) return;
+  let el = null;
+  if (r.type === 'brief') el = $('brief-box');
+  else if (r.type === 'row') el = vrows.querySelector(`.row[data-id="${CSS.escape(r.id)}"]`);
+  else if (r.type === 'sec') el = [...$('details-body').querySelectorAll('.dsec')].find(s => s.querySelector('.dsec-t')?.textContent === r.key);
+  else if (r.type === 'sel') el = document.querySelector(r.sel);
+  el?.classList.add('asking');
 }
 
 // ------------------------------------------------------------ tabs
 function setTab(name) {
   state.tab = name; prefs.tab = name; savePrefs();
-  document.querySelectorAll('.tab-b').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-b').forEach(b => { b.classList.toggle('active', b.dataset.tab === name); b.setAttribute('aria-selected', String(b.dataset.tab === name)); });
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === `tab-${name}`));
   if (name === 'events') renderRows();
   if (name === 'files' && state.selected) loadFiles();
@@ -417,18 +985,18 @@ async function loadFiles() {
 }
 function renderFiles() {
   const files = state.files || []; const cwd = state.byId.get(state.selected)?.cwd;
-  $('files-count').textContent = files.length ? `(${files.length})` : '';
+  $('files-count').textContent = files.length || '';
   const now = Date.now();
-  const table = h('table', { class: 'list' }, h('thead', {}, h('tr', {}, h('th', {}, 'file'), h('th', {}, 'reads'), h('th', {}, 'writes'), h('th', {}, 'last'), h('th', {}, ''))));
+  const table = h('table', { class: 'list' }, h('thead', {}, h('tr', {}, h('th', {}, 'File'), h('th', {}, 'Reads'), h('th', {}, 'Writes'), h('th', {}, 'Last'), h('th', {}, ''))));
   const tb = h('tbody');
   for (const f of files) {
     const age = f.lastTs ? now - Date.parse(f.lastTs) : null;
-    const heat = age == null ? '' : age < 10 * 60_000 ? 'hot' : age > 6 * 3600_000 ? 'cold' : '';
+    const hot = age != null && age < 10 * 60_000;
     tb.append(h('tr', { onclick: (e) => { tb.querySelectorAll('tr').forEach(r => r.classList.remove('selected')); e.currentTarget.classList.add('selected'); openFile(f.path); } },
-      h('td', { title: f.path }, h('span', { class: heat }, heat === 'hot' ? '● ' : ''), relPath(f.path, cwd)),
+      h('td', { title: f.path }, hot ? h('span', { class: 'hot', title: 'touched in the last 10 minutes' }, '● ') : null, relPath(f.path, cwd)),
       h('td', { class: 'num' }, f.reads || ''), h('td', { class: 'num' }, f.writes || ''),
       h('td', { class: 'num', title: f.lastTs || '' }, f.lastTs ? ago(age) + ' ago' : ''),
-      h('td', {}, h('button', { class: 'mini', onclick: (e) => { e.stopPropagation(); api.openEditor(f.path, 1); } }, '↗ editor'))));
+      h('td', {}, h('button', { class: 'mini', type: 'button', onclick: (e) => { e.stopPropagation(); api.openEditor(f.path, 1); } }, 'Open'))));
   }
   table.append(tb);
   $('files').replaceChildren(files.length ? table : h('div', { class: 'pad muted' }, 'No files touched yet.'));
@@ -446,23 +1014,24 @@ $('files-refresh').onclick = loadFiles;
 // ------------------------------------------------------------ changes tab
 async function loadChanges() {
   const id = state.selected; if (!id) return;
-  $('changes-head').textContent = 'loading git status…';
+  if (!state.changes) $('changes-head').textContent = 'loading git status…';
   try {
     const r = await api.get(`/api/sessions/${sid(id)}/changes`);
     if (state.selected !== id) return;
     state.changes = r; renderChanges();
   } catch (e) { $('changes').replaceChildren(h('div', { class: 'pad muted' }, e.message)); }
 }
+function chip(label, title, cls = '') { return h('span', { class: `chip ${cls}`, title }, label); }
 function renderChanges() {
   const c = state.changes; const root = $('changes');
-  if (!c?.repo) { $('changes-head').textContent = c?.cwd ? `${c.cwd} is not a git repository` : 'no cwd'; root.replaceChildren(); $('changes-count').textContent = ''; return; }
-  $('changes-count').textContent = c.files.length ? `(${c.files.length})` : '';
+  if (!c?.repo) { $('changes-head').textContent = c?.cwd ? `${tilde(c.cwd)} is not a git repository` : 'no cwd'; root.replaceChildren(); $('changes-count').textContent = ''; return; }
+  $('changes-count').textContent = c.files.length ? `+${c.totals.added} −${c.totals.deleted}` : '';
   const head = $('changes-head'); head.replaceChildren();
-  head.append(chip(`⎇ ${c.branch || '(detached)'}`, c.root));
+  head.append(chip(c.branch || '(detached)', c.root));
   if (c.upstream) head.append(chip(`${c.upstream} ↑${c.ahead} ↓${c.behind}`, 'ahead / behind upstream', c.behind ? 'err' : ''));
   if (c.vsBase) head.append(chip(`${c.vsBase.base} ↑${c.vsBase.ahead} ↓${c.vsBase.behind}`, 'ahead / behind default branch'));
-  head.append(chip(`${c.totals.files} files`, 'changed files'), h('span', { class: 'add-n' }, ` +${c.totals.added}`), h('span', { class: 'del-n' }, ` −${c.totals.deleted}`));
-  const table = h('table', { class: 'list' }, h('thead', {}, h('tr', {}, h('th', {}, 'st'), h('th', {}, 'file'), h('th', {}, '+'), h('th', {}, '−'), h('th', {}, ''))));
+  head.append(chip(`${c.totals.files} files`, 'changed files'), h('span', { class: 'add-n' }, `+${c.totals.added}`), h('span', { class: 'del-n' }, `−${c.totals.deleted}`));
+  const table = h('table', { class: 'list' }, h('thead', {}, h('tr', {}, h('th', {}, 'St'), h('th', {}, 'File'), h('th', {}, '+'), h('th', {}, '−'), h('th', {}, ''))));
   const tb = h('tbody');
   for (const f of c.files) {
     const st = f.untracked ? '??' : `${f.x}${f.y}`.trim();
@@ -470,10 +1039,10 @@ function renderChanges() {
       h('td', {}, h('span', { class: 'st-x', title: `index: ${f.x} · worktree: ${f.y}` }, st)),
       h('td', { title: f.from ? `renamed from ${f.from}` : f.path }, f.path),
       h('td', { class: 'num add-n' }, f.added ?? (f.binary ? 'bin' : '')), h('td', { class: 'num del-n' }, f.deleted ?? ''),
-      h('td', {}, h('button', { class: 'mini', onclick: (e) => { e.stopPropagation(); api.openEditor(`${c.root}/${f.path}`, 1); } }, '↗ editor'))));
+      h('td', {}, h('button', { class: 'mini', type: 'button', onclick: (e) => { e.stopPropagation(); api.openEditor(`${c.root}/${f.path}`, 1); } }, 'Open'))));
   }
   table.append(tb);
-  const commits = h('div', { class: 'commits' }, h('div', { class: 'dsec-h', style: 'padding: 6px 10px 2px' }, 'recent commits'));
+  const commits = h('div', { class: 'commits' }, h('div', { class: 'sec-t', style: 'padding: 6px 14px 4px' }, 'Recent commits'));
   for (const k of c.commits) commits.append(h('div', { class: 'c', title: k.sha }, h('span', { class: 'sha' }, k.short), h('span', {}, k.subject), h('span', { class: 'who' }, `${k.author} · ${ago(Date.now() - Date.parse(k.date))}`)));
   root.replaceChildren(c.files.length ? table : h('div', { class: 'pad muted' }, 'Working tree clean.'), commits);
 }
@@ -496,8 +1065,13 @@ function shellRunEl(run) {
   head.append(h('span', { class: 'cmd', title: run.cmd }, `$ ${run.cmd}`));
   head.append(h('span', { class: 'cwd', title: run.cwd }, basename(run.cwd || '')));
   head.append(h('span', { class: 'chip status' }, run.running ? 'running' : ''));
-  head.append(h('button', { class: 'mini', onclick: () => { $('sh-cmd').value = run.cmd; $('sh-cmd').focus(); } }, '↺ reuse'));
-  head.append(h('button', { class: 'mini kill', onclick: () => api.post('/api/shell/kill', { runId: run.id }) }, 'kill'));
+  head.append(h('button', { class: 'mini', type: 'button', onclick: () => { $('sh-cmd').value = run.cmd; $('sh-cmd').focus(); } }, 'Reuse'));
+  head.append(h('button', { class: 'mini kill', type: 'button', onclick: () => api.post('/api/shell/kill', { runId: run.id }) }, 'Kill'));
+  head.append(h('button', { class: 'ask-ico', type: 'button', 'aria-label': 'Ask about this run', title: 'Ask about this run', onclick: () => {
+    const r = state.shell.runs.get(run.id) || run;
+    const out = (r.output || []).map(o => o.chunk).join('').replace(ANSI, '');
+    openAsk({ kind: 'text', label: `Shell run: ${oneLine(r.cmd, 60)}`, text: `$ ${r.cmd}\n(cwd ${r.cwd || '~'}, exit ${r.code ?? 'running'})\n${out}`, what: 'this shell run' }, { type: 'sel', sel: `.run[data-run="${run.id}"]` });
+  } }, starIcon(11)));
   el.append(head);
   const pre = h('pre');
   for (const o of run.output || []) pre.append(h('span', { class: o.stream === 'stderr' ? 'se' : 'so' }, o.chunk.replace(ANSI, '')));
@@ -533,9 +1107,9 @@ async function shellRun() {
     state.shell.runs.set(run.id, run); state.shell.order.unshift(run.id);
     $('sh-runs').prepend(shellRunEl(run));
     state.shell.history = [cmd, ...state.shell.history.filter(c => c !== cmd)].slice(0, 100);
-    localStorage.setItem('deck.shhist', JSON.stringify(state.shell.history));
+    try { localStorage.setItem('deck.shhist', JSON.stringify(state.shell.history)); } catch { /* private mode */ }
     state.shell.hi = -1; $('sh-cmd').value = '';
-  } catch (e) { toast(`run failed: ${e.message}`); }
+  } catch (e) { toast(`Run failed: ${e.message}`); }
 }
 $('sh-run').onclick = shellRun;
 $('sh-cmd').addEventListener('keydown', (e) => {
@@ -562,29 +1136,28 @@ function initLayout() {
       e.preventDefault(); g.classList.add('active');
       const side = g.dataset.gutter;
       const move = (ev) => {
-        if (side === 'left') { const w = Math.max(180, Math.min(600, ev.clientX)); deck.style.setProperty('--left', w + 'px'); prefs.left = w; }
-        else { const w = Math.max(260, Math.min(window.innerWidth * 0.7, window.innerWidth - ev.clientX)); deck.style.setProperty('--right', w + 'px'); prefs.right = w; }
+        if (side === 'left') { const w = Math.max(200, Math.min(600, ev.clientX)); deck.style.setProperty('--left', w + 'px'); prefs.left = w; }
+        else { const w = Math.max(300, Math.min(window.innerWidth * 0.7, window.innerWidth - ev.clientX)); deck.style.setProperty('--right', w + 'px'); prefs.right = w; }
         renderRows();
       };
       const up = () => { g.classList.remove('active'); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); savePrefs(); };
       window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     });
   });
-  document.querySelectorAll('.bucket h3').forEach(hd => hd.onclick = () => hd.parentElement.classList.toggle('collapsed'));
   $('tree-filter').oninput = (e) => { state.treeFilter = e.target.value; renderTree(); };
   window.addEventListener('resize', () => renderRows());
 }
 
 // ------------------------------------------------------------ boot
 initLayout();
-if (prefs.hideThinking) { state.hideThinking = true; $('hide-thinking').checked = true; }
-if (prefs.hideQueue) { state.hideQueue = true; $('hide-queue').checked = true; }
 setTab(prefs.tab || 'events');
+showDetailsEmpty();
 connect();
 loadShellHistory();
-setInterval(() => { if (state.selected) renderBrief(); }, 5000);
+setInterval(() => { if (state.selected) renderHeader(); else renderOverview(); renderTree(); }, 5000);
+api.get('/api/briefs').then(r => { for (const [id, b] of Object.entries(r.briefs)) state.briefs.set(id, b); state.narrator = { ...state.narrator, ...r.narrator }; refreshBriefViews(); }).catch(() => {});
 api.get('/api/sessions').then(snap => {
   applySnapshot(snap);
-  const want = prefs.selected && state.byId.has(prefs.selected) ? prefs.selected : snap.active[0]?.id || snap.recent[0]?.id;
-  if (want) select(want);
+  if (prefs.selected && state.byId.has(prefs.selected)) select(prefs.selected);
+  else goOverview();
 });
