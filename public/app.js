@@ -851,7 +851,10 @@ $('ns-form').addEventListener('submit', async (e) => {
     else if (state.byId.has(st.id)) openLaunched(st.id);
     else { state.pendingOpen = st.id; toast('Session started. Opening it as soon as it writes its transcript…'); }
   } catch (err) {
-    $('ns-err').textContent = err.message; $('ns-err').hidden = false;
+    $('ns-err').textContent = err.message === 'not found'
+      ? 'The deck backend is older than this page and cannot launch sessions. Restart it (stop the server and run npm start, or quit and relaunch the app), then try again.'
+      : err.message;
+    $('ns-err').hidden = false;
     $('ns-go').disabled = false; $('ns-go').textContent = launchCtx?.resumeId ? 'Resume' : 'Start session';
   }
 });
