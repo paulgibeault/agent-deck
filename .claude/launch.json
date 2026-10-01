@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "agent-deck",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.mjs", "--port", "7777", "--token", "devtoken"],
+      "port": 7777,
+      "url": "http://127.0.0.1:7777"
+    }
+  ]
+}

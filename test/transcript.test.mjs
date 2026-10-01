@@ -1,0 +1,189 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { SessionState, TranscriptTail, parseLine, toolSummary, probeHead, probeTail, cwdSlug, displayToolName } from '../lib/transcript.mjs';
+import { computeBrief } from '../lib/brief.mjs';
+import { SessionIndex } from '../lib/sessions.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE = path.join(__dirname, 'fixtures', 'session.jsonl');
+const lines = fs.readFileSync(FIXTURE, 'utf8').split('\n').filter(Boolean);
+
+function loadFixture() {
+  const s = new SessionState('sess-1');
+  for (const l of lines) s.ingest(parseLine(l));
+  return s;
+}
+
+test('every fixture record parses and ingests without throwing', () => {
+  const s = loadFixture();
+  assert.equal(s.meta.records, lines.length);
+  const kinds = {};
+  for (const e of s.events) kinds[e.kind] = (kinds[e.kind] || 0) + 1;
+  assert.deepEqual(kinds, { queue: 3, prompt: 1, thinking: 1, tool: 3, system: 2, text: 1, turn_end: 1, raw: 1 });
+});
+
+test('unknown record types degrade to raw events, silent ones are skipped', () => {
+  const s = loadFixture();
+  const raw = s.events.filter(e => e.kind === 'raw');
+  assert.equal(raw.length, 1);
+  assert.equal(raw[0].subtype, 'some-future-record');
+  assert.deepEqual(s.meta.unknownTypes, { 'some-future-record': 1 });
+  assert.ok(!s.events.some(e => e.subtype === 'attachment' || e.subtype === 'atis-latch'));
+});
+
+test('tool_use and tool_result fold into one event with duration and error', () => {
+  const s = loadFixture();
+  const bash = s.events.find(e => e.kind === 'tool' && e.tool.name === 'Bash');
+  assert.equal(bash.tool.pending, false);
+  assert.equal(bash.tool.isError, true);
+  assert.equal(bash.tool.durationMs, 2500);
+  assert.equal(bash.tool.summary, 'npm test');
+  assert.match(bash.tool.result.text, /1 failing/);
+  assert.equal(bash.tool.meta.stdout, '[35 chars]'); // bulky duplicates are slimmed
+});
+
+test('Edit summary is refined from structuredPatch once the result lands', () => {
+  const s = loadFixture();
+  const edit = s.events.find(e => e.kind === 'tool' && e.tool.name === 'Edit');
+  assert.equal(edit.tool.summary, 'solver.js +0 −1');
+  assert.equal(edit.tool.durationMs, 250);
+});
+
+test('files touched: absolute tool paths and relative history deltas dedupe', () => {
+  const s = loadFixture();
+  const files = s.filesList();
+  assert.equal(files.length, 1);
+  assert.equal(files[0].path, '/tmp/proj/solver.js');
+  assert.equal(files[0].writes, 2);
+});
+
+test('async subagent is tracked and marked done by the hand-back message', () => {
+  const s = loadFixture();
+  const agent = s.events.find(e => e.kind === 'tool' && e.tool.name === 'Agent');
+  assert.equal(agent.tool.agentId, 'agent1');
+  assert.ok(s.meta.doneAgents.has('agent1'));
+  const pub = s.publicMeta();
+  assert.deepEqual(pub.subagents.map(a => a.agentId), ['agent1']);
+});
+
+test('queue mirrors enqueue / dequeue / remove', () => {
+  const s = loadFixture();
+  assert.deepEqual(s.meta.queue.map(q => q.content), ['now add a changelog entry']);
+  s.ingest({ type: 'queue-operation', operation: 'enqueue', content: 'b', timestamp: 'x' });
+  s.ingest({ type: 'queue-operation', operation: 'remove', content: 'now add a changelog entry', timestamp: 'x' });
+  assert.deepEqual(s.meta.queue.map(q => q.content), ['b']);
+});
+
+test('sideband metadata: title precedence, pr, cost, mode, usage dedupe by message id', () => {
+  const s = loadFixture();
+  assert.equal(s.title, 'Fix solver test');
+  assert.equal(s.meta.pr.number, 15);
+  assert.equal(s.meta.cost.totalCostUSD, 0.42);
+  assert.equal(s.meta.mode, 'normal');
+  assert.equal(s.meta.model, 'claude-opus-5-5');
+  assert.equal(s.meta.effort, 'medium');
+  // msg_1 appears in two records (thinking + tool_use) but counts once.
+  assert.equal(s.meta.usage.messages, 4);
+  assert.equal(s.meta.usage.output, 50 + 30 + 40 + 25);
+  assert.equal(s.meta.usage.thinking, 20);
+  assert.equal(s.meta.errors, 2); // bash error + api_error
+  assert.equal(s.meta.turns, 1);
+  assert.equal(s.meta.inTurn, false);
+});
+
+test('detail() returns the full result text and raw records', () => {
+  const s = loadFixture();
+  const d = s.detail('toolu_bash1');
+  assert.equal(d.raw.length, 2);
+  assert.equal(d.resultText, '1 failing\n  solver › smallest proof');
+  assert.equal(d.toolUseResult.stdout, '1 failing\n  solver › smallest proof');
+  assert.equal(s.detail('nope'), null);
+});
+
+test('TranscriptTail reads incrementally and survives partial lines', () => {
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-')), 't.jsonl');
+  const [l1, l2, l3] = lines;
+  fs.writeFileSync(tmp, l1 + '\n' + l2.slice(0, 20));
+  const tail = new TranscriptTail(tmp);
+  assert.equal(tail.readNew().length, 1);
+  fs.appendFileSync(tmp, l2.slice(20) + '\n' + l3 + '\n');
+  const more = tail.readNew();
+  assert.equal(more.length, 2);
+  assert.equal(more[1].type, 'user');
+  assert.equal(tail.readNew().length, 0);
+  fs.writeFileSync(tmp, l1 + '\n'); // truncation resets
+  assert.equal(tail.readNew().length, 1);
+});
+
+test('brief: pending tool → running; finished dead session → ended; live idle → idle', () => {
+  const s = new SessionState('x');
+  const mid = lines.slice(0, 11); // up to and including the Bash tool_use
+  for (const l of mid) s.ingest(parseLine(l));
+  const live = { kind: 'session', alive: true, subagents: [] };
+  let b = computeBrief(s, live, { status: 'busy' }, Date.parse('2026-09-29T05:47:17.000Z'));
+  assert.equal(b.state, 'running');
+  assert.match(b.detail, /^Bash npm test/);
+  assert.equal(b.activeTool.name, 'Bash');
+  const full = loadFixture();
+  b = computeBrief(full, { kind: 'session', alive: false, subagents: [] }, null);
+  assert.equal(b.state, 'ended');
+  b = computeBrief(full, live, { status: 'idle' }, Date.parse('2026-09-29T05:50:00.000Z'));
+  assert.equal(b.state, 'idle');
+  assert.match(b.detail, /1 queued/);
+  assert.equal(b.lastText, 'The test passes now.');
+  assert.equal(b.queueDepth, 1);
+});
+
+test('toolSummary one-liners', () => {
+  assert.equal(toolSummary('Read', { file_path: '/a/b.js', offset: 10, limit: 5 }), 'b.js :10+5');
+  assert.equal(toolSummary('Write', { file_path: '/a/b.js', content: 'x\ny' }), 'b.js (2 lines)');
+  assert.equal(toolSummary('Grep', { pattern: 'foo', path: '/a/src' }), '/foo/ in src');
+  assert.equal(toolSummary('Agent', { description: 'Do it', subagent_type: 'Explore' }), '"Do it" · Explore');
+  assert.equal(toolSummary('mcp__x__y', { a: 1 }), '{"a":1}');
+  assert.equal(displayToolName('mcp__ccd_pr__get_status'), 'ccd_pr.get_status');
+});
+
+test('probeHead / probeTail / cwdSlug', () => {
+  assert.deepEqual(probeHead(FIXTURE), { cwd: '/tmp/proj', sessionId: 'sess-1', version: '2.1.284', gitBranch: 'main' });
+  const t = probeTail(FIXTURE);
+  assert.equal(t.title, 'Fix solver test');
+  assert.equal(t.lastPrompt, 'fix the failing test');
+  assert.equal(t.pr.number, 15);
+  assert.equal(cwdSlug('/Users/me/work/x.y/.claude/worktrees/z'), '-Users-me-work-x-y--claude-worktrees-z');
+});
+
+test('SessionIndex: buckets, subagent tree, paging', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-home-'));
+  const proj = path.join(dir, 'projects', '-tmp-proj');
+  fs.mkdirSync(path.join(proj, 'sess-1', 'subagents'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
+  fs.copyFileSync(FIXTURE, path.join(proj, 'sess-1.jsonl'));
+  fs.writeFileSync(path.join(proj, 'sess-1', 'subagents', 'agent-agent1.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Verify fix', toolUseId: 'toolu_agent1', spawnDepth: 1 }));
+  fs.writeFileSync(path.join(proj, 'sess-1', 'subagents', 'agent-agent1.jsonl'),
+    JSON.stringify({ type: 'user', isSidechain: true, agentId: 'agent1', message: { role: 'user', content: 'Run the tests and report.' }, uuid: 'x1', timestamp: '2026-09-29T05:47:23.000Z', cwd: '/tmp/proj', sessionId: 'sess-1' }) + '\n' +
+    JSON.stringify({ type: 'assistant', isSidechain: true, agentId: 'agent1', message: { id: 'm1', model: 'claude-opus-5-5', role: 'assistant', content: [{ type: 'text', text: 'All green.' }], stop_reason: 'end_turn', usage: { output_tokens: 3 } }, uuid: 'x2', timestamp: '2026-09-29T05:47:30.000Z', cwd: '/tmp/proj', sessionId: 'sess-1' }) + '\n');
+  const idx = new SessionIndex({ claudeDir: dir, recentDays: 3650 });
+  idx.scanProjects(); idx.refreshRegistry();
+  const snap = idx.snapshot();
+  assert.equal(snap.active.length, 0);
+  assert.equal(snap.recent.length, 1);
+  const s = snap.recent[0];
+  assert.equal(s.title, 'Fix solver test');
+  assert.equal(s.cwd, '/tmp/proj');
+  assert.equal(s.subagents.length, 1);
+  assert.equal(s.subagents[0].title, 'Verify fix');
+  assert.equal(s.subagents[0].status, 'ended');
+  idx.load('sess-1'); idx.load('agent1');
+  assert.equal(idx.summary('agent1').status, 'done');
+  const page = idx.events('sess-1', 0, 5);
+  assert.equal(page.events.length, 5);
+  assert.equal(page.more, true);
+  const rest = idx.events('sess-1', page.events.at(-1).seq, 100);
+  assert.equal(page.events.length + rest.events.length, page.total);
+  assert.equal(idx.brief('sess-1').state, 'ended');
+  assert.equal(idx.filesOf('sess-1').length, 1);
+});

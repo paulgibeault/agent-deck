@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-deck</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2322c55e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/github.min.css" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="/vendor/github-dark.min.css" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="deck">
+  <aside id="sessions" class="pane">
+    <header class="pane-h">
+      <span class="brand">agent-deck</span>
+      <span id="conn" class="conn" title="connection">●</span>
+      <input id="tree-filter" type="search" placeholder="filter" spellcheck="false">
+    </header>
+    <div id="tree" class="tree">
+      <section class="bucket" data-bucket="active"><h3><span class="tri">▾</span> Active <span class="count"></span></h3><ul></ul></section>
+      <section class="bucket" data-bucket="recent"><h3><span class="tri">▾</span> Recent <span class="count"></span></h3><ul></ul></section>
+      <section class="bucket collapsed" data-bucket="closed"><h3><span class="tri">▾</span> Closed <span class="count"></span></h3><ul></ul></section>
+    </div>
+    <footer class="pane-f muted" id="tree-foot"></footer>
+  </aside>
+  <div class="gutter" data-gutter="left"></div>
+
+  <main id="stream" class="pane">
+    <section id="brief" class="brief">
+      <div class="brief-empty muted">Select a session.</div>
+    </section>
+    <section id="prompt" class="prompt collapsed">
+      <div class="prompt-h" id="prompt-toggle"><span class="tri">▾</span> Prompt <span id="queue-count" class="count"></span><span class="muted" id="prompt-note"></span></div>
+      <div class="prompt-b">
+        <ul id="queue" class="queue"></ul>
+        <div class="compose">
+          <textarea id="compose" rows="2" placeholder="Send is disabled for sessions the deck did not launch (phase 3)." disabled></textarea>
+          <div class="compose-actions">
+            <button id="send" class="btn" disabled title="This session was launched outside the deck; the deck can only observe it. Phase 3 adds deck-launched sessions with send/queue/interrupt.">Send</button>
+            <button id="interrupt" class="btn" disabled title="Observe-only session.">Interrupt</button>
+            <button id="copy-last" class="btn" title="copy last prompt">Copy last prompt</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab-b active" data-tab="events">Events <span class="count" id="events-count"></span></button>
+      <button class="tab-b" data-tab="files">Files <span class="count" id="files-count"></span></button>
+      <button class="tab-b" data-tab="changes">Changes <span class="count" id="changes-count"></span></button>
+      <button class="tab-b" data-tab="shell">Shell</button>
+      <span class="spacer"></span>
+      <span class="muted kbd-hint" title="j/k move · Enter details · Space follow · / filter">j k ⏎ ␣ /</span>
+    </nav>
+
+    <section id="tab-events" class="tab active">
+      <div class="toolbar">
+        <input id="ev-filter" type="search" placeholder="filter events (text, tool, path)" spellcheck="false">
+        <label class="chk"><input type="checkbox" id="hide-thinking"> hide thinking</label>
+        <label class="chk"><input type="checkbox" id="hide-queue"> hide queue</label>
+        <span class="spacer"></span>
+        <button id="follow" class="btn toggle active" title="keep the newest event in view (Space)">⤒ follow</button>
+      </div>
+      <div id="vlist" class="vlist" tabindex="0">
+        <div id="vspacer" class="vspacer"></div>
+        <div id="vrows" class="vrows"></div>
+      </div>
+    </section>
+
+    <section id="tab-files" class="tab">
+      <div class="toolbar"><span class="muted">Files touched by this session (Read / Edit / Write / history snapshots).</span><span class="spacer"></span><button id="files-refresh" class="btn">↻</button></div>
+      <div id="files" class="table-wrap"></div>
+    </section>
+
+    <section id="tab-changes" class="tab">
+      <div class="toolbar"><span id="changes-head" class="muted"></span><span class="spacer"></span><button id="changes-refresh" class="btn">↻</button></div>
+      <div id="changes" class="table-wrap"></div>
+    </section>
+
+    <section id="tab-shell" class="tab">
+      <div class="toolbar shell-bar">
+        <label class="lbl">cwd</label><input id="sh-cwd" type="text" spellcheck="false" placeholder="working directory">
+        <button id="sh-cwd-session" class="btn" title="use selected session's cwd">session cwd</button>
+      </div>
+      <div class="toolbar shell-bar">
+        <label class="lbl">$</label><input id="sh-cmd" type="text" spellcheck="false" placeholder="command (Enter to run, ↑/↓ history)" autocomplete="off">
+        <button id="sh-run" class="btn primary">Run</button>
+      </div>
+      <div id="sh-runs" class="runs"></div>
+    </section>
+  </main>
+  <div class="gutter" data-gutter="right"></div>
+
+  <aside id="details" class="pane">
+    <div id="details-body" class="details-body"><div class="muted pad">Select an event, file or change.</div></div>
+  </aside>
+</div>
+<script src="/vendor/highlight.min.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
