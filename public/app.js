@@ -38,6 +38,7 @@ const state = {
   files: null, changes: null,
   shell: { runs: new Map(), order: [], history: (() => { try { return JSON.parse(localStorage.getItem('deck.shhist') || '[]'); } catch { return []; } })(), hi: -1 },
   detailsKey: null,
+  pinned: !!prefs.pinDetails,
   briefs: new Map(),          // id -> generated brief (server publicBrief)
   narrator: { enabled: true },
   clientId: null,
@@ -85,8 +86,44 @@ function connect() {
   es.addEventListener('shell.exit', (e) => shellExit(JSON.parse(e.data)));
 }
 function setConn(on) {
+  if (restarting) return;
   $('conn').classList.toggle('on', on);
   $('conn').querySelector('.clbl').textContent = on ? 'Live' : 'Offline';
+}
+
+// ------------------------------------------------------------ restart backend
+// The server relaunches itself on the same port; once a new instance answers,
+// drop the cached shell and reload so the UI matches the new backend.
+let restarting = false;
+$('conn').addEventListener('click', async () => {
+  if (restarting) return;
+  const live = [...state.deck.values()].filter(d => d.alive).length;
+  const ok = await confirmDialog('Restart the backend?',
+    `The deck server restarts and this window reloads.${live ? ` ${live} session${live > 1 ? 's' : ''} launched from the deck will end; you can resume ${live > 1 ? 'them' : 'it'} afterwards.` : ''}`, 'Restart');
+  if (ok) restartBackend();
+});
+async function restartBackend() {
+  let before;
+  try { before = (await api.post('/api/restart')).startedAt; }
+  catch (e) { toast(`Restart failed: ${e.message}`); return; }
+  restarting = true;
+  es?.close(); clearTimeout(launch.timer); launch.timer = null;
+  $('conn').classList.remove('on'); $('conn').querySelector('.clbl').textContent = 'Restarting…'; $('conn').disabled = true;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' });
+      if (r.ok && (await r.json()).startedAt !== before) return hardReload();
+    } catch { /* still down */ }
+  }
+  restarting = false; $('conn').disabled = false;
+  toast('The backend did not come back. Check ~/.agent-deck/server.log.');
+  setConn(false); watchBackend(0);
+}
+async function hardReload() {
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch { /* no cache api */ }
+  location.reload();
 }
 
 // ------------------------------------------------------------ backend / launch screen
@@ -534,7 +571,7 @@ function renderHeader() {
   const win = h('div', { class: 'sh-win' });
   win.append(h('button', { type: 'button', class: 'icon-btn ghost', 'aria-label': isAgent ? 'Back to parent session' : 'Close session (hide it from the deck)', title: isAgent ? 'Back to parent session' : 'Close (hide from the deck)', onclick: closeSession }, svgUse('i-x', 14)));
   if (!isAgent) win.append(h('button', { type: 'button', class: 'icon-btn ghost danger', 'aria-label': 'Delete session', title: s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', disabled: s.alive || null, onclick: deleteSession }, svgUse('i-trash', 14)));
-  const top = h('div', { class: 'sh-top' }, win, h('h1', { title: s.title }, s.title || id), pill(phase));
+  const top = h('div', { class: 'sh-top' }, h('h1', { title: s.title }, s.title || id), pill(phase));
   if (isAgent) {
     const parent = state.byId.get(s.parentId);
     top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.parentId) }, `subagent of ${parent?.title || s.parentId}`));
@@ -549,8 +586,8 @@ function renderHeader() {
   } else if (!isAgent && !s.alive) {
     top.append(h('button', { type: 'button', class: 'btn', title: 'Continue this session under the deck', onclick: () => openLaunch({ resumeId: id }) }, svgUse('i-send', 12), 'Resume in deck'));
   }
-  if (s.cwd) top.append(h('button', { type: 'button', class: 'btn', onclick: () => api.openEditor(s.cwd) }, svgUse('i-code', 14), 'Open in editor'));
   if (!isAgent) top.append(h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Copy resume command', title: 'Copy resume command', onclick: () => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); toast('Copied resume command'); } }, svgUse('i-copy', 14)));
+  top.append(win);
 
   const out = [top, renderNow(s, b, phase), renderBriefBox(id, s, b)];
 
@@ -869,7 +906,7 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderRows(t.jump); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followPin(); renderRows(t.jump); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 function evMatches(ev, q) {
@@ -984,7 +1021,7 @@ vlist.addEventListener('click', async (e) => {
   if (!row || row.classList.contains('k-turn_end')) return;
   const ev = findEvent(row.dataset.sid, row.dataset.id);
   if (!ev) return;
-  setCursor(ev.id); showEventDetails(ev);
+  setPin(false); setCursor(ev.id); showEventDetails(ev);
   if (btn?.dataset.askRow) askEvent(ev);
 });
 function findEvent(sessionId, id) { return state.cache.get(sessionId)?.byId.get(id) || null; }
@@ -1017,7 +1054,7 @@ function moveCursor(delta) {
     i = i < 0 ? (delta > 0 ? 0 : state.rows.length - 1) : Math.max(0, Math.min(state.rows.length - 1, i + delta));
   } while (state.rows[i].ev.kind === 'turn_end' && i > 0 && i < state.rows.length - 1);
   const ev = state.rows[i].ev;
-  setFollow(false, true);
+  setFollow(false, true); setPin(false);
   state.cursor = ev.id;
   scrollToRow(i);
   renderRows();
@@ -1027,7 +1064,7 @@ function jumpToSeq(seq) {
   const c = state.cache.get(state.selected); if (!c) return;
   const ev = c.events.find(e => e.seq === seq); if (!ev) { toast('That event is not loaded'); return; }
   if (state.kind !== 'all' || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKind('all'); buildRows(); }
-  setTab('events');
+  setTab('events'); setPin(false);
   const i = state.rows.findIndex(r => r.ev.id === ev.id);
   setFollow(false, true); state.cursor = ev.id;
   if (i >= 0) scrollToRow(i);
@@ -1073,20 +1110,42 @@ const detailCtx = (ev) => {
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
   };
 };
+function syncDetailsPane() { $('deck').classList.toggle('no-details', !state.detailsKey && !state.ask); }
+function closeDetails() {
+  setPin(false);
+  if (state.ask) closeAsk();
+  showDetailsEmpty();
+  if (state.cursor) { state.cursor = null; renderRows(); }
+  document.querySelectorAll('#files tr.selected, #changes tr.selected').forEach(r => r.classList.remove('selected'));
+}
+$('details-close').onclick = closeDetails;
+
+// Pinned: the pane tracks the newest event in the stream until something else is picked.
+function setPin(on) {
+  if (state.pinned === on) return;
+  state.pinned = on; prefs.pinDetails = on; savePrefs();
+  $('details-pin').setAttribute('aria-pressed', String(on));
+  if (on && followPin()) renderRows();
+}
+function followPin() {
+  if (!state.pinned || !state.selected) return false;
+  const ev = state.rows.find(r => r.ev.kind !== 'turn_end' && !r.ev.id.startsWith('loading:'))?.ev;
+  if (!ev || state.detailsKey === `${ev.sessionId}:${ev.id}`) return false;
+  state.cursor = ev.id; showEventDetails(ev);
+  return true;
+}
+$('details-pin').onclick = () => setPin(!state.pinned);
+$('details-pin').setAttribute('aria-pressed', String(state.pinned));
 function showDetailsEmpty() {
   state.detailsKey = null;
-  $('details-body').replaceChildren(h('div', { class: 'd-empty' },
-    h('div', {}, state.selected ? 'Select an event, a file or a change to see it here.' : 'Pick a session on the left, or open one from the overview.'),
-    h('dl', {}, h('dt', {}, h('kbd', {}, 'j'), ' ', h('kbd', {}, 'k')), h('dd', {}, 'move between events'),
-      h('dt', {}, h('kbd', {}, 'a')), h('dd', {}, 'ask about the selected event'),
-      h('dt', {}, h('kbd', {}, 'Space')), h('dd', {}, 'follow newest'),
-      h('dt', {}, h('kbd', {}, 'Esc')), h('dd', {}, 'back to the overview'))));
+  syncDetailsPane();
+  $('details-body').replaceChildren();
 }
 async function showEventDetails(ev, refreshOnly = false) {
   const key = `${ev.sessionId}:${ev.id}`;
   const body = $('details-body');
   const needsFull = ev.kind === 'tool' && (ev.tool.result?.truncated || ev.tool.result?.images?.length || !ev.tool.pending);
-  if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx(ev))); body.scrollTop = 0; applyRing(); }
+  if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; syncDetailsPane(); body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx(ev))); body.scrollTop = 0; applyRing(); }
   if (!needsFull && !refreshOnly) return;
   try {
     const d = await api.get(`/api/sessions/${sid(ev.sessionId)}/events/${sid(ev.id)}`);
@@ -1160,9 +1219,10 @@ function askEvent(ev) {
   const what = ev.kind === 'tool' ? `this ${ev.tool.display} call` : ev.kind === 'prompt' ? 'this prompt' : ev.kind === 'text' ? 'this message' : 'this event';
   openAsk({ kind: 'event', sessionId: ev.sessionId, eventId: ev.id, label: `${tagFor(ev).label} ${fmtTime(ev.ts)}`, what }, { type: 'row', id: ev.id });
 }
-function closeAsk() { state.ask = null; $('ask').hidden = true; applyRing(); }
+function closeAsk() { state.ask = null; $('ask').hidden = true; applyRing(); syncDetailsPane(); }
 function renderAsk() {
   const a = state.ask; const el = $('ask');
+  syncDetailsPane();
   if (!a) { el.hidden = true; return; }
   el.hidden = false;
   const chips = h('div', { class: 'ask-chips' }, h('span', { class: 'ask-chip primary', title: 'always included' }, a.primary.label || 'This item'));
@@ -1288,7 +1348,7 @@ function renderFiles() {
   $('files').replaceChildren(files.length ? table : h('div', { class: 'pad muted' }, 'No files touched yet.'));
 }
 async function openFile(path, line = null) {
-  state.detailsKey = `file:${path}`;
+  setPin(false); state.detailsKey = `file:${path}`; syncDetailsPane();
   try {
     const f = await api.get(`/api/file?path=${encodeURIComponent(path)}`);
     if (state.detailsKey !== `file:${path}`) return;
@@ -1333,7 +1393,7 @@ function renderChanges() {
   root.replaceChildren(c.files.length ? table : h('div', { class: 'pad muted' }, 'Working tree clean.'), commits);
 }
 async function openDiff(file) {
-  const id = state.selected; state.detailsKey = `diff:${file}`;
+  setPin(false); const id = state.selected; state.detailsKey = `diff:${file}`; syncDetailsPane();
   try {
     const d = await api.get(`/api/sessions/${sid(id)}/diff?file=${encodeURIComponent(file)}`);
     if (state.detailsKey !== `diff:${file}`) return;

@@ -20,6 +20,7 @@
   <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
   <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.5 4.5h11M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4 4.5l.7 8.6a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.6M6.8 7v4.5M9.2 7v4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-code" viewBox="0 0 16 16"><path d="M5 5 2 8l3 3M11 5l3 3-3 3M9.5 3l-3 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 16 16"><path d="M5.5 2h5M6.5 2v4L4 9h8L9.5 6V2M8 9v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-copy" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h6.5"/></g></symbol>
   <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-up" viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -39,7 +40,7 @@
       <button id="home" class="brand" type="button" title="Overview (Esc)"><svg width="20" height="20"><use href="#i-logo"/></svg>agent-deck</button>
       <span class="spacer"></span>
       <button id="new-btn" type="button" class="icon-btn" aria-label="New session" title="New session (n)"><svg width="14" height="14"><use href="#i-plus"/></svg></button>
-      <span id="conn" class="conn" title="connection to the deck server"><span class="cdot"></span><span class="clbl">Offline</span></span>
+      <button id="conn" type="button" class="conn" title="Connection to the deck server · click to restart it"><span class="cdot"></span><span class="clbl">Offline</span></button>
     </header>
     <div class="rail-search">
       <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter sessions</span><input id="tree-filter" type="search" placeholder="Filter sessions" spellcheck="false"></label>
@@ -138,6 +139,8 @@
   <div class="gutter" data-gutter="right"></div>
 
   <aside id="details" class="pane" aria-label="Details">
+    <button id="details-pin" type="button" class="icon-btn sm ghost d-pin" aria-pressed="false" aria-label="Pin to the newest event" title="Pin to the newest event"><svg width="12" height="12"><use href="#i-pin"/></svg></button>
+    <button id="details-close" type="button" class="icon-btn sm ghost d-close" aria-label="Close details" title="Close details"><svg width="12" height="12"><use href="#i-x"/></svg></button>
     <div id="details-body" class="details-body"></div>
     <section id="ask" class="ask" hidden aria-labelledby="ask-h"></section>
   </aside>
