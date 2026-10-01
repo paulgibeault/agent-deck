@@ -28,6 +28,8 @@
   <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
   <symbol id="i-list" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
   <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/></symbol>
   <symbol id="i-logo" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--logo-bg)" stroke="var(--ok)"/><path d="M6 7h8M6 10h5M6 13h7" stroke="var(--ok)" stroke-width="1.6" stroke-linecap="round"/></symbol>
 </svg>
 
@@ -36,6 +38,7 @@
     <header class="rail-h">
       <button id="home" class="brand" type="button" title="Overview (Esc)"><svg width="20" height="20"><use href="#i-logo"/></svg>agent-deck</button>
       <span class="spacer"></span>
+      <button id="new-btn" type="button" class="icon-btn" aria-label="New session" title="New session (n)"><svg width="14" height="14"><use href="#i-plus"/></svg></button>
       <span id="conn" class="conn" title="connection to the deck server"><span class="cdot"></span><span class="clbl">Offline</span></span>
     </header>
     <div class="rail-search">
@@ -61,6 +64,7 @@
 
     <div id="session-view" class="session-view" hidden>
       <header id="shead" class="shead"></header>
+      <section id="perms" class="perms" hidden aria-label="Permission requests" aria-live="polite"></section>
 
       <nav class="tabs" id="tabs" role="tablist" aria-label="Session views">
         <button class="tab-b active" data-tab="events" role="tab">Events <span class="count" id="events-count"></span></button>
@@ -76,9 +80,10 @@
           <button type="button" class="ask-ico" data-ask-list="queue" aria-label="Ask about the prompt queue"><svg width="11" height="11"><use href="#i-star"/></svg></button></div>
         <ul id="queue" class="queue"></ul>
         <div class="compose">
-          <textarea id="compose" rows="2" placeholder="Sending is for sessions the deck launches (phase 3). This one is observe-only." disabled></textarea>
+          <textarea id="compose" rows="2" placeholder="Sending is for sessions the deck launches. This one is observe-only." disabled></textarea>
           <div class="compose-actions">
-            <button id="send" class="btn" disabled title="This session was launched outside the deck; the deck can only observe it.">Send</button>
+            <button id="send" class="btn primary" disabled title="This session was launched outside the deck; the deck can only observe it.">Send</button>
+            <button id="interrupt" class="btn" hidden title="Stop the current turn and hold the queue"><svg width="11" height="11"><use href="#i-stop"/></svg>Interrupt</button>
             <button id="copy-last" class="btn" title="copy last prompt">Copy last prompt</button>
           </div>
         </div>
@@ -175,6 +180,36 @@
   </form>
 </dialog>
 
+<dialog id="new-session" class="dialog wide">
+  <form id="ns-form">
+    <h2 id="ns-t">New session</h2>
+    <p id="ns-sub" class="ns-sub">Runs <code>claude</code> under the deck, so you can send, queue, interrupt and answer permission prompts from here.</p>
+    <label class="ns-l" for="ns-cwd">Folder</label>
+    <input id="ns-cwd" class="field" type="text" list="ns-cwds" spellcheck="false" autocomplete="off" required placeholder="/path/to/repo">
+    <datalist id="ns-cwds"></datalist>
+    <label class="ns-l" for="ns-prompt">First prompt</label>
+    <textarea id="ns-prompt" class="ns-prompt" rows="4" required placeholder="What should Claude do? (⌘↩ to start)"></textarea>
+    <div class="ns-row">
+      <div><label class="ns-l" for="ns-model">Model</label>
+        <select id="ns-model" class="field"><option value="">CLI default</option><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option></select></div>
+      <div><label class="ns-l" for="ns-perm">Permissions</label>
+        <select id="ns-perm" class="field">
+          <option value="default">Ask me in the deck</option>
+          <option value="acceptEdits">Accept edits, ask for the rest</option>
+          <option value="auto">Auto (classifier decides)</option>
+          <option value="plan">Plan only, no changes</option>
+        </select></div>
+      <div id="ns-name-w"><label class="ns-l" for="ns-name">Name <span class="muted">(optional)</span></label>
+        <input id="ns-name" class="field" type="text" spellcheck="false" autocomplete="off"></div>
+    </div>
+    <p id="ns-err" class="ns-err" role="alert" hidden></p>
+    <div class="dialog-a">
+      <button type="button" id="ns-cancel" class="btn">Cancel</button>
+      <button type="submit" id="ns-go" class="btn primary">Start session</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="keys" class="dialog">
   <form method="dialog">
     <h2>Keyboard</h2>
@@ -185,6 +220,8 @@
       <dt><kbd>Space</kbd></dt><dd>follow newest</dd>
       <dt><kbd>/</kbd></dt><dd>filter events</dd>
       <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Events, Files, Changes, Shell</dd>
+      <dt><kbd>n</kbd></dt><dd>new session</dd>
+      <dt><kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send the prompt</dd>
       <dt><kbd>Esc</kbd></dt><dd>close Ask, then back to the overview</dd>
     </dl>
     <div class="dialog-a"><button value="ok" class="btn">Close</button></div>

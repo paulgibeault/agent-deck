@@ -42,6 +42,8 @@ const state = {
   narrator: { enabled: true },
   clientId: null,
   ask: null,                  // { spec, primary, extras, thread, sessionId, ring }
+  deck: new Map(),            // id -> deck-launched session state (lib/agent.mjs publicState)
+  pendingOpen: null,          // a session just launched, opened once the index lists it
 };
 
 function toast(msg, action = null) {
@@ -78,6 +80,7 @@ function connect() {
   es.addEventListener('event.batch', (e) => { const { sessionId, events } = JSON.parse(e.data); onEvents(sessionId, events); });
   es.addEventListener('event.update', (e) => { const { sessionId, event } = JSON.parse(e.data); onUpdate(sessionId, event); });
   es.addEventListener('session.update', (e) => onSession(JSON.parse(e.data)));
+  es.addEventListener('deck.update', (e) => onDeck(JSON.parse(e.data)));
   es.addEventListener('shell.output', (e) => shellOutput(JSON.parse(e.data)));
   es.addEventListener('shell.exit', (e) => shellExit(JSON.parse(e.data)));
 }
@@ -180,9 +183,10 @@ document.addEventListener('visibilitychange', reportView);
 function applySnapshot(snap) {
   state.snapshot = { hidden: [], ...snap };
   state.byId.clear();
-  for (const b of ['active', 'recent', 'closed', 'hidden']) for (const s of state.snapshot[b]) { state.byId.set(s.id, s); for (const a of s.subagents || []) state.byId.set(a.id, a); }
+  for (const b of ['active', 'recent', 'closed', 'hidden']) for (const s of state.snapshot[b]) { state.byId.set(s.id, s); for (const a of s.subagents || []) state.byId.set(a.id, a); if (s.deck) state.deck.set(s.id, s.deck); }
   renderTree();
-  if (state.selected) renderHeader(); else scheduleOverview();
+  if (state.pendingOpen && state.byId.has(state.pendingOpen)) openLaunched(state.pendingOpen);
+  else if (state.selected) renderHeader(); else scheduleOverview();
 }
 
 function onSession({ id, meta, brief, summary }) {
@@ -192,6 +196,7 @@ function onSession({ id, meta, brief, summary }) {
     const prev = state.byId.get(id);
     if (prev?.glance && !summary.glance) summary.glance = prev.glance;
     c.summary = summary; state.byId.set(id, summary); for (const a of summary.subagents || []) state.byId.set(a.id, a);
+    if (summary.deck) state.deck.set(id, summary.deck);
     for (const b of ['active', 'recent', 'closed', 'hidden']) { const i = state.snapshot[b].findIndex(x => x.id === id); if (i >= 0) state.snapshot[b][i] = summary; }
     scheduleTree();
   }
@@ -423,7 +428,8 @@ function renderOverview() {
   const head = h('header', { class: 'ov-h' },
     h('h1', {}, act.length ? `${working.length} agent${working.length === 1 ? '' : 's'} working, ${turn.length} waiting on you` : 'No agents running'),
     h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
-      : 'Start a session with claude in a terminal or the desktop app and it shows up here.'));
+      : 'Start one with New session, or run claude in a terminal or the desktop app and it shows up here.'));
+  head.append(h('button', { type: 'button', class: 'btn primary ov-new', onclick: () => openLaunch() }, svgUse('i-plus', 12), 'New session'));
   const out = [head];
 
   if (turn.length || errs.length) {
@@ -431,8 +437,8 @@ function renderOverview() {
     for (const s of turn) {
       sec.append(h('button', { type: 'button', class: 'need turn', dataset: { open: s.id } },
         pill('turn'),
-        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.gitBranch ? ' · ' + s.gitBranch : ''}`)), h('span', { class: 'nl' }, briefLine(s.id) || s.glance?.lastText || '')),
-        h('span', { class: 'age' }, s.glance?.idleMs != null ? `idle ${ago(s.glance.idleMs)}` : ''),
+        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.gitBranch ? ' · ' + s.gitBranch : ''}`)), h('span', { class: 'nl' }, permLine(s.id) || briefLine(s.id) || s.glance?.lastText || '')),
+        h('span', { class: 'age' }, permLine(s.id) ? 'permission' : s.glance?.idleMs != null ? `idle ${ago(s.glance.idleMs)}` : ''),
         h('span', { class: 'go' }, 'Open')));
     }
     for (const s of errs) {
@@ -499,11 +505,12 @@ async function select(id) {
   renderTree();
   reportView();
   renderHeader();
-  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); }
+  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); }
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
-  renderHeader(); renderQueue(); scheduleRows(true);
+  renderHeader(); renderQueue(); renderPerms(); scheduleRows(true);
+  if (changed && deckOf(id)?.alive) showPromptPanel(true);
   if (changed) {
     state.files = null; state.changes = null;
     $('files-count').textContent = ''; $('changes-count').textContent = '';
@@ -531,10 +538,17 @@ function renderHeader() {
   if (isAgent) {
     const parent = state.byId.get(s.parentId);
     top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.parentId) }, `subagent of ${parent?.title || s.parentId}`));
-  } else {
-    top.append(h('span', { class: 'pill outline', title: 'Launched outside the deck. The deck can read it but not drive it (phase 3).' }, 'Observe only'));
   }
+  const d = isAgent ? null : deckOf(id);
+  if (d?.alive) top.append(h('span', { class: 'pill outline deck', title: `Launched by the deck · pid ${d.pid} · permissions: ${d.permissionMode}` }, 'Deck', h('span', { class: 'muted' }, ` · ${PERM_LABEL[d.permissionMode] || d.permissionMode}`)));
+  else if (!isAgent && s.alive) top.append(h('span', { class: 'pill outline', title: 'Launched outside the deck. The deck can read it but not drive it.' }, 'Observe only'));
   top.append(h('span', { class: 'spacer' }));
+  if (d?.alive) {
+    top.append(h('button', { type: 'button', class: 'btn', disabled: d.status === 'idle' || d.interrupting || null, title: 'Stop the current turn and hold the queue', onclick: interruptSession }, svgUse('i-stop', 11), d.interrupting ? 'Interrupting…' : 'Interrupt'));
+    top.append(h('button', { type: 'button', class: 'btn', title: 'End the claude process. You can resume the session later.', onclick: stopSession }, 'End'));
+  } else if (!isAgent && !s.alive) {
+    top.append(h('button', { type: 'button', class: 'btn', title: 'Continue this session under the deck', onclick: () => openLaunch({ resumeId: id }) }, svgUse('i-send', 12), 'Resume in deck'));
+  }
   if (s.cwd) top.append(h('button', { type: 'button', class: 'btn', onclick: () => api.openEditor(s.cwd) }, svgUse('i-code', 14), 'Open in editor'));
   if (!isAgent) top.append(h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Copy resume command', title: 'Copy resume command', onclick: () => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); toast('Copied resume command'); } }, svgUse('i-copy', 14)));
 
@@ -562,10 +576,17 @@ function renderNow(s, b, phase) {
     box.append(h('span', { class: 'nl-k' }, 'NOW'), h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: t.name, isError: false } }).fam}` }, t.name),
       h('span', { class: 'nl-t', title: t.summary }, t.summary || t.name),
       h('span', { class: 'nl-e', dataset: { started: String(Date.now() - (t.startedMs || 0)) } }, fmtClock(t.startedMs || 0)));
+  } else if (phase === 'turn' && permLine(s.id)) {
+    box.append(h('span', { class: 'nl-k' }, 'NEEDS PERMISSION'), h('span', { class: 'nl-t' }, permLine(s.id)), h('span', { class: 'nl-e' }, 'answer below'));
   } else if (phase === 'turn') {
     box.append(h('span', { class: 'nl-k' }, 'YOUR TURN'), h('span', { class: 'nl-t' }, b?.lastPrompt ? `Finished: ${b.lastPrompt}` : 'Waiting for your next prompt'), h('span', { class: 'nl-e' }, b?.idleMs != null ? `idle ${ago(b.idleMs)}` : ''));
   } else if (phase === 'working') {
     box.append(h('span', { class: 'nl-k' }, 'NOW'), h('span', { class: 'nl-t' }, [b?.state, b?.detail].filter(Boolean).join(' · ') || 'working'));
+  } else if (deckOf(s.id)?.exit && phase === 'ended') {
+    const x = deckOf(s.id).exit;
+    const bad = x.code !== 0 && x.code !== null || (x.signal && x.signal !== 'SIGTERM');
+    box.classList.toggle('err', !!bad);
+    box.append(h('span', { class: 'nl-k' }, 'ENDED'), h('span', { class: 'nl-t', title: x.stderr || '' }, bad ? `claude exited ${x.signal || `with code ${x.code}`}${x.stderr ? ': ' + x.stderr.split('\n').at(-1) : ''}` : 'Ended from the deck'), h('span', { class: 'nl-e' }, `${ago(Date.now() - x.at)} ago`));
   } else {
     box.append(h('span', { class: 'nl-k' }, phase === 'done' ? 'DONE' : 'ENDED'), h('span', { class: 'nl-t' }, b?.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(b.lastEventTs))} ago` : 'no activity recorded'));
   }
@@ -652,15 +673,195 @@ async function deleteSession() {
 
 // ------------------------------------------------------------ prompt queue
 function renderQueue() {
-  const c = state.cache.get(state.selected);
+  const id = state.selected;
+  const c = state.cache.get(id);
+  const s = state.byId.get(id);
+  const d = s?.kind === 'session' ? deckOf(id) : null;
+  const compose = $('compose'), sendBtn = $('send'), intBtn = $('interrupt');
+  if (d?.alive) {
+    const q = d.queue;
+    const idle = d.status === 'idle';
+    $('queue-count').textContent = q.length ? `· ${q.length}` : '· empty';
+    $('prompt-note').textContent = d.held ? 'held after interrupt' : q.length ? 'sends when the current turn ends' : idle ? 'idle · a prompt goes out at once' : 'prompts wait for the current turn';
+    const rows = q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.text }, item.text.replace(/\s+/g, ' ')),
+      h('button', { class: 'mini', type: 'button', title: 'Send this next', disabled: i === 0 && !d.held || null, onclick: () => queueOp('top', item.id) }, 'Next'),
+      h('button', { class: 'mini', type: 'button', 'aria-label': 'Move up', disabled: i === 0 || null, onclick: () => queueOp('up', item.id) }, svgUse('i-up', 10)),
+      h('button', { class: 'mini', type: 'button', 'aria-label': 'Move down', disabled: i === q.length - 1 || null, onclick: () => queueOp('down', item.id) }, svgUse('i-down', 10)),
+      h('button', { class: 'mini', type: 'button', title: 'Remove from the queue', onclick: () => queueOp('remove', item.id) }, 'Remove')));
+    if (d.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, 'Queue held after interrupt. Nothing goes out until you resume or send.'), h('button', { class: 'mini', type: 'button', onclick: () => queueOp('resume') }, 'Resume queue')));
+    $('queue').replaceChildren(...rows);
+    compose.disabled = false;
+    compose.placeholder = idle && !q.length ? 'Prompt (⌘↩ to send)' : 'Queue a prompt (⌘↩)';
+    sendBtn.disabled = false; sendBtn.textContent = idle && !q.length ? 'Send' : 'Queue';
+    sendBtn.title = idle && !q.length ? 'Send now (⌘↩)' : 'Add to the queue; it goes out when the current turn ends (⌘↩)';
+    intBtn.hidden = false; intBtn.disabled = idle || d.interrupting;
+    return;
+  }
   const q = c?.meta?.queue || [];
   $('queue-count').textContent = q.length ? `· ${q.length}` : '· empty';
   $('prompt-note').textContent = q.length ? 'read-only mirror of the session queue' : 'nothing queued';
   $('queue').replaceChildren(...q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
     h('button', { class: 'mini', type: 'button', onclick: () => navigator.clipboard?.writeText(item.content) }, 'Copy'))));
+  compose.disabled = true; sendBtn.disabled = true; sendBtn.textContent = 'Send'; intBtn.hidden = true;
+  compose.placeholder = s?.alive ? 'Launched outside the deck, so it is observe-only here.' : 'This session has ended. Resume it in the deck to send prompts.';
+  sendBtn.title = s?.alive ? 'This session was launched outside the deck; the deck can only observe it.' : 'Resume the session in the deck first';
 }
-$('prompt-toggle').onclick = () => { const p = $('prompt'); p.hidden = !p.hidden; $('prompt-toggle').setAttribute('aria-expanded', String(!p.hidden)); };
+function showPromptPanel(open) { const p = $('prompt'); p.hidden = !open; $('prompt-toggle').setAttribute('aria-expanded', String(open)); }
+$('prompt-toggle').onclick = () => showPromptPanel($('prompt').hidden);
 $('copy-last').onclick = () => { const p = state.cache.get(state.selected)?.meta?.lastPrompt; if (p) { navigator.clipboard?.writeText(p); toast('Copied last prompt'); } };
+
+// ------------------------------------------------------------ deck-launched sessions
+const PERM_LABEL = { default: 'asks', acceptEdits: 'accept edits', auto: 'auto', plan: 'plan only' };
+function deckOf(id) { return id ? state.deck.get(id) || state.byId.get(id)?.deck || null : null; }
+
+function onDeck(st) {
+  if (st.gone) state.deck.delete(st.id); else state.deck.set(st.id, st);
+  const s = state.byId.get(st.id);
+  if (s && !st.gone) s.deck = st;
+  if (st.id === state.selected) { renderHeader(); renderQueue(); renderPerms(); }
+  else if (!state.selected) scheduleOverview();
+}
+
+function permLine(id) {
+  const p = deckOf(id)?.permissions?.[0];
+  return p ? `Wants to use ${p.displayName}${permSubject(p) ? ': ' + permSubject(p) : ''}` : null;
+}
+function permSubject(p) {
+  const i = p.input || {};
+  return oneLine(i.command || i.file_path || i.notebook_path || i.url || i.pattern || i.query || p.description || '', 120);
+}
+function suggestionText(list) {
+  return list.map(x => x.type === 'setMode' ? `switch to ${PERM_LABEL[x.mode] || x.mode}`
+    : x.type === 'addRules' ? `allow ${(x.rules || []).map(r => r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName).join(', ')}`
+    : x.type === 'addDirectories' ? `add ${(x.directories || []).map(tilde).join(', ')}` : x.type).join('; ') + ' for this session';
+}
+
+function renderPerms() {
+  const el = $('perms');
+  const d = deckOf(state.selected);
+  const list = d?.alive ? d.permissions : [];
+  const key = list.map(p => p.requestId).join(',');
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  el.hidden = !list.length;
+  el.replaceChildren(...list.map(permCard));
+  el.querySelector('.perm .btn.primary')?.focus({ preventScroll: true });
+}
+function permCard(p) {
+  const i = p.input || {};
+  const body = h('div', { class: 'perm-b' });
+  if (p.toolName === 'ExitPlanMode' && i.plan) body.append(h('div', { class: 'md perm-plan', html: markdown(i.plan) }));
+  else if (i.command) body.append(h('pre', { class: 'perm-cmd' }, i.command));
+  else if (i.file_path || i.notebook_path) body.append(h('div', { class: 'mono' }, tilde(i.file_path || i.notebook_path)));
+  else if (i.url) body.append(h('div', { class: 'mono' }, i.url));
+  else body.append(h('pre', { class: 'perm-cmd' }, JSON.stringify(i, null, 2)));
+  if (p.description && p.description !== i.command) body.prepend(h('div', { class: 'perm-d' }, p.description));
+  if (p.reason || p.blockedPath) body.append(h('div', { class: 'muted perm-r' }, [p.reason, p.blockedPath ? `outside the allowed folders: ${tilde(p.blockedPath)}` : null].filter(Boolean).join(' · ')));
+  const why = h('input', { class: 'field grow', type: 'text', placeholder: 'Tell Claude why (optional, sent with Deny)', spellcheck: 'false' });
+  const act = (decision) => answerPerm(p.requestId, decision, why.value);
+  why.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); act('deny'); } });
+  const actions = h('div', { class: 'perm-a' },
+    h('button', { type: 'button', class: 'btn primary', onclick: () => act('allow') }, 'Allow'),
+    p.suggestions.length ? h('button', { type: 'button', class: 'btn', title: suggestionText(p.suggestions), onclick: () => act('always') }, 'Allow for session') : null,
+    h('button', { type: 'button', class: 'btn', onclick: () => act('deny') }, 'Deny'), why);
+  return h('div', { class: 'perm' }, h('div', { class: 'perm-h' }, h('span', { class: 'perm-k' }, 'PERMISSION'),
+    h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: p.toolName, isError: false } }).fam}` }, p.displayName),
+    h('span', { class: 'muted' }, `asked ${ago(Date.now() - p.at)} ago`)), body, actions);
+}
+async function answerPerm(requestId, decision, message) {
+  try { await api.post(`/api/sessions/${sid(state.selected)}/permission`, { requestId, decision, message }); }
+  catch (e) { toast(`Answer failed: ${e.message}`); }
+}
+
+async function sendPrompt() {
+  const text = $('compose').value;
+  if (!text.trim() || $('compose').disabled) return;
+  const id = state.selected;
+  $('send').disabled = true;
+  try { await api.post(`/api/sessions/${sid(id)}/send`, { text }); $('compose').value = ''; setFollow(true, true); }
+  catch (e) { toast(`Send failed: ${e.message}`); }
+  finally { if (id === state.selected) renderQueue(); }
+}
+$('send').onclick = sendPrompt;
+$('compose').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendPrompt(); } });
+$('interrupt').onclick = interruptSession;
+
+async function queueOp(op, itemId) {
+  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId }); }
+  catch (e) { toast(`Queue: ${e.message}`); }
+}
+async function interruptSession() {
+  try { await api.post(`/api/sessions/${sid(state.selected)}/interrupt`); }
+  catch (e) { toast(`Interrupt failed: ${e.message}`); }
+}
+async function stopSession() {
+  const s = state.byId.get(state.selected); if (!s) return;
+  const d = deckOf(s.id);
+  const busy = d && d.status !== 'idle';
+  if (busy || d?.queue.length) {
+    const ok = await confirmDialog('End this session?', `${busy ? 'Claude is in the middle of a turn, which will be cut off. ' : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}You can resume the session later.`, 'End session');
+    if (!ok) return;
+  }
+  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Session ended'); }
+  catch (e) { toast(`End failed: ${e.message}`); }
+}
+
+// The launch dialog: a new session, or an ended one resumed under the deck.
+let launchCtx = null;
+function openLaunch({ resumeId } = {}) {
+  const dlg = $('new-session');
+  if (dlg.open) return;
+  const resume = resumeId ? state.byId.get(resumeId) : null;
+  launchCtx = { resumeId: resume ? resumeId : null };
+  const cwds = [...new Set([...state.snapshot.active, ...state.snapshot.recent].map(s => s.cwd).filter(Boolean))].slice(0, 20);
+  $('ns-cwds').replaceChildren(...cwds.map(c => h('option', { value: c })));
+  $('ns-t').textContent = resume ? 'Resume in the deck' : 'New session';
+  $('ns-sub').textContent = resume ? `Continues “${oneLine(resume.title, 60)}” under the deck. Your prompt is the next turn.` : 'Runs claude under the deck, so you can send, queue, interrupt and answer permission prompts from here.';
+  $('ns-cwd').value = resume ? resume.cwd : prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
+  $('ns-cwd').readOnly = !!resume;
+  $('ns-name-w').hidden = !!resume;
+  $('ns-name').value = '';
+  $('ns-model').value = prefs.launchModel || '';
+  $('ns-perm').value = prefs.launchPerm || 'default';
+  $('ns-err').hidden = true;
+  $('ns-go').disabled = false;
+  $('ns-go').textContent = resume ? 'Resume' : 'Start session';
+  dlg.showModal();
+  ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
+}
+$('new-btn').onclick = () => openLaunch();
+$('ns-cancel').onclick = () => $('new-session').close();
+$('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
+$('ns-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: $('ns-model').value, permissionMode: $('ns-perm').value, name: $('ns-name').value.trim() };
+  if (!body.prompt.trim()) { $('ns-prompt').focus(); return; }
+  $('ns-go').disabled = true; $('ns-err').hidden = true;
+  $('ns-go').textContent = 'Starting…';
+  try {
+    const st = launchCtx?.resumeId
+      ? await api.post(`/api/sessions/${sid(launchCtx.resumeId)}/resume`, body)
+      : await api.post('/api/launch', body);
+    if (!launchCtx?.resumeId) prefs.launchCwd = body.cwd;
+    prefs.launchModel = body.model; prefs.launchPerm = body.permissionMode; savePrefs();
+    state.deck.set(st.id, st);
+    $('ns-prompt').value = '';
+    $('new-session').close();
+    if (state.byId.has(st.id) && state.selected === st.id) { renderHeader(); renderQueue(); showPromptPanel(true); }
+    else if (state.byId.has(st.id)) openLaunched(st.id);
+    else { state.pendingOpen = st.id; toast('Session started. Opening it as soon as it writes its transcript…'); }
+  } catch (err) {
+    $('ns-err').textContent = err.message === 'not found'
+      ? 'The deck backend is older than this page and cannot launch sessions. Restart it (stop the server and run npm start, or quit and relaunch the app), then try again.'
+      : err.message;
+    $('ns-err').hidden = false;
+    $('ns-go').disabled = false; $('ns-go').textContent = launchCtx?.resumeId ? 'Resume' : 'Start session';
+  }
+});
+function openLaunched(id) {
+  state.pendingOpen = null;
+  select(id).then(() => showPromptPanel(true));
+}
 
 // ------------------------------------------------------------ events list
 let rowsTimer = null;
@@ -839,6 +1040,7 @@ document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector('dialog[open]')) return;
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
+  if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
   if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
   else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
