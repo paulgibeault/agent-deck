@@ -16,8 +16,30 @@ node server.mjs
 ```
 
 Prints a URL like `http://127.0.0.1:7777/?t=<token>`. Open it; the token is
-stored in a cookie so the page can be reloaded without it. Node 20+, no
-dependencies, no build step.
+stored in a cookie so the page can be reloaded without it. The token itself
+is kept in `~/.agent-deck/token`, so the cookie keeps working across
+restarts. Node 20+, no dependencies, no build step.
+
+### Install as an app
+
+The deck is an installable web app. With it open, use Chrome/Edge's
+"Install agent-deck" (address bar icon) or Safari's File → Add to Dock. The
+app opens even when the backend is stopped: it shows a welcome screen with a
+**Launch backend** button and connects as soon as the backend answers.
+
+The button opens an `agent-deck://` link, which needs a one-time helper
+install (macOS):
+
+```bash
+npm run install-app
+```
+
+That puts `Agent Deck Launcher.app` in `~/Applications`, registered for
+`agent-deck://`; it starts `server.mjs` in the background (log:
+`~/.agent-deck/server.log`) using the `PATH` and `node` from the shell you
+installed from. Re-run it if you move the repo or change Node. The first
+click asks the browser to allow opening the launcher. `npm run
+uninstall-app` removes it.
 
 Flags and environment:
 
@@ -25,7 +47,7 @@ Flags and environment:
 |---|---|---|
 | `--port N` / `DECK_PORT` | 7777 | listen port (always on 127.0.0.1) |
 | `--days N` | 3 | sessions modified within N days count as "Recent" |
-| `--token X` / `DECK_TOKEN` | random | fixed launch token (dev convenience) |
+| `--token X` / `DECK_TOKEN` | saved random | fixed launch token (dev convenience) |
 | `--open` | off | open the browser on start |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps its state |
 | `DECK_EDITOR` | `code` | command for "open in editor" (`<cmd> -g file:line`) |
@@ -33,7 +55,7 @@ Flags and environment:
 | `DECK_BRIEF_MODEL` | `haiku` | model for the generated Brief |
 | `DECK_ASK_MODEL` | `sonnet` | model for Ask about this |
 | `DECK_CLAUDE_BIN` | `claude` | CLI used for model calls |
-| `DECK_STATE_DIR` | `~/.agent-deck` | hidden sessions and the delete trash |
+| `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash |
 
 The Brief and Ask call `claude -p` with no tools, no MCP servers and no
 session persistence, using whatever login the CLI already has. If that login
