@@ -1,0 +1,218 @@
+#!/usr/bin/env node
+// agent-deck server: http + sse + transcript tailing + git + pilot shell.
+// Zero dependencies. Binds 127.0.0.1 only; every request needs the launch token.
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { SessionIndex } from './lib/sessions.mjs';
+import { ShellRunner } from './lib/shell.mjs';
+import * as gitinfo from './lib/gitinfo.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC = path.join(__dirname, 'public');
+
+// ---------------------------------------------------------------- config
+const argv = process.argv.slice(2);
+function arg(name, dflt) {
+  const i = argv.indexOf(`--${name}`);
+  if (i >= 0) return argv[i + 1] ?? true;
+  const eq = argv.find(a => a.startsWith(`--${name}=`));
+  return eq ? eq.slice(name.length + 3) : dflt;
+}
+const PORT = Number(arg('port', process.env.DECK_PORT || 7777));
+const HOST = '127.0.0.1';
+const RECENT_DAYS = Number(arg('days', 3));
+const TOKEN = String(arg('token', process.env.DECK_TOKEN || randomBytes(18).toString('base64url')));
+const EDITOR_CMD = process.env.DECK_EDITOR || 'code';
+const OPEN = argv.includes('--open');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json',
+};
+
+// ------------------------------------------------------------- services
+const index = new SessionIndex({ recentDays: RECENT_DAYS }).start();
+const shell = new ShellRunner();
+
+// ---------------------------------------------------------------- SSE
+const clients = new Set();
+function broadcast(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients) res.write(payload);
+}
+let snapshotTimer = null;
+function scheduleSnapshot() {
+  if (snapshotTimer) return;
+  snapshotTimer = setTimeout(() => { snapshotTimer = null; broadcast('sessions.snapshot', index.snapshot()); }, 150);
+}
+index.on('sessions', scheduleSnapshot);
+index.on('events', ({ sessionId, appended, updated }) => {
+  if (appended.length) broadcast('event.batch', { sessionId, events: appended });
+  for (const ev of updated) broadcast('event.update', { sessionId, event: ev });
+});
+index.on('session', (payload) => broadcast('session.update', payload));
+shell.on('output', (d) => broadcast('shell.output', d));
+shell.on('exit', (d) => broadcast('shell.exit', d));
+setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 15_000).unref();
+
+// ------------------------------------------------------------- helpers
+function send(res, code, body, headers = {}) {
+  const isBuf = Buffer.isBuffer(body);
+  const data = isBuf ? body : typeof body === 'string' ? body : JSON.stringify(body);
+  res.writeHead(code, { 'Content-Type': isBuf ? headers['Content-Type'] || 'application/octet-stream' : typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+  res.end(data);
+}
+function readBody(req, limit = 1 << 20) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+function cookies(req) {
+  const out = {};
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('='); if (i < 0) continue;
+    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+function authorized(req, url) {
+  return url.searchParams.get('t') === TOKEN || cookies(req).deck === TOKEN || req.headers['x-deck-token'] === TOKEN;
+}
+function serveStatic(res, rel) {
+  const file = path.normalize(path.join(PUBLIC, rel));
+  if (!file.startsWith(PUBLIC)) return send(res, 403, 'forbidden');
+  fs.readFile(file, (err, data) => {
+    if (err) return send(res, 404, 'not found');
+    send(res, 200, data, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+  });
+}
+
+// --------------------------------------------------------------- routes
+async function route(req, res, url) {
+  const p = url.pathname;
+  const q = url.searchParams;
+
+  if (req.method === 'GET' && p === '/') {
+    res.setHeader('Set-Cookie', `deck=${encodeURIComponent(TOKEN)}; Path=/; HttpOnly; SameSite=Strict`);
+    return serveStatic(res, 'index.html');
+  }
+  if (req.method === 'GET' && !p.startsWith('/api/')) return serveStatic(res, p.slice(1));
+
+  if (p === '/api/stream') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.write(`event: hello\ndata: ${JSON.stringify({ serverStartedAt: STARTED, token: TOKEN.slice(0, 4), version: VERSION })}\n\n`);
+    res.write(`event: sessions.snapshot\ndata: ${JSON.stringify(index.snapshot())}\n\n`);
+    clients.add(res);
+    req.on('close', () => clients.delete(res));
+    return;
+  }
+  if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
+  if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, index.snapshot());
+
+  let m;
+  if ((m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {
+    const id = decodeURIComponent(m[1]);
+    const summary = index.summary(id);
+    if (!summary) return send(res, 404, { error: 'unknown session' });
+    index.load(id);
+    return send(res, 200, { summary: index.summary(id), meta: index.metaOf(id), brief: index.brief(id) });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/events$/.exec(p))) {
+    const r = index.events(decodeURIComponent(m[1]), Number(q.get('from') || 0), Number(q.get('limit') || 5000));
+    return r ? send(res, 200, r) : send(res, 404, { error: 'unknown session' });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/events\/([^/]+)$/.exec(p))) {
+    const r = index.detail(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+    return r ? send(res, 200, r) : send(res, 404, { error: 'unknown event' });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/events\/([^/]+)\/image\/(\d+)$/.exec(p))) {
+    const img = index.image(decodeURIComponent(m[1]), decodeURIComponent(m[2]), Number(m[3]));
+    return img ? send(res, 200, img.data, { 'Content-Type': img.mediaType || 'image/png' }) : send(res, 404, 'no image');
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/files$/.exec(p))) {
+    const r = index.filesOf(decodeURIComponent(m[1]));
+    return r ? send(res, 200, { files: r }) : send(res, 404, { error: 'unknown session' });
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/changes$/.exec(p))) {
+    const cwd = index.cwdOf(decodeURIComponent(m[1]));
+    if (!cwd) return send(res, 404, { error: 'no cwd' });
+    return send(res, 200, await gitinfo.changes(cwd));
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/diff$/.exec(p))) {
+    const cwd = index.cwdOf(decodeURIComponent(m[1]));
+    const file = q.get('file');
+    if (!cwd || !file) return send(res, 400, { error: 'cwd and file required' });
+    return send(res, 200, await gitinfo.fileDiff(cwd, file));
+  }
+  if (p === '/api/file' && req.method === 'GET') {
+    const file = q.get('path');
+    if (!file) return send(res, 400, { error: 'path required' });
+    try {
+      const st = fs.statSync(file);
+      if (!st.isFile()) return send(res, 400, { error: 'not a file' });
+      const LIMIT = 2 * 1024 * 1024;
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.allocUnsafe(Math.min(st.size, LIMIT));
+      const n = fs.readSync(fd, buf, 0, buf.length, 0); fs.closeSync(fd);
+      const binary = buf.subarray(0, Math.min(n, 8000)).includes(0);
+      return send(res, 200, { path: file, size: st.size, mtime: st.mtimeMs, truncated: st.size > LIMIT, binary, content: binary ? null : buf.toString('utf8', 0, n) });
+    } catch (e) { return send(res, 404, { error: e.message }); }
+  }
+  if (p === '/api/shell/history') return send(res, 200, { runs: shell.history() });
+  if (p === '/api/shell/run' && req.method === 'POST') {
+    const { cmd, cwd } = await readBody(req);
+    if (!cmd || typeof cmd !== 'string') return send(res, 400, { error: 'cmd required' });
+    if (cwd && !fs.existsSync(cwd)) return send(res, 400, { error: `cwd does not exist: ${cwd}` });
+    const run = shell.run({ cmd, cwd });
+    return send(res, 200, { runId: run.id, startedAt: run.startedAt });
+  }
+  if (p === '/api/shell/kill' && req.method === 'POST') {
+    const { runId } = await readBody(req);
+    return send(res, 200, { killed: shell.kill(runId) });
+  }
+  if (p === '/api/open-editor' && req.method === 'POST') {
+    const { path: file, line } = await readBody(req);
+    if (!file) return send(res, 400, { error: 'path required' });
+    const target = line ? `${file}:${line}` : file;
+    try {
+      const child = spawn(EDITOR_CMD, ['-g', target], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' });
+      child.on('error', () => { /* reported below only if spawn throws synchronously */ });
+      child.unref();
+      return send(res, 200, { ok: true, editor: EDITOR_CMD, target });
+    } catch (e) { return send(res, 500, { error: e.message }); }
+  }
+  return send(res, 404, { error: 'not found' });
+}
+
+// --------------------------------------------------------------- server
+const STARTED = Date.now();
+const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${HOST}:${PORT}`);
+  if (!authorized(req, url)) {
+    return send(res, 401, url.pathname.startsWith('/api/') ? { error: 'missing or wrong token' }
+      : 'agent-deck: open the URL printed by the server (it carries the launch token).');
+  }
+  try { await route(req, res, url); }
+  catch (e) { console.error(e); if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
+});
+
+server.listen(PORT, HOST, () => {
+  const url = `http://${HOST}:${PORT}/?t=${TOKEN}`;
+  const snap = index.snapshot();
+  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed`);
+  if (OPEN) {
+    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
+  }
+});
+process.on('SIGINT', () => { index.stop(); server.close(); process.exit(0); });
