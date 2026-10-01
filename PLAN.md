@@ -341,6 +341,14 @@ No build step. ES modules in the browser, plain CSS, light/dark via
    toggles, narrator Brief.
 3. **Cockpit.** Launch sessions from the deck with full Prompt control over
    stream-json; hooks push channel; server-side TTS fallback.
+   *Launch, send, queue, interrupt, end, resume and permission prompts are
+   built (lib/agent.mjs); hooks push and TTS are not yet. Verified on
+   2.1.286: interrupt is `control_request {subtype:"interrupt"}`; permission
+   prompts arrive as `control_request {subtype:"can_use_tool"}` with
+   `--permission-prompt-tool stdio`; `-p` transcripts have no
+   `stop_hook_summary` and `-p` writes no `~/.claude/sessions` entry, so the
+   deck supplies liveness and busy/idle for its own sessions; `--resume`
+   keeps the session id.*
 
 ---
 
