@@ -132,13 +132,19 @@ svg { flex: none; }
 .gutter { background: var(--line); cursor: col-resize; }
 .gutter:hover, .gutter.active { background: var(--info); }
 #stream { background: var(--bg0); }
-#details { background: var(--bg1); overflow: hidden; }
+#details { background: var(--bg1); overflow: hidden; position: relative; }
+#deck.no-details { grid-template-columns: var(--left, 288px) 4px minmax(0, 1fr); }
+#deck.no-details > #details, #deck.no-details > .gutter[data-gutter="right"] { display: none; }
+.d-close, .d-pin { position: absolute; top: 12px; right: 10px; z-index: 2; }
+.d-pin { right: 36px; }
+.d-pin[aria-pressed="true"] { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, var(--bg1)); }
 
 /* ---------------------------------------------------------------- rail */
 .rail { background: var(--bg1); }
 .rail-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px 10px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; border: 0; background: none; padding: 2px; font-weight: 600; font-size: 13px; letter-spacing: .01em; }
-.conn { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--err-fg); }
+.conn { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--err-fg); border: 0; background: none; padding: 3px 6px; margin: -3px -6px; border-radius: 6px; }
+.conn:hover:not(:disabled) { background: var(--hover); }
 .conn .cdot { width: 6px; height: 6px; border-radius: 3px; background: var(--err); }
 .conn.on { color: var(--ok-fg); }
 .conn.on .cdot { background: var(--ok); }
@@ -233,7 +239,7 @@ svg { flex: none; }
 .session-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .shead { display: flex; flex-direction: column; gap: 12px; padding: 12px 18px 12px 12px; border-bottom: 1px solid var(--line); background: var(--bg1); max-height: 58vh; overflow: auto; flex: none; }
 .sh-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.sh-win { display: flex; gap: 2px; padding-right: 6px; border-right: 1px solid var(--line); }
+.sh-win { display: flex; gap: 2px; padding-left: 6px; border-left: 1px solid var(--line); }
 .sh-top h1 { flex: 0 1 auto; min-width: 90px !important; margin: 0 0 0 4px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sh-parent { font-size: 12px; color: var(--muted); border: 0; background: none; padding: 0; white-space: nowrap; }
 .sh-parent:hover { color: var(--fg); }
@@ -366,7 +372,8 @@ table.list .hot { color: var(--ok-fg); }
 .details-body { flex: 1; overflow: auto; min-height: 0; }
 .details { display: flex; flex-direction: column; min-height: 100%; }
 .dhead { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 12px; border-bottom: 1px solid var(--line); background: var(--bg1); position: sticky; top: 0; z-index: 1; }
-.dh-row { display: flex; align-items: center; gap: 8px; }
+.dh-row { display: flex; align-items: center; gap: 8px; padding-right: 56px; }
+.details-body:empty { flex: none; height: 44px; }
 .dtitle { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .dmeta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--muted); }
 .dbody { padding: 12px 16px 24px; display: flex; flex-direction: column; gap: 16px; }
@@ -390,9 +397,6 @@ code.hl { background: transparent !important; padding: 0 !important; }
 .agent-card .card-row { margin-top: 8px; display: flex; gap: 6px; align-items: center; }
 .images img { max-width: 100%; border: 1px solid var(--line); border-radius: 8px; margin: 4px 0; }
 details > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
-.d-empty { padding: 24px 18px; color: var(--muted); display: flex; flex-direction: column; gap: 14px; }
-.d-empty dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 12px; }
-.d-empty dt { text-align: right; }
 
 .md { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .md p { margin: 6px 0; }
