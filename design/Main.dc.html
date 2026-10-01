@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session view</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#9DBDF9}a:hover{color:#C3D6FB}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; display: grid; grid-template-columns: 288px minmax(0, 1fr) 460px; background: #0C0D0F; color: #E8E9EB; font-family: Geist, system-ui, sans-serif; font-size: 13px; overflow: hidden">
+
+  <dc-import name="Rail" mode="session" hint-size="288px,960px"></dc-import>
+
+  <main style="display: flex; flex-direction: column; min-width: 0; min-height: 0">
+
+    <header style="display: flex; flex-direction: column; gap: 12px; padding: 14px 20px 14px 14px; border-bottom: 1px solid #23262C; background: #111316">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="display: flex; gap: 2px; padding-right: 6px; border-right: 1px solid #23262C">
+          <button type="button" aria-label="Close session (stop it)" title="Close session" style="display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; border: 0; background: transparent; color: #B4B9C1; cursor: pointer">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round"/></svg>
+          </button>
+          <button type="button" aria-label="Delete session" title="Delete session…" style="display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; border: 0; background: transparent; color: #E39A9A; cursor: pointer">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4 4.5l.7 8.6a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.6M6.8 7v4.5M9.2 7v4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <h1 style="margin: 0 0 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em">Issues documentation setup</h1>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px; background: #173324; color: #8FD9B0; font-size: 11.5px; font-weight: 500">
+          <span style="width: 6px; height: 6px; border-radius: 3px; background: #4CC38A; box-shadow: 0 0 0 3px rgba(76,195,138,0.22)"></span>Working
+        </span>
+        <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid #2E333A; color: #8B919B; font-size: 11px">Observe only</span>
+        <span style="flex-grow: 1"></span>
+        <button type="button" style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid #2E333A; background: #171A1E; color: #E8E9EB; font: inherit; font-size: 12px; cursor: pointer">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 5 2 8l3 3M11 5l3 3-3 3M9.5 3l-3 10" stroke-linecap="round" stroke-linejoin="round"/></svg>Open in editor
+        </button>
+        <button type="button" aria-label="Copy resume command" style="display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; border: 1px solid #2E333A; background: #171A1E; color: #B4B9C1; cursor: pointer">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h6.5"/></svg>
+        </button>
+      </div>
+
+      <section aria-labelledby="brief-h" style="display: flex; flex-direction: column; gap: 12px; margin-left: 6px; padding: 14px 16px; border-radius: 10px; background: #131519; border: 1px solid #23262C">
+        <div style="display: flex; align-items: center; gap: 10px">
+          <h2 id="brief-h" style="margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #B4B9C1">Brief</h2>
+          <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #8B919B">
+            <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="#2E333A" stroke-width="2"/><path d="M8 2a6 6 0 0 1 5.2 3" fill="none" stroke="#4CC38A" stroke-width="2" stroke-linecap="round"/></svg>
+            Session to date · updated 8s ago · refreshes every 20s while working
+          </span>
+          <span style="flex-grow: 1"></span>
+          <button type="button" aria-label="Refresh brief now" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; cursor: pointer">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" style="display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11.5px; cursor: pointer">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask about this
+          </button>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #E8E9EB">Documented the 11 open hive-mind issues, then fanned out one subagent per issue and is merging their PRs as they land. Five are merged and live; #11 (ghost race) is merging now as PR #27 on the Sunflower Field stage you asked for. Four subagents are still working.</p>
+
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: #8B919B">
+            <span style="color: #B4B9C1; font-weight: 500">11 issues</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #7AA7F7"></span>5 merged</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #4CC38A"></span>1 merging</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #2F6B4D"></span>4 in progress</span>
+            <span style="display: inline-flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #2E333A"></span>1 not started</span>
+          </div>
+          <div style="display: flex; gap: 3px">
+            <span style="flex-grow: 5; height: 6px; border-radius: 3px; background: #7AA7F7"></span>
+            <span style="flex-grow: 1; height: 6px; border-radius: 3px; background: #4CC38A"></span>
+            <span style="flex-grow: 4; height: 6px; border-radius: 3px; background: #2F6B4D"></span>
+            <span style="flex-grow: 1; height: 6px; border-radius: 3px; background: #2E333A"></span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <h3 style="margin: 0; font-size: 11px; font-weight: 500; color: #8B919B">Done so far</h3>
+            <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; line-height: 1.4; color: #B4B9C1">
+              <li>Wrote up issues #1–#11 on GitHub</li>
+              <li>Merged #1, #7, #8, #9, #10</li>
+              <li>Unit gates pass, 147 of 147</li>
+            </ul>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <h3 style="margin: 0; font-size: 11px; font-weight: 500; color: #8FD9B0">Now</h3>
+            <p style="margin: 0; font-size: 12.5px; line-height: 1.4; color: #E8E9EB">Merging PR #27 and removing its worktree. Subagents on #2, #3, #5 and #6 are mid-implementation.</p>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 5px">
+            <h3 style="margin: 0; font-size: 11px; font-weight: 500; color: #8B919B">Next</h3>
+            <p style="margin: 0; font-size: 12.5px; line-height: 1.4; color: #B4B9C1">Rerun the e2e on main, then review and merge each remaining PR as its subagent finishes. #4 is waiting on #3.</p>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border-radius: 8px; background: #1F1A12; border: 1px solid #4A3B1E; font-size: 12.5px; line-height: 1.4">
+          <span style="flex: none; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: #F0BC62; padding-top: 1px">WATCH</span>
+          <span style="color: #E2D3B4">The e2e failed at 22:25 on the ghost replay. A fix to tools/stage.mjs followed, but the e2e has not been rerun since.</span>
+          <a href="#" style="flex: none; font-size: 12px">Jump to event</a>
+        </div>
+      </section>
+
+      <div style="display: flex; align-items: center; gap: 14px; margin-left: 6px; font-size: 11.5px; color: #8B919B; font-variant-numeric: tabular-nums">
+        <span style="font-family: 'Geist Mono', monospace">~/work/hive-mind</span>
+        <span>main</span>
+        <a href="#" style="text-decoration: none">PR #27</a>
+        <span>opus-5-5 · medium</span>
+        <span>turn 439 in / 740 out</span>
+        <span>session 110k</span>
+        <span>$6.00</span>
+        <a href="#" style="color: #F29B9B; text-decoration: none">8 errors</a>
+      </div>
+    </header>
+
+    <div style="display: flex; align-items: center; gap: 4px; padding: 0 14px; border-bottom: 1px solid #23262C" role="tablist" aria-label="Session views">
+      <button type="button" role="tab" aria-selected="true" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; border: 0; border-bottom: 2px solid #E8E9EB; background: transparent; color: #E8E9EB; font: inherit; font-weight: 500; cursor: pointer">Events <span style="font-size: 11px; color: #8B919B; font-weight: 400">509</span></button>
+      <button type="button" role="tab" aria-selected="false" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #8B919B; font: inherit; cursor: pointer">Files <span style="font-size: 11px">13</span></button>
+      <button type="button" role="tab" aria-selected="false" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #8B919B; font: inherit; cursor: pointer">Changes <span style="font-size: 11px">+214 −38</span></button>
+      <button type="button" role="tab" aria-selected="false" style="display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #8B919B; font: inherit; cursor: pointer">Shell</button>
+      <span style="flex-grow: 1"></span>
+      <button type="button" style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; font: inherit; font-size: 12px; cursor: pointer">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h6" stroke-linecap="round"/></svg>Prompt queue <span style="color: #8B919B">empty</span>
+      </button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #23262C">
+      <label style="display: flex; align-items: center; gap: 8px; flex-grow: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: 7px; background: #0C0D0F; border: 1px solid #2E333A; color: #8B919B">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14" stroke-linecap="round"/></svg>
+        <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Filter events</span>
+        <input type="search" placeholder="Filter by text, tool or path" style="flex-grow: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #E8E9EB; font: inherit; font-size: 12.5px">
+      </label>
+      <div role="group" aria-label="Event kind" style="display: flex; padding: 2px; border-radius: 8px; background: #0C0D0F; border: 1px solid #2E333A">
+        <button type="button" aria-pressed="true" style="height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: #22262C; color: #E8E9EB; font: inherit; font-size: 12px; cursor: pointer">All</button>
+        <button type="button" aria-pressed="false" style="height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #8B919B; font: inherit; font-size: 12px; cursor: pointer">Tools</button>
+        <button type="button" aria-pressed="false" style="height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #8B919B; font: inherit; font-size: 12px; cursor: pointer">Messages</button>
+        <button type="button" aria-pressed="false" style="height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #E39A9A; font: inherit; font-size: 12px; cursor: pointer">Errors 8</button>
+      </div>
+      <button type="button" aria-pressed="false" style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid #2E333A; background: transparent; color: #8B919B; font: inherit; font-size: 12px; cursor: pointer">Thinking</button>
+      <button type="button" aria-pressed="true" style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid #2B5A40; background: #142219; color: #8FD9B0; font: inherit; font-size: 12px; cursor: pointer">
+        <span style="width: 6px; height: 6px; border-radius: 3px; background: #4CC38A"></span>Following
+      </button>
+      <button type="button" aria-label="Ask about these events" title="Ask about these events" style="display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; cursor: pointer">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>
+      </button>
+    </div>
+
+    <div style="flex-grow: 1; min-height: 0; overflow: hidden; font-size: 12.5px">
+      <sc-for list="{{events}}" as="e" hint-placeholder-count="12">
+        <sc-if value="{{e.isTurn}}" hint-placeholder-val="{{false}}">
+          <div style="display: flex; align-items: center; gap: 10px; margin: 10px 14px 4px; padding: 10px 12px; border-radius: 8px; background: #141A26; border: 1px solid #25324A">
+            <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; background: #23314D; color: #A9C4FA; font-size: 11px; font-weight: 500">You</span>
+            <span style="flex-grow: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500">{{e.text}}</span>
+            <span style="font-size: 11.5px; color: #8B919B; font-variant-numeric: tabular-nums">{{e.meta}}</span>
+          </div>
+        </sc-if>
+        <sc-if value="{{e.isEnd}}" hint-placeholder-val="{{false}}">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 14px 24px 6px; font-size: 11.5px; color: #8B919B">
+            <span style="flex-grow: 1; height: 1px; background: #23262C"></span>
+            <span>{{e.text}}</span>
+            <span style="flex-grow: 1; height: 1px; background: #23262C"></span>
+          </div>
+        </sc-if>
+        <sc-if value="{{e.isRow}}" hint-placeholder-val="{{true}}">
+          <div style="display: flex; align-items: center; height: 30px; margin: 0 14px; border-radius: 6px; {{e.rowCss}}">
+            <button type="button" style="flex-grow: 1; min-width: 0; display: grid; grid-template-columns: 64px 52px minmax(0, 1fr) auto; gap: 10px; align-items: center; height: 30px; padding: 0 0 0 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer">
+              <span style="font-family: 'Geist Mono', monospace; font-size: 11px; color: #8B919B; font-variant-numeric: tabular-nums">{{e.ts}}</span>
+              <span style="justify-self: start; display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: 'Geist Mono', monospace; font-size: 10.5px; {{e.tagCss}}">{{e.tag}}</span>
+              <span style="min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; {{e.bodyCss}}">{{e.body}}</span>
+              <span style="font-family: 'Geist Mono', monospace; font-size: 11px; {{e.durCss}}">{{e.dur}}</span>
+            </button>
+            <sc-if value="{{e.hover}}" hint-placeholder-val="{{false}}">
+              <button type="button" style="flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; margin: 0 6px 0 10px; padding: 0 7px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11px; cursor: pointer">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask
+              </button>
+            </sc-if>
+            <sc-if value="{{e.noHover}}" hint-placeholder-val="{{true}}">
+              <span style="flex: none; width: 56px; padding-right: 10px; text-align: right; font-family: 'Geist Mono', monospace; font-size: 11px; color: #8B919B; font-variant-numeric: tabular-nums">{{e.tok}}</span>
+            </sc-if>
+          </div>
+        </sc-if>
+      </sc-for>
+    </div>
+  </main>
+
+  <aside aria-label="Event details" style="display: flex; flex-direction: column; min-height: 0; border-left: 1px solid #23262C; background: #111316">
+    <div style="display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 14px; border-bottom: 1px solid #23262C">
+      <div style="display: flex; align-items: center; gap: 8px">
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; background: #1E2A22; color: #7FD6A4; font-family: 'Geist Mono', monospace; font-size: 11px">Bash</span>
+        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 10px; background: #173324; color: #8FD9B0; font-size: 11px">exit 0</span>
+        <span style="flex-grow: 1"></span>
+        <button type="button" aria-label="Previous event (k)" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; cursor: pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 10l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button type="button" aria-label="Next event (j)" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; cursor: pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button type="button" aria-label="Show raw record" style="display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; font: inherit; font-family: 'Geist Mono', monospace; font-size: 11px; cursor: pointer">{ }</button>
+      </div>
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4">Commit the ghost-race stage and repo gates</h2>
+      <div style="display: flex; gap: 14px; font-size: 11.5px; color: #8B919B">
+        <span>22:25:29</span><span>4.3s</span><span>1.4k tokens</span><span>Turn 13 · step 18 of 22</span>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 16px; padding: 16px 18px">
+      <section style="display: flex; flex-direction: column; gap: 8px">
+        <div style="display: flex; align-items: center; gap: 6px">
+          <h3 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Command</h3>
+          <span style="flex-grow: 1"></span>
+          <button type="button" style="height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; font: inherit; font-size: 11px; cursor: pointer">Copy</button>
+          <button type="button" style="height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid #2E333A; background: transparent; color: #B4B9C1; font: inherit; font-size: 11px; cursor: pointer">Run in Shell</button>
+          <button type="button" aria-label="Ask about this command" style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; cursor: pointer"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg></button>
+        </div>
+        <pre style="margin: 0; padding: 12px; border-radius: 8px; background: #0C0D0F; border: 1px solid #23262C; font-family: 'Geist Mono', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; color: #E8E9EB"><span style="color: #8B919B">$ </span>git add main.js tests/repo-gates.test.js tools/stage.mjs
+<span style="color: #8B919B">  </span>&amp;&amp; git commit -m "Ghost race: stage replay + gates"</pre>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 8px">
+        <div style="display: flex; align-items: center; gap: 6px">
+          <h3 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Output</h3>
+          <span style="font-size: 11px; color: #8B919B">stdout · 2 lines</span>
+          <span style="flex-grow: 1"></span>
+          <button type="button" aria-label="Ask about this output" aria-pressed="true" style="display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid #6B5BB0; background: #2A2440; color: #DCD0FF; font: inherit; font-size: 11px; cursor: pointer"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Asking</button>
+        </div>
+        <pre style="margin: 0; padding: 12px; border-radius: 8px; background: #0C0D0F; border: 1px solid #6B5BB0; box-shadow: 0 0 0 3px rgba(107,91,176,0.25); font-family: 'Geist Mono', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; color: #B4B9C1">[issue-11-ghost-race 4e1c2a9] Ghost race: stage replay + gates
+ 3 files changed, 148 insertions(+), 22 deletions(-)</pre>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px">
+          <h3 style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Files in this commit</h3>
+          <span style="flex-grow: 1"></span>
+          <button type="button" aria-label="Ask about these files" style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; cursor: pointer"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg></button>
+        </div>
+        <button type="button" style="display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid #23262C; background: #131519; color: inherit; font: inherit; font-family: 'Geist Mono', monospace; font-size: 12px; text-align: left; cursor: pointer">
+          <span>main.js</span><span style="color: #7FD6A4">+96</span><span style="color: #F29B9B">−14</span>
+        </button>
+        <button type="button" style="display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid #23262C; background: #131519; color: inherit; font: inherit; font-family: 'Geist Mono', monospace; font-size: 12px; text-align: left; cursor: pointer">
+          <span>tests/repo-gates.test.js</span><span style="color: #7FD6A4">+41</span><span style="color: #8B919B">−0</span>
+        </button>
+      </section>
+    </div>
+
+    <section aria-labelledby="ask-h" style="display: flex; flex-direction: column; gap: 10px; margin: 0 12px 12px; padding: 12px; border-radius: 10px; background: #16141F; border: 1px solid #3B3456">
+      <div style="display: flex; align-items: center; gap: 8px">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="#C9B8F8" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>
+        <h3 id="ask-h" style="margin: 0; font-size: 12.5px; font-weight: 600; color: #E3DAFF">Ask about this output</h3>
+        <span style="flex-grow: 1"></span>
+        <button type="button" aria-label="Close ask" style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; border: 0; background: transparent; color: #8B919B; cursor: pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round"/></svg></button>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px">
+        <span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: #2A2440; color: #DCD0FF">Output of Bash 22:25:29</span>
+        <span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: #1E1B2A; color: #B4B9C1">+ its command</span>
+        <span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: #1E1B2A; color: #B4B9C1">+ Turn 13</span>
+        <span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: #1E1B2A; color: #B4B9C1">+ session brief</span>
+        <button type="button" style="height: 22px; padding: 0 8px; border-radius: 11px; border: 1px dashed #3B3456; background: transparent; color: #8B919B; font: inherit; font-size: 11px; cursor: pointer">Add context</button>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <button type="button" style="height: 28px; padding: 0 10px; border-radius: 6px; border: 0; background: #1E1B2A; color: #C9C2E4; font: inherit; font-size: 12px; text-align: left; cursor: pointer">Did this commit include the e2e fix, or only the stage change?</button>
+        <button type="button" style="height: 28px; padding: 0 10px; border-radius: 6px; border: 0; background: #1E1B2A; color: #C9C2E4; font: inherit; font-size: 12px; text-align: left; cursor: pointer">Which branch and worktree does 4e1c2a9 live on?</button>
+      </div>
+      <label style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 12px; border-radius: 8px; background: #0C0D0F; border: 1px solid #6B5BB0">
+        <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Your question</span>
+        <input type="text" placeholder="Ask anything about this output…" style="flex-grow: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #E8E9EB; font: inherit; font-size: 12.5px">
+        <button type="button" aria-label="Send question" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; border: 0; background: #8C78E8; color: #120E24; cursor: pointer"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </label>
+      <p style="margin: 0; font-size: 11px; color: #8B919B">Answered on the side with a read-only model. The session is not interrupted.</p>
+    </section>
+  </aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const tags = {
+      Bash:  'background: #1E2A22; color: #7FD6A4;',
+      Read:  'background: #1C2433; color: #8FB5F8;',
+      Edit:  'background: #2E2618; color: #EDB65A;',
+      Agent: 'background: #261F36; color: #C3AEF7;',
+      Said:  'background: #22262C; color: #E8E9EB;',
+      Think: 'background: transparent; color: #8B919B; box-shadow: inset 0 0 0 1px #2E333A;',
+      Queue: 'background: transparent; color: #8B919B; box-shadow: inset 0 0 0 1px #2E333A;',
+    };
+    const row = (ts, tag, body, dur, tok, opt) => {
+      const o = opt || {};
+      let rowCss = 'background: transparent; color: #E8E9EB;';
+      if (o.hover) rowCss = 'background: #171A1E; color: #E8E9EB;';
+      if (o.selected) rowCss = 'background: #1D2129; color: #E8E9EB; box-shadow: inset 0 0 0 1px #3A4048;';
+      if (o.error) rowCss = 'background: #1A1214; color: #E8E9EB;';
+      let bodyCss = tag === 'Said' ? 'font-family: Geist, sans-serif;' : "font-family: 'Geist Mono', monospace; font-size: 12px;";
+      if (o.muted) bodyCss += ' color: #8B919B;';
+      if (o.error) bodyCss += ' color: #F2B0B0;';
+      let durCss = 'color: #8B919B;';
+      if (o.running) durCss = 'color: #8FD9B0;';
+      if (o.error) durCss = 'color: #F29B9B;';
+      return { isRow: true, ts, tag, body, dur, tok, rowCss, bodyCss, durCss, tagCss: tags[tag], hover: !!o.hover, noHover: !o.hover };
+    };
+    return {
+      events: [
+        { isTurn: true, text: 'merge and use Sunflower Field', meta: 'Turn 14 · 22:27:05 · live 0:38' },
+        row('22:27:13', 'Bash', 'gh pr merge 27 --merge && git worktree remove --force .claude/worktrees/agent-a4f1c…', 'running', '280', { running: true }),
+        row('22:27:08', 'Bash', 'gh pr checks 27 2>&1 | tail -20', '2.8s', '159'),
+        row('22:27:06', 'Queue', 'dequeued your prompt', '', '', { muted: true }),
+        { isEnd: true, text: 'Turn 13 ended · 22 events · 4m 51s · 18.6k tokens · 2 hooks' },
+        row('22:25:38', 'Said', "#10 (Queen's Frame) is merged and live. #11 (ghost race) is open as PR #27 — checks running.", '', '450', { hover: true }),
+        row('22:25:29', 'Bash', 'git add main.js tests/repo-gates.test.js tools/stage.mjs && git commit -m "Ghost race…"', '4.3s', '1.4k', { selected: true }),
+        row('22:25:22', 'Think', '2 thinking blocks · 232 chars', '', '1.4k', { muted: true }),
+        row('22:25:16', 'Read', '17-ghost-beaten.png', '34ms', '220'),
+        row('22:25:13', 'Bash', 'pkill -f "dev-server.py 4812"; ls ~/work/hive-mind/shots', '464ms', '158'),
+        row('22:25:09', 'Bash', 'npx playwright test tests/e2e.spec.ts — exit 1, 2 failed', '12.1s', '612', { error: true }),
+        row('22:24:59', 'Edit', 'tools/stage.mjs  +12 −3', '18ms', '1.1k'),
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

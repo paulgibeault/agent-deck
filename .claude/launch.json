@@ -4,9 +4,9 @@
     {
       "name": "agent-deck",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.mjs", "--port", "7777", "--token", "devtoken"],
-      "port": 7777,
-      "url": "http://127.0.0.1:7777"
+      "runtimeArgs": ["server.mjs", "--port", "7778", "--token", "devtoken"],
+      "port": 7778,
+      "url": "http://127.0.0.1:7778"
     }
   ]
 }

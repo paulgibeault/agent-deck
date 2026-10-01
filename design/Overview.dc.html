@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Deck overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#9DBDF9}a:hover{color:#C3D6FB}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; display: grid; grid-template-columns: 288px minmax(0, 1fr); background: #0C0D0F; color: #E8E9EB; font-family: Geist, system-ui, sans-serif; font-size: 13px; overflow: hidden">
+
+  <dc-import name="Rail" mode="overview" hint-size="288px,960px"></dc-import>
+
+  <main style="display: flex; flex-direction: column; gap: 28px; min-width: 0; padding: 36px 44px; overflow: hidden">
+    <header style="display: flex; align-items: flex-end; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1 style="margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.015em">3 agents working, 1 waiting on you</h1>
+        <p style="margin: 0; color: #8B919B; font-size: 13.5px">Live across 2 repos · 13 subagents · $6.42 spent today</p>
+      </div>
+      <span style="flex-grow: 1"></span>
+      <span style="font-size: 12px; color: #8B919B">Press <kbd style="font-family: 'Geist Mono', monospace; border: 1px solid #2E333A; border-radius: 4px; padding: 0 5px">1</kbd>–<kbd style="font-family: 'Geist Mono', monospace; border: 1px solid #2E333A; border-radius: 4px; padding: 0 5px">9</kbd> to jump to a session</span>
+    </header>
+
+    <section aria-labelledby="needs" style="display: flex; flex-direction: column; gap: 10px">
+      <div style="display: flex; align-items: center; gap: 10px"><h2 id="needs" style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Needs you</h2><button type="button" aria-label="Ask about what needs you" style="display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; cursor: pointer"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask</button></div>
+      <a href="#" style="display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 16px; align-items: center; padding: 14px 16px; border-radius: 10px; background: #1F1A12; border: 1px solid #4A3B1E; color: #E8E9EB; text-decoration: none">
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px; background: #3A2D14; color: #F0BC62; font-size: 11.5px; font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 3px; background: #E8A63A"></span>Your turn</span>
+        <span style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+          <span style="font-weight: 600">Phase 1 kickoff <span style="font-weight: 400; color: #8B919B">· agent-deck · main</span></span>
+          <span style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #D9C9A8">Phase 1 is committed as 740a9e8. Want me to start on read-aloud next?</span>
+        </span>
+        <span style="font-size: 12px; color: #C9A86A">idle 6m</span>
+        <span style="display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 7px; background: #E8A63A; color: #1A1408; font-size: 12px; font-weight: 600">Open</span>
+      </a>
+      <a href="#" style="display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 16px; align-items: center; padding: 14px 16px; border-radius: 10px; background: #1A1214; border: 1px solid #4A2226; color: #E8E9EB; text-decoration: none">
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px; background: #3A1A1D; color: #F29B9B; font-size: 11.5px; font-weight: 500">8 errors</span>
+        <span style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+          <span style="font-weight: 600">Issues documentation setup <span style="font-weight: 400; color: #8B919B">· hive-mind · PR #27</span></span>
+          <span style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: 'Geist Mono', monospace; font-size: 12px; color: #E3B4B4">npx playwright test tests/e2e.spec.ts — exit 1, 2 failed</span>
+        </span>
+        <span style="font-size: 12px; color: #C99090">latest 2m ago</span>
+        <span style="display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid #5A2E33; color: #F2B0B0; font-size: 12px; font-weight: 500">Review</span>
+      </a>
+    </section>
+
+    <section aria-labelledby="working" style="display: flex; flex-direction: column; gap: 10px">
+      <div style="display: flex; align-items: center; gap: 10px"><h2 id="working" style="margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Working</h2><button type="button" aria-label="Ask about working sessions" style="display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; cursor: pointer"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask</button></div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px">
+        <sc-for list="{{cards}}" as="c" hint-placeholder-count="3">
+          <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; background: #131519; border: 1px solid #23262C; color: #E8E9EB; text-decoration: none">
+            <span style="display: flex; align-items: center; gap: 8px">
+              <span style="width: 8px; height: 8px; border-radius: 4px; background: #4CC38A; box-shadow: 0 0 0 3px rgba(76,195,138,0.18)"></span>
+              <span style="flex-grow: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; font-size: 14px">{{c.title}}</span>
+              <span style="font-size: 11.5px; color: #8B919B">{{c.age}}</span>
+            </span>
+            <span style="font-size: 11.5px; color: #8B919B; font-family: 'Geist Mono', monospace">{{c.where}}</span>
+            <span style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; background: #0C0D0F; border: 1px solid #23262C">
+              <span style="display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font-family: 'Geist Mono', monospace; font-size: 10.5px; {{c.tagCss}}">{{c.tag}}</span>
+              <span style="min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: 'Geist Mono', monospace; font-size: 12px">{{c.now}}</span>
+            </span>
+            <span style="display: flex; flex-direction: column; gap: 6px">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8B919B"><span style="width: 6px; height: 6px; border-radius: 3px; {{c.freshDot}}"></span>Brief · {{c.fresh}}</span>
+              <span style="min-height: 76px; font-size: 13px; line-height: 1.45; color: #B4B9C1">{{c.said}}</span>
+            </span>
+            <span style="display: flex; gap: 14px; padding-top: 10px; border-top: 1px solid #23262C; font-size: 11.5px; color: #8B919B; font-variant-numeric: tabular-nums">
+              <span>{{c.s1}}</span><span>{{c.s2}}</span><span>{{c.s3}}</span>
+            </span>
+          </a>
+        </sc-for>
+      </div>
+    </section>
+
+    <section aria-labelledby="recent" style="display: flex; flex-direction: column; gap: 6px">
+      <div style="display: flex; align-items: center; gap: 10px"><h2 id="recent" style="margin: 0 0 4px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: #8B919B">Recently finished</h2><button type="button" aria-label="Ask about recently finished sessions" style="display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border-radius: 5px; border: 1px solid #3B3456; background: #1B1828; color: #C9B8F8; font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; cursor: pointer"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5l1.5 4.6 4.6 1.5-4.6 1.5L8 13.7l-1.5-4.6L1.9 7.6l4.6-1.5z"/></svg>Ask</button></div>
+      <sc-for list="{{recent}}" as="r" hint-placeholder-count="4">
+        <a href="#" style="display: grid; grid-template-columns: minmax(0, 1fr) 220px 80px; gap: 16px; align-items: center; height: 38px; padding: 0 14px; border-radius: 8px; color: #B4B9C1; text-decoration: none; border-bottom: 1px solid #1A1D22">
+          <span style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis">{{r.title}}</span>
+          <span style="font-family: 'Geist Mono', monospace; font-size: 11.5px; color: #8B919B">{{r.where}}</span>
+          <span style="justify-self: end; font-size: 11.5px; color: #8B919B">{{r.age}}</span>
+        </a>
+      </sc-for>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const bash = 'background: #1E2A22; color: #7FD6A4;';
+    const edit = 'background: #2E2618; color: #EDB65A;';
+    const read = 'background: #1C2433; color: #8FB5F8;';
+    return {
+      cards: [
+        { title: 'Issues documentation setup', age: '6s', where: 'hive-mind · main · PR #27', tag: 'Bash', tagCss: bash, now: 'gh pr merge 27 --merge && git worktree…', said: 'Fanned out 10 subagents over 11 issues; 5 merged. Merging #11 (PR #27) now. Watch: e2e not rerun since its last failure.', fresh: 'updated 1m ago · every 2m in background', freshDot: 'background: #4CC38A;', s1: 'turn 0:38', s2: '6 / 10 subagents', s3: '$6.00' },
+        { title: 'Claude design improvements', age: '2s', where: 'agent-deck · main', tag: 'Edit', tagCss: edit, now: 'project/Overview.dc.html', said: 'Redesigning the deck in a Claude Design canvas. Session, overview and parts boards are up; now adding the brief and Ask about this.', fresh: 'updated 2m ago · every 2m in background', freshDot: 'background: #4CC38A;', s1: 'turn 4:12', s2: 'no subagents', s3: '$0.42' },
+        { title: '#6 sound pass', age: '1m', where: 'hive-mind · worktree agent-7b20e', tag: 'Read', tagCss: read, now: 'src/audio/mixer.js', said: 'Subagent of Issues documentation setup. Mapping where sound effects fire before adding the mixer.', fresh: 'paused · refreshes when opened', freshDot: 'border: 1.5px solid #5A606A; box-sizing: border-box;', s1: 'turn 3:02', s2: 'subagent', s3: '—' },
+      ],
+      recent: [
+        { title: 'Hive-mind roadmap issues', where: 'hive-mind · main', age: '52m' },
+        { title: 'Agent status visibility options', where: 'hive-mind · main', age: '52m' },
+        { title: 'Session state migration to Mac Studio', where: 'geebs · master', age: '30h' },
+        { title: 'Minesweeper variant for fleet', where: 'github.io · PR #178', age: '30h' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>
