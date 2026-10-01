@@ -16,6 +16,7 @@ import { Narrator } from './lib/narrator.mjs';
 import { BriefService } from './lib/briefs.mjs';
 import { ask } from './lib/ask.mjs';
 import { DeckState } from './lib/deckstate.mjs';
+import { AgentManager } from './lib/agent.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -52,6 +53,9 @@ const narrator = new Narrator();
 const briefs = new BriefService({ index, narrator, enabled: NARRATOR }).start();
 briefs.isHidden = (id) => deck.hidden.has(id);
 const snapshot = () => index.snapshot(deck.hidden);
+const agents = new AgentManager();
+index.external = () => agents.registryEntries();
+index.deckState = (id) => agents.publicState(id);
 
 // ---------------------------------------------------------------- SSE
 const clients = new Set();
@@ -71,6 +75,11 @@ index.on('events', ({ sessionId, appended, updated }) => {
 });
 index.on('session', (payload) => broadcast('session.update', payload));
 briefs.on('brief', (b) => broadcast('brief.update', { ...b, narrator: narrator.status() }));
+agents.on('change', (st) => {
+  broadcast('deck.update', st);
+  index.refresh(st.id);
+  scheduleSnapshot();
+});
 shell.on('output', (d) => broadcast('shell.output', d));
 shell.on('exit', (d) => broadcast('shell.exit', d));
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 15_000).unref();
@@ -143,7 +152,35 @@ async function route(req, res, url) {
     catch (e) { return send(res, 502, { error: e.message }); }
   }
 
+  if (p === '/api/launch' && req.method === 'POST') {
+    const { cwd, prompt, model, permissionMode, name } = await readBody(req);
+    try {
+      const st = await agents.launch({ cwd, prompt, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined });
+      return send(res, 200, st);
+    } catch (e) { return send(res, 400, { error: e.message }); }
+  }
+
   let m;
+  if ((m = /^\/api\/sessions\/([^/]+)\/(send|queue|interrupt|permission|stop|resume)$/.exec(p)) && req.method === 'POST') {
+    const id = decodeURIComponent(m[1]);
+    const body = await readBody(req);
+    try {
+      switch (m[2]) {
+        case 'send': return send(res, 200, { item: agents.send(id, body.text) });
+        case 'queue': agents.queueOp(id, body); break;
+        case 'interrupt': return send(res, 200, { interrupted: agents.interrupt(id) });
+        case 'permission': agents.answer(id, body.requestId, body.decision, body.message); break;
+        case 'stop': return send(res, 200, { stopped: agents.stop(id) });
+        case 'resume': {
+          const cwd = index.cwdOf(id);
+          if (!cwd) return send(res, 404, { error: 'unknown session' });
+          if (index.registry.get(id)?.alive) return send(res, 409, { error: 'session is still running outside the deck' });
+          return send(res, 200, await agents.launch({ cwd, resume: id, prompt: body.prompt, model: body.model || undefined, permissionMode: body.permissionMode || 'default' }));
+        }
+      }
+      return send(res, 200, { ok: true, state: agents.publicState(id) });
+    } catch (e) { return send(res, e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { error: e.message }); }
+  }
   if ((m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {
     const id = decodeURIComponent(m[1]);
     const summary = index.summary(id);
@@ -278,5 +315,6 @@ server.on('error', (e) => {
   console.error(`agent-deck: port ${PORT} is already in use (is the deck already running?)`);
   process.exit(1);
 });
-process.on('SIGTERM', () => { index.stop(); server.close(); process.exit(0); });
-process.on('SIGINT', () => { index.stop(); server.close(); process.exit(0); });
+function shutdown() { agents.stopAll(); index.stop(); server.close(); process.exit(0); }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

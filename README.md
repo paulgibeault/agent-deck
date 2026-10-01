@@ -4,10 +4,12 @@ A local cockpit for Claude Code agents. See every session and subagent on
 this machine, follow their event streams at high fidelity, inspect what they
 changed, and run your own commands next to them.
 
-Phase 1 ("Telescope") is observe-only: it reads what Claude Code already
-writes under `~/.claude` and never touches a running session. See
-[PLAN.md](PLAN.md) for the full design and the later phases (read-aloud,
-deck-launched sessions with prompt control).
+Sessions started elsewhere (terminal, desktop app, IDE) are observe-only: the
+deck reads what Claude Code already writes under `~/.claude` and never
+touches them. Sessions you start from the deck (**New session**, or `n`) run
+under it, and you can send, queue, interrupt, end and resume them and answer
+their permission prompts. See [PLAN.md](PLAN.md) for the full design and the
+later phases (read-aloud).
 
 ## Run
 
@@ -55,6 +57,7 @@ Flags and environment:
 | `DECK_BRIEF_MODEL` | `haiku` | model for the generated Brief |
 | `DECK_ASK_MODEL` | `sonnet` | model for Ask about this |
 | `DECK_CLAUDE_BIN` | `claude` | CLI used for model calls |
+| `DECK_AGENT_BIN` | `claude` | CLI used for deck-launched sessions |
 | `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash |
 
 The Brief and Ask call `claude -p` with no tools, no MCP servers and no
@@ -65,7 +68,12 @@ has expired the deck says so in the Brief; run `claude` in a terminal and
 does this).
 
 Tests: `npm test` (parser, index, brief scheduler, Ask and trash against
-`test/fixtures/session.jsonl`).
+`test/fixtures/session.jsonl`; deck-launched sessions against
+`test/fixtures/fake-agent.mjs`). The `agent-deck-fake-agent` preview config
+runs the whole deck on the fakes with a throwaway `CLAUDE_CONFIG_DIR`, so
+you can try launching without a login or touching `~/.claude`. Its prompt
+words steer it: "permission" asks to run a command, "slow" works for a
+minute, "crash" exits with an error.
 
 ## What you get
 
@@ -91,9 +99,23 @@ Tests: `npm test` (parser, index, brief scheduler, Ask and trash against
 - **Close / delete.** Close hides a session from the deck (Undo, or find it
   under Hidden). Delete moves a finished session's transcript and subagent
   files to `~/.agent-deck/trash/` after a confirm.
-- **Prompt.** Read-only mirror of the session's prompt queue with copy
-  buttons. Send/interrupt are disabled for sessions the deck did not launch
-  (that is phase 3).
+- **New session.** Pick a folder, write the first prompt, choose a model and
+  a permission mode (ask me, accept edits, auto, plan only). The deck runs
+  `claude -p --input-format stream-json --output-format stream-json
+  --permission-prompt-tool stdio`, and the session shows up like any other,
+  tagged **Deck**. Any ended session (the deck's or not) can be continued
+  with **Resume in deck**, which runs `--resume <id>`.
+- **Prompt.** For deck sessions: send (⌘↩), or queue while Claude works.
+  The deck owns the queue and writes the next prompt only when the turn
+  ends, so items can be moved, sent next or removed. **Interrupt** stops
+  the turn and holds the queue until you resume it or send. **End** closes
+  the process (sessions also end when the backend stops). For other
+  sessions the panel is a read-only mirror with copy buttons.
+- **Permissions.** A deck session's permission prompt shows as a card with
+  the command, path or plan: Allow, Allow for session (applies the CLI's
+  suggested rule or mode), or Deny with an optional reason for Claude. It
+  counts as "your turn" in the rail and the overview. AskUserQuestion is
+  turned off for deck sessions; Claude asks in plain text instead.
 - **Events.** Virtualized, dense list, newest on top; "follow" keeps the
   view pinned to the newest row. `tool_use` and its result fold into
   one row with a tool-specific one-liner, duration, error chip, token cost.
@@ -129,6 +151,7 @@ lib/ask.mjs           Ask about this: scope resolution + answer
 lib/deckstate.mjs     hidden sessions, delete trash
 lib/gitinfo.mjs       status / diff / log
 lib/shell.mjs         pilot shell runner
+lib/agent.mjs         deck-launched sessions (stream-json control)
 public/               index.html, app.js, events.js, styles.css, vendor/
 design/               Claude Design canvas source for the current look
 test/                 node --test; fixtures/ holds a sanitized transcript

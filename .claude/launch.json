@@ -39,6 +39,25 @@
       },
       "port": 7779,
       "url": "http://127.0.0.1:7779"
+    },
+    {
+      "name": "agent-deck-fake-agent",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "server.mjs",
+        "--port",
+        "7780",
+        "--token",
+        "devtoken"
+      ],
+      "env": {
+        "DECK_AGENT_BIN": "test/fixtures/fake-agent.mjs",
+        "DECK_CLAUDE_BIN": "test/fixtures/fake-claude.mjs",
+        "CLAUDE_CONFIG_DIR": "/tmp/agent-deck-fake/claude",
+        "DECK_STATE_DIR": "/tmp/agent-deck-fake/state"
+      },
+      "port": 7780,
+      "url": "http://127.0.0.1:7780"
     }
   ]
 }
