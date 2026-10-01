@@ -136,7 +136,7 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
       body.append(oneLine(ev.text, 260));
       break;
     case 'thinking':
-      body.append(ev.redacted ? 'thinking (redacted)' : `thinking · ${fmtTokens(ev.text.length)} chars`);
+      body.append(ev.redacted ? 'thinking (redacted)' : !ev.text ? 'thinking (not recorded)' : `thinking · ${fmtTokens(ev.text.length)} chars`);
       break;
     case 'queue':
       body.append(`${ev.op}${ev.text ? ': ' + oneLine(ev.text, 160) : ''}`);
@@ -314,6 +314,7 @@ export function renderSideBySide(ops, { lang = null, startA = 1, startB = 1 } = 
 
 // ------------------------------------------------------------ details
 const copyBtn = (text, label = 'Copy') => h('button', { class: 'mini', type: 'button', onclick: (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); e.currentTarget.textContent = 'Copied'; const b = e.currentTarget; setTimeout(() => b.textContent = label, 900); } }, label);
+const editorBtn = (path, line, api) => path ? h('button', { class: 'btn sm', type: 'button', onclick: () => api.openEditor(path, line) }, svgUse('i-code', 13), 'Open in editor') : null;
 const openBtn = (path, line, api) => path ? h('button', { class: 'mini', type: 'button', title: 'open in editor', onclick: () => api.openEditor(path, line) }, 'Open') : null;
 
 /** Icon-only Ask button; `spec` is the scope item app.js resolves. */
@@ -341,7 +342,7 @@ function section(title, { actions = [], ask = null, note = null } = {}, ...child
   return h('section', { class: 'dsec' }, head, ...children);
 }
 
-function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null }) {
+function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null, actions = [] }) {
   const head = h('div', { class: 'dhead' });
   const row = h('div', { class: 'dh-row' }, tag, ...chips.filter(Boolean), h('span', { class: 'spacer' }));
   if (nav) {
@@ -349,6 +350,7 @@ function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null }
     row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '1' }, 'aria-label': 'Next event (j)', title: 'Next event (j)' }, svgUse('i-down', 12)));
   }
   if (raw) row.append(raw);
+  row.append(...actions.filter(Boolean));
   head.append(row, h('h2', { class: 'dtitle' }, title));
   const m = meta.filter(Boolean);
   if (m.length) head.append(h('div', { class: 'dmeta' }, ...m.map(x => h('span', {}, x))));
@@ -406,7 +408,7 @@ export function renderDetails(ev, detail, ctx) {
   if (ev.kind === 'text') {
     body.append(section('Assistant', { actions: [copyBtn(ev.text)], ask: evSpec(null, 'this message') }, h('div', { class: 'md', html: markdown(ev.text) })));
   } else if (ev.kind === 'thinking') {
-    body.append(section('Thinking', { actions: [copyBtn(ev.text)], ask: ev.redacted ? null : evSpec(null, 'this reasoning') }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text)));
+    body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
   } else if (ev.kind === 'prompt') {
     body.append(section('Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
   } else if (ev.kind === 'tool') {
@@ -494,9 +496,10 @@ export function renderFileDetails(file, ctx, highlightLine = null) {
   const root = h('div', { class: 'details' });
   const name = relPath(file.path, ctx.cwd);
   root.append(headerFor({ tag: h('span', { class: 'tag f-read' }, 'File'), title: name, nav: false,
+    actions: [file.error ? null : editorBtn(file.path, highlightLine || 1, ctx.api)],
     meta: [file.size != null ? `${fmtTokens(file.size)} bytes` : null, file.truncated ? 'truncated' : null] }));
   const body = h('div', { class: 'dbody' });
-  body.append(section('Contents', { actions: [openBtn(file.path, highlightLine || 1, ctx.api), copyBtn(file.content ?? '')], ask: file.content ? { kind: 'text', label: `File ${name}`, fromSection: true, what: 'this file' } : null },
+  body.append(section('Contents', { actions: [copyBtn(file.content ?? '')], ask: file.content ? { kind: 'text', label: `File ${name}`, fromSection: true, what: 'this file' } : null },
     file.binary ? h('div', { class: 'note' }, 'binary file') : file.error ? h('div', { class: 'note err' }, file.error) : codeBlock(file.content ?? '', langFor(file.path))));
   root.append(body);
   highlightIn(root);
@@ -507,9 +510,9 @@ export function renderFileDetails(file, ctx, highlightLine = null) {
 export function renderDiffDetails(diff, ctx) {
   const root = h('div', { class: 'details' });
   const full = ctx.cwd && diff.file ? `${ctx.root || ctx.cwd}/${diff.file}` : diff.file;
-  root.append(headerFor({ tag: h('span', { class: 'tag f-edit' }, 'Diff'), title: diff.file || '', nav: false, meta: [diff.untracked ? 'untracked' : 'vs HEAD'] }));
+  root.append(headerFor({ tag: h('span', { class: 'tag f-edit' }, 'Diff'), title: diff.file || '', nav: false, actions: [editorBtn(full, 1, ctx.api)], meta: [diff.untracked ? 'untracked' : 'vs HEAD'] }));
   const body = h('div', { class: 'dbody' });
-  body.append(section('Changes', { actions: [openBtn(full, 1, ctx.api), copyBtn(diff.diff ?? '')], ask: diff.diff ? { kind: 'text', label: `Diff of ${diff.file}`, text: diff.diff, what: 'this diff' } : null },
+  body.append(section('Changes', { actions: [copyBtn(diff.diff ?? '')], ask: diff.diff ? { kind: 'text', label: `Diff of ${diff.file}`, text: diff.diff, what: 'this diff' } : null },
     diff.diff ? renderSideBySide(parseUnified(diff.diff), { lang: langFor(diff.file) }) : h('div', { class: 'note' }, 'no diff')));
   root.append(body);
   return root;

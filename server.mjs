@@ -134,6 +134,11 @@ async function route(req, res, url) {
     req.on('close', () => { clients.delete(res); briefs.dropClient(clientId); });
     return;
   }
+  if (p === '/api/restart' && req.method === 'POST') {
+    send(res, 200, { ok: true, startedAt: STARTED });
+    setTimeout(restart, 100);
+    return;
+  }
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
   if (p === '/api/briefs' && req.method === 'GET') return send(res, 200, { briefs: briefs.all(), narrator: { enabled: NARRATOR, ...narrator.status() } });
@@ -310,11 +315,34 @@ server.listen(PORT, HOST, () => {
     spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
   }
 });
+// A restarted server can beat its predecessor to the port; give it a moment.
+let listenRetries = process.env.DECK_RESTARTED ? 40 : 0;
 server.on('error', (e) => {
   if (e.code !== 'EADDRINUSE') throw e;
+  if (listenRetries-- > 0) { setTimeout(() => server.listen(PORT, HOST), 250); return; }
   console.error(`agent-deck: port ${PORT} is already in use (is the deck already running?)`);
   process.exit(1);
 });
 function shutdown() { agents.stopAll(); index.stop(); server.close(); process.exit(0); }
+
+/**
+ * Replace this process with a fresh one on the same port and arguments.
+ * Deck-launched claude sessions are children of this process, so they end.
+ * The new server is detached and logs to the deck state dir.
+ */
+function restart() {
+  console.log(`--- ${new Date().toString()} restart requested from the deck`);
+  agents.stopAll(); index.stop();
+  for (const c of clients) c.end();
+  const log = fs.openSync(path.join(deck.dir, 'server.log'), 'a');
+  const relaunch = () => {
+    const args = [...process.execArgv, ...process.argv.slice(1).filter(a => a !== '--open')];
+    spawn(process.execPath, args, { cwd: process.cwd(), env: { ...process.env, DECK_RESTARTED: '1' }, detached: true, stdio: ['ignore', log, log] }).unref();
+    process.exit(0);
+  };
+  server.close(relaunch);
+  server.closeAllConnections?.();
+  setTimeout(relaunch, 2000).unref();
+}
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
