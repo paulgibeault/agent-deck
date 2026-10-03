@@ -11,7 +11,7 @@ import { BriefService } from '../lib/briefs.mjs';
 import { extractJson } from '../lib/narrator.mjs';
 import { resolveScope, ask } from '../lib/ask.mjs';
 import { DeckState } from '../lib/deckstate.mjs';
-import { UsageTracker } from '../lib/usage.mjs';
+import { UsageTracker, parseUsageReport, parseReset } from '../lib/usage.mjs';
 import { Attention, sayFor } from '../lib/attention.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -174,8 +174,10 @@ test('DeckState: hide persists; trash moves transcript and sidecar dir; index fo
   const deck = new DeckState(stateDir);
   deck.setHidden('sess-1', true);
   assert.equal(new DeckState(stateDir).hidden.has('sess-1'), true);
-  assert.equal(idx.snapshot(deck.hidden).hidden.length, 1);
-  assert.equal(idx.snapshot(deck.hidden).recent.length, 0);
+  const closed = idx.snapshot(deck.hidden);
+  assert.equal(closed.closed.length, 1);
+  assert.equal(closed.closed[0].hidden, true);
+  assert.equal(closed.recent.length, 0);
 
   const dest = deck.trashSession('sess-1', idx.fileOf('sess-1'));
   assert.ok(!fs.existsSync(path.join(proj, 'sess-1.jsonl')));
@@ -210,18 +212,22 @@ test('UsageTracker: keeps the latest quota and works out the pace of each window
   assert.equal(seen, 2);
 });
 
-test('Narrator: the quota in a verbose reply reaches onRateLimit, and calls are counted by purpose', async () => {
+test('Narrator + /usage: quota arrives from a verbose reply and from claude /usage, and calls are counted by purpose', async () => {
   // The CLI path is read when narrator.mjs loads, so run it in a child with the fake CLI.
   const { execFileSync } = await import('node:child_process');
   const script = `import { Narrator } from ${JSON.stringify(path.join(__dirname, '..', 'lib', 'narrator.mjs'))};
     const n = new Narrator(); let q = null; n.onRateLimit = (i) => { q = i; };
-    await n.probe();
-    console.log(JSON.stringify({ q, by: n.status().byPurpose }));`;
+    await n.run({ system: 'live brief', prompt: 'Session: x', model: 'haiku', purpose: 'brief' });
+    const { readUsageReport, parseUsageReport } = await import(${JSON.stringify(path.join(__dirname, '..', 'lib', 'usage.mjs'))});
+    const report = parseUsageReport(await readUsageReport());
+    console.log(JSON.stringify({ q, by: n.status().byPurpose, report }));`;
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script],
     { env: { ...process.env, DECK_CLAUDE_BIN: path.join(__dirname, 'fixtures', 'fake-claude.mjs'), FAKE_5H: '0.61' }, encoding: 'utf8' });
-  const { q, by } = JSON.parse(out.trim().split('\n').at(-1));
+  const { q, by, report } = JSON.parse(out.trim().split('\n').at(-1));
   assert.equal(q.unifiedWindows.five_hour.utilization, 0.61);
-  assert.equal(by['quota check'].calls, 1);
+  assert.equal(by.brief.calls, 1);
+  assert.equal(report.windows.find(w => w.key === 'five_hour').utilization, 0.61, 'claude /usage through the same CLI');
+  assert.equal(by['quota check'], undefined, 'reading /usage is not a model call');
 });
 
 test('Attention: signal changes become needs-you entries with a line to speak', () => {
@@ -248,4 +254,49 @@ test('Attention: signal changes become needs-you entries with a line to speak', 
   a.observe([], 6000);
   assert.equal(a.cur.size, 0, 'gone sessions are dropped');
   assert.equal(sayFor('X', 'error', { text: 'npm test failed' }), 'X hit an error: npm test failed.');
+});
+
+test('parseUsageReport: windows, per-model weeks, resets in their zone, and what drives usage', () => {
+  const now = Date.parse('2026-10-03T17:00:00Z');   // 11:00 in America/Boise (UTC-6)
+  const r = parseUsageReport(`You are currently using your subscription to power your Claude Code usage
+
+Current session: 44% used · resets Oct 3 at 2:09pm (America/Boise)
+Current week (all models): 13% used · resets Oct 7 at 4:59pm (America/Boise)
+Current week (Fable): 5% used · resets Oct 7 at 4:59pm (America/Boise)
+
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine.
+
+Last 24h · 488 requests · 5 sessions
+  79% of your usage was at >150k context
+  Top subagents: Explore 3%
+
+Last 7d · 1919 requests · 19 sessions
+  74% of your usage was at >150k context`, now);
+  assert.match(r.account, /subscription/);
+  assert.deepEqual(r.windows.map(w => [w.key, w.utilization]), [['five_hour', 0.44], ['seven_day', 0.13], ['seven_day_fable', 0.05]]);
+  assert.equal(r.windows[0].resetsAt, Date.parse('2026-10-03T20:09:00Z'));
+  assert.equal(r.windows[1].resetsAt, Date.parse('2026-10-07T22:59:00Z'));
+  assert.equal(r.windows[2].label, 'Week (Fable)');
+  assert.equal(r.contributors.sections.length, 2);
+  assert.deepEqual(r.contributors.sections[0].items, ['79% of your usage was at >150k context', 'Top subagents: Explore 3%']);
+  assert.equal(parseUsageReport('/status isn\'t available in this environment.'), null);
+  // A bare time is the next one; a date already past rolls to next year.
+  assert.equal(parseReset('9:30am (UTC)', now), Date.parse('2026-10-04T09:30:00Z'));
+  assert.equal(parseReset('Jan 2 at 1am (UTC)', now), Date.parse('2027-01-02T01:00:00Z'));
+});
+
+test('UsageTracker: a /usage report and model-call quota merge per window', () => {
+  const u = new UsageTracker();
+  const t0 = Date.parse('2026-10-03T10:00:00Z');
+  const reset = t0 + 3 * 3600_000;
+  u.report({ account: 'Using your subscription', notes: [], contributors: null, windows: [
+    { key: 'five_hour', label: 'Session', utilization: 0.40, resetsAt: reset - 30_000 },
+    { key: 'seven_day_fable', label: 'Week (Fable)', utilization: 0.05, resetsAt: reset + 86400_000 }] }, t0);
+  u.update({ status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.45, resetsAt: reset / 1000 } } }, 'call', t0 + 20 * 60_000);
+  const s = u.snapshot(t0 + 20 * 60_000);
+  assert.deepEqual(s.windows.map(w => [w.key, w.utilization]), [['five_hour', 0.45], ['seven_day_fable', 0.05]], 'the call updates its window; the per-model week stays');
+  assert.equal(s.windows[0].label, 'Session', 'the label from /usage is kept');
+  assert.equal(s.account, 'Using your subscription');
+  assert.ok(s.windows[0].pace?.perHour > 0, 'minute-rounded and exact resets count as one window');
 });

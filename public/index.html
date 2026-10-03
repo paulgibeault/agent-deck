@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agent-deck</title>
+<title>Agent Deck</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect x='1' y='1' width='18' height='18' rx='5' fill='%231F2A24' stroke='%234CC38A'/%3E%3Cpath d='M6 7h8M6 10h5M6 13h7' stroke='%234CC38A' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -44,38 +44,37 @@
   <symbol id="i-hand" viewBox="0 0 16 16"><path d="M5 8.5V3.8a1 1 0 0 1 2 0V7.5M7 7V2.8a1 1 0 0 1 2 0V7M9 7V3.8a1 1 0 0 1 2 0V8M11 6.8a1 1 0 0 1 2 0v2.7a5 5 0 0 1-5 5h-.3a4.7 4.7 0 0 1-3.6-1.7L2.3 10.6a1 1 0 0 1 1.5-1.3L5 10.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-q" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.25"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4"/></g><circle cx="8" cy="11.6" r=".9" fill="currentColor"/></symbol>
   <symbol id="i-stop" viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
-  <symbol id="i-rail" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M6 2.75v10.5"/></g></symbol>
+  <symbol id="i-history" viewBox="0 0 16 16"><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8M2.5 2.2v2.6h2.6M8 5v3.2l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-logo" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--logo-bg)" stroke="var(--ok)"/><path d="M6 7h8M6 10h5M6 13h7" stroke="var(--ok)" stroke-width="1.6" stroke-linecap="round"/></symbol>
 </svg>
 
 <div id="announcer" class="sr" aria-live="polite" aria-atomic="true"></div>
 <div id="hovercard" class="hovercard" role="tooltip" hidden></div>
+<!-- In the installed app this strip is the window's title bar (Window Controls Overlay); in a tab it is a slim top bar. -->
+<header id="titlebar" class="titlebar">
+  <button id="conn" type="button" class="conn" aria-label="Server: offline" title="Server offline"><span class="cdot"></span></button>
+  <button id="home" class="tb-title" type="button" title="Overview (Esc)">Agent Deck</button>
+  <span class="spacer"></span>
+  <button id="quota" type="button" class="quota" aria-label="Plan usage" aria-describedby="hovercard"><svg class="qring" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="qt" cx="8" cy="8" r="6"/><circle class="qa" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 8 8)"/></svg><span class="qpct"></span></button>
+</header>
 <div id="deck">
   <aside id="sessions" class="pane rail" aria-label="Sessions">
     <header class="rail-h">
-      <button id="conn" type="button" class="conn" aria-label="Server: offline" title="Server offline"><span class="cdot"></span></button>
-      <button id="home" class="brand" type="button" title="Overview (Esc)">agent-deck</button>
       <span class="spacer"></span>
+      <button id="history-btn" type="button" class="icon-btn" aria-label="All sessions" title="All sessions (h)"><svg width="14" height="14"><use href="#i-history"/></svg></button>
       <button id="new-btn" type="button" class="icon-btn" aria-label="New session" title="New session (n)"><svg width="14" height="14"><use href="#i-plus"/></svg></button>
-      <button id="quota" type="button" class="quota" aria-label="Plan usage" aria-describedby="hovercard"><svg class="qring" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="qt" cx="8" cy="8" r="6"/><circle class="qa" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 8 8)"/></svg><span class="qpct"></span></button>
-      <button id="rail-toggle" type="button" class="ib" aria-label="Collapse the session list ([)" title="Collapse the session list ([)" aria-expanded="true"><svg width="15" height="15"><use href="#i-rail"/></svg></button>
+      <button id="rail-toggle" type="button" class="icon-btn" aria-label="Collapse the session list ([)" title="Collapse the session list ([)" aria-expanded="true"><svg width="13" height="13"><use href="#i-left"/></svg></button>
     </header>
     <nav id="mini" class="mini-rail" aria-label="Sessions"></nav>
     <div class="rail-search">
       <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter sessions</span><input id="tree-filter" type="search" placeholder="Filter sessions" spellcheck="false"></label>
     </div>
-    <div class="counters" id="counters">
-      <button type="button" data-c="needs" class="ctr c-needs"><b>0</b><span>need you</span></button>
-      <button type="button" data-c="working" class="ctr c-working"><b>0</b><span>working</span></button>
-      <button type="button" data-c="done" class="ctr c-done"><b>0</b><span>done</span></button>
-    </div>
     <div id="tree" class="tree">
       <section class="bucket" data-bucket="active"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Active <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="active" aria-label="Ask about active sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
       <section class="bucket" data-bucket="recent"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Recent <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="recent" aria-label="Ask about recent sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
       <section class="bucket collapsed" data-bucket="closed"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Closed <span class="count"></span></button></h3><ul></ul></section>
-      <section class="bucket collapsed" data-bucket="hidden"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Hidden <span class="count"></span></button></h3><ul></ul></section>
     </div>
-    <footer class="rail-f"><span id="tree-foot"></span><span class="spacer"></span><button id="keys-btn" type="button" class="icon-btn sm mono" aria-label="Keyboard shortcuts">?</button></footer>
+    <footer class="rail-f"><span id="tree-foot"></span><span class="spacer"></span><button id="history-btn-f" type="button" class="icon-btn sm" aria-label="All sessions" title="All sessions (h)"><svg width="13" height="13"><use href="#i-history"/></svg></button><button id="keys-btn" type="button" class="icon-btn sm mono" aria-label="Keyboard shortcuts">?</button></footer>
   </aside>
   <div class="gutter" data-gutter="left"></div>
 
@@ -232,6 +231,14 @@
   </form>
 </dialog>
 
+<dialog id="history" class="dialog wide history" aria-labelledby="hist-t">
+  <form method="dialog" class="hist-f">
+    <div class="hist-h"><h2 id="hist-t">All sessions</h2><span id="hist-n" class="muted"></span><span class="spacer"></span><button value="cancel" class="icon-btn sm ghost" aria-label="Close"><svg width="12" height="12"><use href="#i-x"/></svg></button></div>
+    <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Search sessions</span><input id="hist-q" type="search" placeholder="Search title, folder, branch, PR or id" spellcheck="false" autocomplete="off"></label>
+    <ul id="hist-list" class="hist-list" role="listbox" aria-label="Sessions"></ul>
+  </form>
+</dialog>
+
 <dialog id="keys" class="dialog">
   <form method="dialog">
     <h2>Keyboard</h2>
@@ -244,6 +251,7 @@
       <dt><kbd>/</kbd></dt><dd>filter events</dd>
       <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Events, Files, Changes, Shell</dd>
       <dt><kbd>n</kbd></dt><dd>new session</dd>
+      <dt><kbd>h</kbd></dt><dd>search all sessions</dd>
       <dt><kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send the prompt</dd>
       <dt><kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send now: stop the current turn and send the prompt</dd>
       <dt><kbd>⌘</kbd> <kbd>.</kbd></dt><dd>stop the current turn</dd>
