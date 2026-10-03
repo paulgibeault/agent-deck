@@ -1,6 +1,7 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
 import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
+import { activitySince, CADENCE, WEIGHT } from './activity.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -433,7 +434,7 @@ function renderTree() {
   const needs = snap.active.filter(needsYou).length;
   document.title = needs ? `(${needs}) Agent Deck` : 'Agent Deck';
   // The rows were rebuilt: keep an open card on its (new) anchor.
-  if (card.id && card.id !== 'quota') {
+  if (card.id && card.id !== 'quota' && card.id !== 'details') {
     const anchor = document.querySelector(`#${prefs.railMin ? 'mini' : 'tree'} [data-id="${CSS.escape(card.id)}"]`);
     anchor ? showCard(card.id, anchor, true) : hideCard(true);
   }
@@ -636,7 +637,7 @@ $('mini').addEventListener('click', (e) => { const b = e.target.closest('.mchip'
 // The hover card: everything worth knowing before deciding to open a session.
 // The same card serves the full rail's rows and the minimized rail's chips.
 const card = { id: null, anchor: null, timer: null, quiet: null };
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n, w, many = w + 's') => `${n} ${n === 1 ? w : many}`;
 function cardFacts(s) {
   const g = s.glance || {};
   const isAgent = s.kind === 'agent';
@@ -723,7 +724,7 @@ function hideCard(now = false) {
 function hoverCards(root, sel) {
   root.addEventListener('mouseover', (e) => {
     const b = e.target.closest(sel);
-    if (!b) { if (card.id && card.id !== 'quota') hideCard(); return; }
+    if (!b) { if (card.id && card.id !== 'quota' && card.id !== 'details') hideCard(); return; }
     clearTimeout(card.timer);
     if (card.id === b.dataset.id || card.quiet === b.dataset.id) return;
     card.quiet = null;
@@ -766,7 +767,8 @@ function briefLine(id) {
   const pb = state.briefs.get(id);
   return pb?.brief?.summary || null;
 }
-function freshness(id, shownHere) {
+/** How current a session's brief is, for the overview cards (sessions not open here). */
+function freshness(id) {
   const pb = state.briefs.get(id);
   const s = state.byId.get(id);
   const phase = phaseOf(s);
@@ -778,12 +780,9 @@ function freshness(id, shownHere) {
     const auth = /authenticat|login|oauth/i.test(error);
     return { text: `Brief unavailable: ${error}${auth ? '. Run claude in a terminal and sign in (/login), then refresh.' : ''}`, err: true };
   }
-  const live = s?.kind === 'session' ? !!s.alive : phase === 'working';
-  const cad = shownHere
-    ? (phase === 'working' ? 'refreshes every 45s while working' : phase === 'turn' ? 'refreshes on new activity' : 'final')
-    : (phase === 'working' && live && s?.kind === 'session' ? 'every 2m in background' : 'paused · refreshes when opened');
+  const cad = phase === 'working' && s?.kind === 'session' && s.alive ? 'refreshes at turn end' : 'paused · refreshes when opened';
   if (!pb?.brief) return { text: `No brief yet · ${cad}` };
-  return { text: `Session to date · updated ${ago(Date.now() - pb.updatedAt)} ago · ${cad}${pb.error ? ' · last refresh failed' : ''}`, live: phase === 'working' };
+  return { text: `updated ${ago(Date.now() - pb.updatedAt)} ago · ${cad}${pb.error ? ' · last refresh failed' : ''}`, live: phase === 'working' };
 }
 
 function nowText(s) {
@@ -830,13 +829,13 @@ function renderOverview() {
     const cards = h('div', { class: 'cards' });
     for (const s of working) {
       const nt = nowText(s);
-      const f = freshness(s.id, false);
+      const f = freshness(s.id);
       const g = s.glance || {};
       cards.append(h('button', { type: 'button', class: 'card', dataset: { open: s.id } },
         h('span', { class: 'ch' }, h('span', { class: `dot sig-working${statusOf(s, null, 'working').quiet ? ' quiet' : ''}` }), h('b', {}, s.title), h('span', { class: 'muted' }, ago(Date.now() - s.mtime))),
         h('span', { class: 'cw' }, [tilde(s.cwd), s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ')),
         h('span', { class: 'nowbox' }, nt.tag ? h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: nt.tag, isError: false, display: nt.tag } }).fam}` }, nt.tag) : null, h('span', { class: 'nb' }, nt.text)),
-        h('span', { class: 'fresh' }, h('span', { class: `fdot2${f.live ? ' live' : ''}` }), `Brief · ${f.text.replace(/^Session to date · /, '')}`),
+        h('span', { class: 'fresh' }, h('span', { class: `fdot2${f.live ? ' live' : ''}` }), `Brief · ${f.text}`),
         h('span', { class: 'cs' }, briefLine(s.id) || g.lastText || ''),
         h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
     }
@@ -929,7 +928,10 @@ function renderHeader() {
   // The permission mode shows only when it is not the default (asks before acting).
   if (d?.alive) { if (d.permissionMode !== 'default') top.append(h('span', { class: 'sh-mode', title: `Launched by the deck · pid ${d.pid} · permissions: ${d.permissionMode}` }, PERM_LABEL[d.permissionMode] || d.permissionMode)); }
   else if (!isAgent && s.alive) top.append(h('span', { class: 'sh-mode', title: 'Observe only: launched outside the deck, so the deck can read it but not drive it' }, svgUse('i-eye', 14)));
+  if (b?.pr) top.append(h('a', { class: 'sh-pr', href: b.pr.url, target: '_blank', rel: 'noopener' }, `PR #${b.pr.number}`));
   top.append(h('span', { class: 'spacer' }));
+  // Where, which model, tokens and cost: one hover away rather than a line of figures under the brief.
+  top.append(detailsBtn());
   if (d?.alive) top.append(ib('i-power', 'End the claude process (you can resume it later)', stopSession));
   else if (!isAgent && !s.alive) top.append(ib('i-play', 'Resume in the deck', () => openLaunch({ resumeId: id })));
   if (!isAgent) top.append(ib('i-copy', 'Copy resume command', (e) => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); flashDone(e.currentTarget); }));
@@ -940,19 +942,53 @@ function renderHeader() {
   $('nowslot').replaceChildren(renderNow(st, phase));
   const out = [top, renderBriefBox(id, s, b)];
 
-  const meta = h('div', { class: 'metaline' });
-  if (s.cwd) meta.append(h('span', { class: 'mono', title: s.cwd }, tilde(s.cwd)));
-  if (b?.branch || s.gitBranch) meta.append(h('span', {}, b?.branch || s.gitBranch));
-  if (b?.pr) meta.append(h('a', { href: b.pr.url, target: '_blank', rel: 'noopener' }, `PR #${b.pr.number}`));
-  if (b?.model) meta.append(h('span', {}, [b.model.replace('claude-', ''), b.effort].filter(Boolean).join(' · ')));
-  if (b?.turnUsage?.messages) meta.append(h('span', { title: `cache read ${fmtTokens(b.turnUsage.cacheRead)} · cache write ${fmtTokens(b.turnUsage.cacheCreate)} · thinking ${fmtTokens(b.turnUsage.thinking)}` }, `turn ${fmtTokens(b.turnUsage.input + b.turnUsage.cacheRead + b.turnUsage.cacheCreate)} in / ${fmtTokens(b.turnUsage.output)} out`));
-  if (b?.usage?.messages) meta.append(h('span', { title: `${b.usage.messages} messages · ${b.turns} turns` }, `session ${fmtTokens(b.usage.output)} out`));
-  if (b?.cost?.totalCostUSD != null) meta.append(h('span', { title: `+${b.cost.linesAdded} −${b.cost.linesRemoved} lines · ${b.cost.models.join(', ')}` }, fmtUsd(b.cost.totalCostUSD)));
-  if (b?.subagents?.total) meta.append(h('span', {}, `${b.subagents.running} / ${b.subagents.total} subagents running`));
-  if (b?.errors) meta.append(h('button', { type: 'button', onclick: () => setKind('errors') }, `${b.errors} error${b.errors === 1 ? '' : 's'}`));
-  out.push(meta);
   patchChildren(el, out);
+  if (card.id === 'details') showDetailsCard(detailsBtn(), true);
   applyRing();
+}
+
+/** The session's particulars, moved off the main view: place, model, tokens, cost, and what its brief has cost. */
+function detailsCardBody(s, b) {
+  const pb = state.briefs.get(s.id);
+  const rows = [];
+  const row = (k, v, cls) => v ? rows.push(h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, v))) : null;
+  row('Folder', s.cwd ? tilde(s.cwd) : null, 'mono');
+  row('Branch', [b?.branch || s.gitBranch, b?.pr ? `PR #${b.pr.number}` : null].filter(Boolean).join(' · '));
+  row('Model', [b?.model?.replace('claude-', ''), b?.effort, b?.mode].filter(Boolean).join(' · '));
+  const t = b?.turnUsage;
+  if (t?.messages) row('This turn', `${fmtTokens(t.input + t.cacheRead + t.cacheCreate)} in (${fmtTokens(t.cacheRead)} cached) · ${fmtTokens(t.output)} out${b.turnMs != null ? ` · ${fmtMs(b.turnMs)}` : ''}`);
+  const u = b?.usage;
+  if (u?.messages) row('Session', [plural(b.turns || 0, 'turn'), `${fmtTokens(u.output)} out`, b.cost?.totalCostUSD != null ? fmtUsd(b.cost.totalCostUSD) : null].filter(Boolean).join(' · '));
+  if (b?.cost?.linesAdded != null) row('Lines', `+${b.cost.linesAdded} −${b.cost.linesRemoved}`);
+  row('Files', b?.filesTouched ? plural(b.filesTouched, 'file') + ' touched' : null);
+  row('Subagents', b?.subagents?.total ? `${b.subagents.running} running of ${b.subagents.total}` : null);
+  row('Errors', b?.errors ? String(b.errors) : null, 'err');
+  if (pb?.count) row('Brief', `${plural(pb.count, 'refresh', 'refreshes')} · ${fmtUsd(pb.costUsd || 0)} on ${state.narrator.briefModel || 'the brief model'}`);
+  return [h('div', { class: 'hc-h' }, h('b', {}, 'Session details')), h('table', { class: 'hc-tbl' }, h('tbody', {}, ...rows))];
+}
+// One button for the life of the page: the header is rebuilt on every event,
+// and a fresh node would lose the hover that opened the card.
+let detailsEl = null;
+function detailsBtn() {
+  if (detailsEl) return detailsEl;
+  const b = detailsEl = ib('i-info', 'Session details', null, { 'aria-describedby': 'hovercard' });
+  b.addEventListener('mouseenter', () => { clearTimeout(card.timer); card.timer = setTimeout(() => showDetailsCard(b), 160); });
+  b.addEventListener('mouseleave', () => hideCard());
+  b.addEventListener('focus', () => showDetailsCard(b));
+  b.addEventListener('blur', () => hideCard());
+  return b;
+}
+function showDetailsCard(anchor, refresh = false) {
+  const s = state.byId.get(state.selected); const el = $('hovercard');
+  if (!s || !anchor?.isConnected) return;
+  clearTimeout(card.timer);
+  card.id = 'details'; card.anchor = anchor;
+  el.replaceChildren(...detailsCardBody(s, state.cache.get(s.id)?.brief));
+  el.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, r.right - el.offsetWidth + 8))}px`;
+  el.style.top = `${r.bottom + 6}px`;
+  if (!refresh) el.classList.remove('in'), void el.offsetWidth, el.classList.add('in');
 }
 
 /** Like replaceChildren, but leaves nodes that are already in place attached (keeps text selection in them). */
@@ -1019,15 +1055,14 @@ function renderBriefBox(id, s, b) {
   let i = state.briefAt?.id === id ? all.findIndex(x => x.updatedAt === state.briefAt.at) : 0;
   if (i < 0) { i = 0; state.briefAt = null; }
   const cur = all[i]?.brief, prev = all[i + 1]?.brief;
-  const f = i ? { text: `Earlier brief · from ${ago(Date.now() - all[i].updatedAt)} ago · ${i} of ${all.length - 1} back` } : freshness(id, true);
-  const fr = h('span', { class: `fr${f.err ? ' err' : ''}`, title: f.text }, f.spin ? h('span', { class: 'spin' }) : null, f.text);
+  const foot = briefFoot(id, s, pb, i, all);
 
   const key = JSON.stringify([id, pb?.updatedAt, pb?.pending, pb?.error, state.narrator.enabled, state.narrator.error?.message, prefs.briefCollapsed, i, all.length, nb ? null : b?.lastText]);
-  if (briefBoxCache?.key === key) { briefBoxCache.el.querySelector('.brief-h .fr').replaceWith(fr); return briefBoxCache.el; }
+  if (briefBoxCache?.key === key) { briefBoxCache.el.querySelector('.brief-f').replaceWith(foot); return briefBoxCache.el; }
   const landed = !i && briefBoxCache?.id === id && briefBoxCache.at && pb?.updatedAt > briefBoxCache.at;
 
   const box = h('section', { id: 'brief-box', class: `brief${prefs.briefCollapsed ? ' collapsed' : ''}${landed ? ' landed' : ''}${i ? ' earlier' : ''}`, 'aria-labelledby': 'brief-h' });
-  const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, 'Brief'), fr, h('span', { class: 'spacer' }));
+  const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, i ? 'Earlier brief' : 'Brief'), h('span', { class: 'spacer' }));
   if (all.length > 1) {
     const go = (j) => { state.briefAt = j ? { id, at: all[j].updatedAt } : null; renderHeader(); };
     head.append(h('span', { class: 'bhist' },
@@ -1036,7 +1071,6 @@ function renderBriefBox(id, s, b) {
       i ? ib('i-latest', 'Latest brief', () => go(0), { size: 13 }) : null));
   }
   if (nb) head.append(ib(prefs.briefCollapsed ? 'i-down' : 'i-up', prefs.briefCollapsed ? 'Expand brief' : 'Collapse brief', () => { prefs.briefCollapsed = !prefs.briefCollapsed; savePrefs(); renderHeader(); }, { size: 13 }));
-  if (state.narrator.enabled) head.append(ib('i-refresh', 'Refresh the brief now', refreshBrief, { size: 13, disabled: pb?.pending || null }));
   head.append(h('button', { type: 'button', class: 'ask-ico', 'aria-label': 'Ask about this session', title: 'Ask about this session', onclick: () => openAsk({ kind: 'brief', sessionId: id, label: 'Session brief', what: 'this session' }, { type: 'brief' }) }, starIcon(12)));
   box.append(head);
 
@@ -1056,10 +1090,10 @@ function renderBriefBox(id, s, b) {
   // Items this brief added over the one before it are marked, so a refresh
   // reads as a change rather than a wholesale rewrite.
   const isNew = (x) => prev && !prev.done.includes(x);
-  if (cur && (cur.done.length || cur.now || cur.next)) {
+  // No "now" column: the status line under the brief says what it is doing, live and free.
+  if (cur && (cur.done.length || cur.next)) {
     box.append(h('div', { class: 'dnn' },
       h('div', {}, h('h3', {}, 'Done so far'), cur.done.length ? h('ul', {}, ...cur.done.map(x => h('li', { class: isNew(x) ? 'new' : null, title: isNew(x) ? 'New since the previous brief' : null }, x))) : h('p', { class: 'muted' }, '—')),
-      h('div', { class: 'now' }, h('h3', {}, 'Now'), h('p', {}, cur.now || '—')),
       h('div', {}, h('h3', {}, 'Next'), h('p', {}, cur.next || '—'))));
   }
   if (cur?.watch) {
@@ -1067,8 +1101,71 @@ function renderBriefBox(id, s, b) {
     if (cur.watch.seq) w.append(h('button', { type: 'button', onclick: () => jumpToSeq(cur.watch.seq) }, 'Jump to event'));
     box.append(w);
   }
+  box.append(foot);
   briefBoxCache = { key, el: box, id, at: pb?.updatedAt || 0 };
   return box;
+}
+
+const BRIEF_WHY = { first: 'first brief', handoff: 'when it handed back', subagent: 'when a subagent finished', milestone: 'on a commit or PR',
+  drift: 'after a run of work', heartbeat: 'on the 10-minute check', idle: 'on new activity', manual: 'on request' };
+
+/** What has happened since the brief, in a few words: "4 edits · 6 commands · 1 commit". */
+function activityText(a) {
+  const n = (k, w) => a[k] ? plural(a[k], w) : null;
+  return [n('prompts', 'prompt'), n('edits', 'edit'), n('commands', 'command'), a.milestones.length ? a.milestones.join(', ') : null,
+    n('errors', 'error'), n('agents', 'subagent'), n('said', 'message'), n('looks', 'read')].filter(Boolean);
+}
+
+/**
+ * The brief's footer: when it was written and why, what has happened since
+ * (counted live from the event stream, so it costs nothing), and what will
+ * make it refresh next. Rebuilt on every header render; the brief above it
+ * is not.
+ */
+function briefFoot(id, s, pb, i, all) {
+  const foot = h('div', { class: 'brief-f' });
+  const left = h('span', { class: 'bf-l' });
+  foot.append(left);
+  if (i) { left.append(`from ${ago(Date.now() - all[i].updatedAt)} ago · ${i} of ${all.length - 1} back`); return foot; }
+  if (!state.narrator.enabled) { left.append('Model briefs are off (server started with --no-narrator)'); return foot; }
+  const error = pb?.error || (state.narrator.error?.fatal ? state.narrator.error.message : null);
+  if (error && !pb?.brief) {
+    const auth = /authenticat|login|oauth/i.test(error);
+    left.classList.add('err');
+    left.append(`Brief unavailable: ${error}${auth ? '. Run claude in a terminal and sign in (/login), then refresh.' : ''}`);
+  } else if (pb?.pending) {
+    left.append(h('span', { class: 'spin' }), pb.brief ? 'Updating…' : 'Writing the first brief…');
+  } else if (pb?.brief) {
+    left.append(h('b', {}, `${ago(Date.now() - pb.updatedAt)} ago`), BRIEF_WHY[pb.reason] ? ` ${BRIEF_WHY[pb.reason]}` : '');
+    if (pb.error) left.append(h('span', { class: 'err', title: pb.error }, ' · last refresh failed'));
+  } else left.append('No brief yet');
+
+  // Since the brief: the same tally the server's scheduler weighs.
+  const c = state.cache.get(id);
+  const a = pb?.brief && c?.loaded ? activitySince(c.events, pb.seq || 0) : null;
+  if (a && !pb.pending) {
+    const parts = activityText(a);
+    foot.append(h('span', { class: 'bf-s', title: parts.length ? `Since this brief: ${parts.join(', ')}` : '' },
+      parts.length ? `· since: ${parts.slice(0, 4).join(' · ')}${parts.length > 4 ? ' …' : ''}` : '· nothing new since'));
+  }
+  foot.append(h('span', { class: 'spacer' }));
+
+  // What refreshes it next.
+  const phase = phaseOf(s);
+  const working = phase === 'working' || (phase === 'turn' && s?.glance?.need?.kind === 'permission');
+  if (pb?.brief && !pb.pending && a) {
+    const rule = `Refreshes when the turn ends or Claude asks you something, when a subagent finishes, on a commit, push or PR, `
+      + `and mid-turn once enough work piles up (${CADENCE.driftScore} points: edit ${WEIGHT.edit}, command ${WEIGHT.command}, read ${WEIGHT.look}; at most every ${CADENCE.driftMs / 60_000} min) `
+      + `or every ${CADENCE.heartbeatMs / 60_000} min while it keeps working. Reads and permission prompts alone do not refresh it.`;
+    if (working) {
+      const fill = Math.min(1, a.score / CADENCE.driftScore);
+      foot.append(h('span', { class: 'bf-n', title: rule }, 'next: turn end',
+        h('span', { class: 'bf-m', role: 'img', 'aria-label': `${Math.round(fill * 100)}% of the work that triggers a refresh` }, h('span', { style: `width:${fill * 100}%` }))));
+    } else if (phase === 'turn') foot.append(h('span', { class: 'bf-n', title: rule }, 'next: on new activity'));
+    else foot.append(h('span', { class: 'bf-n' }, 'final'));
+  }
+  if (state.narrator.enabled) foot.append(ib('i-refresh', 'Refresh the brief now', refreshBrief, { size: 12, disabled: pb?.pending || null }));
+  return foot;
 }
 async function refreshBrief() {
   try { await api.post(`/api/sessions/${sid(state.selected)}/brief/refresh`); }
