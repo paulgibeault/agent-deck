@@ -138,8 +138,8 @@ Send is disabled with a tooltip explaining why.
   as session").
 - Turn boundaries (`stop_hook_summary`, user prompts) are visual separators.
 - Virtualized list — transcripts reach MBs and keep growing.
-- Follow-tail toggle; keyboard: `j`/`k` move, `Enter` opens details,
-  `Space` toggles follow.
+- Follow-tail toggle; keyboard: ↓/↑ move, `Enter` opens details,
+  `l` toggles follow.
 
 ### 4.4 Files tab
 
@@ -262,44 +262,187 @@ Normalized event shape (what the UI consumes):
 
 ## 7. Read Aloud
 
-### 7.1 Engine and voices
+Events are narrated as they happen, so the pilot can follow sessions without
+reading. The browser does the speaking. The server only produces audio for
+online voices that the browser cannot reach.
 
-Primary: Web Speech API (`speechSynthesis`). Reality check on
-**Microsoft Natural** voices:
+### 7.1 What gets narrated
 
-| Platform / browser | Natural voices exposed to the page? |
+| Source | Default | Comes from |
+|---|---|---|
+| **Said**: assistant messages | on | `event.batch` events with `kind: 'text'` |
+| **Needs you**: questions, permission prompts | off | `attention` entries (`lib/attention.mjs`, already worded for the ear) |
+| **Errors** | off | `attention` entries with `signal: 'error'` |
+| **Finished**: a turn handed back | off | `attention` entries with `signal: 'done'`, `from: 'working'` |
+| **Brief updated** | off | `brief.update` (the summary line) |
+
+- **Scope**: off, the selected session, or all sessions. "The selected
+  session" follows the selection as it changes.
+- **Subagents**: one setting above all of the scopes, **Include subagents**,
+  off by default. When it is off, only top-level sessions are narrated.
+- **Length**: in full (the default), or the first ~600 characters followed by
+  "…and more on screen".
+- The session in view is narrated like every other session. Reading it aloud
+  is the point.
+- Narration hooks the live SSE listener, not `onEvents`. `catchUp()` and
+  initial loads feed `onEvents` too, and must never replay history aloud.
+  `event.batch` already arrives for every active session (they stay loaded),
+  carrying the full text, so no new server stream is needed.
+
+### 7.2 Queue
+
+One queue of items `{ id, sessionId, eventId?, kind, title, markdown, priority, manual }`.
+
+- **Order**: first in, first out. **Needs you** items go to the top of the
+  queue but never interrupt the item that is playing.
+- **Skip to the latest** (setting, on by default): when an item comes up and
+  the same session has newer items of the same kind waiting, only the newest
+  plays. It opens with "Release check, 3 earlier updates skipped."
+- **Announcement**: every item opens with the session title, then the content.
+- **Read-aloud buttons** play right away. The automatic item is paused at its
+  current chunk and resumes from that chunk afterwards. Buttons go on:
+  - the Assistant section of the details pane
+  - the brief box
+  - each Ask answer
+- **Holding while typing**: while the prompt box (or the Ask input) has focus,
+  new items wait. An item that is already playing finishes. The held items
+  play once the prompt is sent or the field loses focus. Manual buttons
+  ignore the hold.
+- **One window speaks**: Web Locks (`navigator.locks`) elect a single tab, so
+  two open windows never talk over each other.
+- The queue logic is pure (no DOM) in `public/speech.js` and unit-tested,
+  like `activity.js`.
+
+### 7.3 Turning text into speech
+
+The rendered markdown is the source. Chunks are cut from the same DOM the
+pane shows, so speech and highlight cannot disagree.
+
+1. Render with `markdown()`, as the details pane does.
+2. Walk the block elements (`p`, `li`, headings, `blockquote`, cells). Split
+   each block's text into sentences, and record each chunk as a DOM `Range`
+   plus its spoken text.
+3. Clean the spoken text for the ear:
+   - a `pre` block is said as "code block, 14 lines"
+   - paths shrink to the file name
+   - links are read as the domain
+   - images are skipped
+   - markdown symbols are removed
+4. Highlight with the **CSS Custom Highlight API**
+   (`CSS.highlights.set('narr', new Highlight(range))`). This touches neither
+   the rendered DOM nor the markdown renderer.
+   - The chunk being read is always highlighted.
+   - The word being read is highlighted too, as a second `narr-word`
+     highlight, whenever the engine reports word boundaries (most local
+     voices do).
+5. **Click a chunk to seek**: `caretPositionFromPoint` finds the clicked
+   offset, the chunk that contains it is found, and playback restarts there.
+
+One utterance (or one audio clip) per chunk keeps highlighting exact, makes
+seeking trivial, and lets online audio be fetched one chunk ahead.
+
+### 7.4 Voices and engines
+
+One voice picker, grouped **Local** and **☁ Online**. Online voices are
+clearly marked and show a small warning when they fall back.
+
+- **Browser** (`speechSynthesis`): Apple voices on macOS Chrome; Microsoft
+  "Online (Natural)" voices when the deck runs in Edge. A voice with
+  `localService === false` is listed as Online.
+- **Azure AI Speech** (official REST API, `lib/tts.mjs`): Microsoft's neural
+  voices (Ava, Andrew, Aria, Jenny…) in any browser.
+  - `POST /api/tts {text, voice, rate}` returns `audio/mpeg`.
+  - `GET /api/tts/voices` returns the voice list, cached for a day.
+  - Audio is cached in memory by `hash(voice, rate, text)`, so replays and
+    seeks are free.
+  - The key and region come from `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION`
+    or `~/.agent-deck/tts.json`, set from the settings popover. The key is
+    never sent back to the page.
+  - The free tier covers 0.5M characters a month.
+- If an online request fails, that item falls back to the default local
+  voice.
+- The voice is resolved per item, which leaves room for a voice per session
+  later without a redesign.
+
+### 7.5 Narration pane
+
+- **Layering**: a separate layer *above* the details pane, absolutely
+  positioned in `#deck` at `right: 0`, full height, `width: var(--right)`. The
+  details pane underneath keeps its state (selection, scroll, Ask thread).
+- **Visibility**: it pops up whether or not the details pane is open. When
+  details is closed, it covers the same strip of the stream.
+- **Motion**: it slides in from the right in about 120 ms when narration
+  starts, and slides out about 1.5 s after the queue empties. Chained items
+  swap in place with a quick crossfade, with no slide between them.
+- **Header**: the session title, a kind chip (Said / Needs you / …), a
+  "3 skipped" chip, and the number still queued.
+- **Body**: the details pane's renderers (`markdown()`, images, code
+  highlighting), with chunk and word highlights.
+
+### 7.6 Controls
+
+- **Title bar**, next to the model picker:
+  - a speaker icon (muted when off, animated while speaking) that opens the
+    settings popover
+  - play/pause
+  - ⏭, which skips to the next item
+- **Settings popover**:
+  - scope (off / this session / all sessions)
+  - include subagents
+  - voice (Local / ☁ Online) with a preview button
+  - speed
+  - one checkbox per event type (Said on by default)
+  - length (full / short)
+  - skip to the latest per session
+  - Azure key and region
+- **Speaker under the prompt box**: pulses while narration plays. Clicking it
+  opens the session being read, selects its event and shows it in details.
+  On the overview there is no prompt box; the title bar icon serves.
+- **Media keys and AirPods** (Media Session API):
+  - metadata: the session title and the kind
+  - handlers: play, pause, next track, stop
+  - Azure audio plays through an `<audio>` element, which owns the media
+    session natively.
+  - For `speechSynthesis`, a silent looping `<audio>` plays while narrating,
+    so Chrome routes the keys to the deck. *Verify on macOS Chrome.*
+- **Keyboard** (ignored inside text fields):
+  - `j`: jump to the narrated session and event, the same as the speaker
+    under the prompt box
+  - `Space`: play/pause narration
+  - `]`: next item
+  - `r`: read the selected event, or the brief when nothing is selected
+  - This moves two old bindings: next/previous event is now ↓/↑ only (`j`/`k`
+    are retired), and go live / pause moves from `Space` to `l`.
+- **Autoplay**: Chrome allows speech only after the page has had a user
+  gesture. Until then, the speaker icon shows "click to enable" and holds the
+  queue.
+
+### 7.7 Files
+
+| File | Holds |
 |---|---|
-| Windows + Edge | Yes — "Microsoft Aria Online (Natural)" etc. Best case. |
-| Windows + Chrome | No — SAPI voices only (David, Zira). |
-| macOS, any browser | No Microsoft voices; Apple system voices (Samantha…). Siri voices are not exposed. |
+| `public/speech.js` | pure: queue (priority, collapse to latest, cut-in/resume), sentence splitting, spoken-text cleanup. Tested in `test/speech.test.mjs`. |
+| `public/narration.js` | the player: engines, chunk playback, highlights, pane, Media Session, Web Lock, typing hold |
+| `lib/tts.mjs` | Azure synthesis, voice list, audio cache |
+| `app.js` | hooks only: SSE listeners, read-aloud buttons, title bar, shortcuts |
 
-- Voice picker auto-prefers `/Natural|Online/`, then `/Premium|Enhanced/`,
-  then default; persisted per machine. Rate/pitch controls.
-- **Server-side fallback (phase 2):** `say` on macOS; on Windows 11,
-  PowerShell → WinRT `Windows.Media.SpeechSynthesis`, which can reach the
-  Natural voices installed under Accessibility → Narrator even when the
-  browser cannot. Streams audio to the page as `tts.audio`.
-- Edge **online** Natural voices do not fire `onboundary` reliably, so
-  highlighting is done by **one utterance per line**. This makes highlight
-  exact and ff/rw trivial, at the cost of a brief pause between lines.
+Settings live in `prefs` (localStorage), one set per machine.
 
-### 7.2 Queue and controls
+### 7.8 Build order
 
-`ReadQueue` state machine: items `{ id, source, title, lines[] }`.
+1. The queue, browser voices, auto **Said**, the pane, the title bar
+   controls, and the settings popover.
+2. Chunk highlighting, click to seek, the read-aloud buttons with cut-in, and
+   the speaker under the prompt box.
+3. Azure voices, and the Media Session API.
+4. The typing hold, the shortcuts, and the remaining event types.
 
-- Controls: play/pause, ◀◀ ▶▶ (line), ⏮ ⏭ (item), stop, speed.
-- History drawer: last 50 items, replay any.
-- Dedupe: an unread brief is replaced when a newer brief arrives.
-- Auto-read toggles per source: Brief, assistant text, errors, subagent
-  completions, session idle/finished.
-- Per-session mute.
+### 7.9 Later
 
-### 7.3 Teleprompter pane
-
-Slides in from the right, overlapping Details (Details remains reachable via
-a tab/pin). Shows source badge (Brief / Assistant / Event), the item's lines
-with the current line highlighted and auto-scrolled; click any line to seek.
-Collapses to a thin bar when idle.
+- A voice per session, so you know who's talking before the title is read.
+- "Say it shorter": an opt-in Haiku summary of long messages, run only on
+  events, with its cost shown.
+- A narration history list in the pane, to replay the last 20 items.
 
 ---
 
@@ -316,12 +459,13 @@ agent-deck/
     agent.mjs           deck-launched sessions (stream-json control)
     gitinfo.mjs         status / diff / log helpers
     shell.mjs           pilot shell runner
-    tts.mjs             server-side TTS fallback
+    tts.mjs             Azure neural voices + audio cache (§7.4)
   public/
     index.html
     app.js              state + panes
     events.js           normalized-event renderers (rows + details)
-    tts.js              ReadQueue + teleprompter
+    speech.js           read-aloud queue + text-to-speech chunks (pure)
+    narration.js        read-aloud player + pane (§7)
     styles.css
     vendor/highlight.min.js, github.css (+ dark)
   hooks/deck-hook.sh    optional push channel (see §6.3)
@@ -339,6 +483,9 @@ No build step. ES modules in the browser, plain CSS, light/dark via
    read-only queue. Useful on day one for agents already running.
 2. **Voice.** Web Speech read-aloud, teleprompter, queue/history, auto-read
    toggles, narrator Brief.
+   *Read aloud is built as §7 describes (public/narration.js,
+   public/speech.js, lib/tts.mjs). Not yet verified on real hardware: Azure
+   voices with a live key, and media keys / AirPods in Chrome.*
 3. **Cockpit.** Launch sessions from the deck with full Prompt control over
    stream-json; hooks push channel; server-side TTS fallback.
    *Launch, send, queue, interrupt, end, resume and permission prompts are

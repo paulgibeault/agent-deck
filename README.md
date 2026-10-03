@@ -8,8 +8,8 @@ Sessions started elsewhere (terminal, desktop app, IDE) are observe-only: the
 deck reads what Claude Code already writes under `~/.claude` and never
 touches them. Sessions you start from the deck (**New session**, or `n`) run
 under it, and you can send, queue, interrupt, end and resume them and answer
-their permission prompts. See [PLAN.md](PLAN.md) for the full design and the
-later phases (read-aloud).
+their permission prompts. **Read aloud** narrates what sessions say as it
+happens. See [PLAN.md](PLAN.md) for the full design.
 
 ## Run
 
@@ -58,6 +58,7 @@ Flags and environment:
 | `DECK_ASK_MODEL` | `sonnet` | model for Ask about this |
 | `DECK_CLAUDE_BIN` | `claude` | CLI used for model calls |
 | `DECK_AGENT_BIN` | `claude` | CLI used for deck-launched sessions |
+| `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | unset | Microsoft neural voices for Read aloud (or set them in its settings) |
 | `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash |
 
 The Brief and Ask call `claude -p` with no tools, no MCP servers and no
@@ -191,7 +192,7 @@ minute, "crash" exits with an error.
   Thinking collapses to a faint row. Agent rows can be opened as a session or
   expanded inline. Prompts and turn ends are visual separators. Filter box,
   All / Tools / Messages / Errors, thinking toggle, Live. Keys:
-  `j`/`k` move, `Enter` details, `a` ask, `Space` live / pause, `/` filter,
+  ↓/↑ move, `Enter` details, `a` ask, `l` live / pause, `/` filter,
   `1`–`4` tabs, `Esc` overview, `?` help.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +
@@ -202,6 +203,32 @@ minute, "crash" exits with an error.
 - **Changes.** `git status`, numstat, ahead/behind upstream and default
   branch, recent commits for the session's cwd or worktree. Click a file for
   a side-by-side diff. Refreshes every 10s while visible.
+- **Read aloud.** The speaker next to the model picker opens its settings:
+  - **Narrate:** off, the selected session, or all sessions.
+  - **Include subagents.**
+  - **Voice:** Local, or ☁ Online. Online voices are Microsoft's natural
+    voices: in Edge they come with the browser; elsewhere add an Azure Speech
+    key.
+  - **Speed.**
+  - **Read:** which events to narrate (Said by default; also Needs you,
+    Errors, Finished, Brief updated).
+  - **Skip to the latest per session**, and **read in full** or the first
+    ~600 characters.
+
+  Each narration says the session's title, then the content, in a pane that
+  slides over the details column (details keeps its state underneath).
+
+  - The sentence being read is highlighted, along with the word when the
+    voice reports it. Click any sentence to read from there.
+  - Needs-you items go to the top of the queue.
+  - Read aloud buttons on assistant messages, the brief and Ask answers cut
+    in; the interrupted item resumes afterwards.
+  - New items wait while you type a prompt and play once it is sent or you
+    leave the field.
+  - Media keys and AirPods play, pause and skip.
+
+  Keys: `Space` play / pause, `]` next, `j` open what is being read, `r` read
+  the selection.
 - **Shell.** Pilot's command runner: pick a cwd (defaults to the selected
   session's), run a command, see streamed stdout/stderr, exit code and
   duration, kill long runs. History with ↑/↓.
@@ -221,6 +248,9 @@ lib/deckstate.mjs     hidden sessions, delete trash
 lib/gitinfo.mjs       status / diff / log
 lib/shell.mjs         pilot shell runner
 lib/agent.mjs         deck-launched sessions (stream-json control)
+lib/tts.mjs           Read aloud: Azure neural voices + audio cache
+public/narration.js   Read aloud player: voices, queue, pane, highlights
+public/speech.js      Read aloud queue + text rules (pure, tested)
 public/               index.html, app.js, events.js, styles.css, vendor/
 design/               Claude Design canvas source for the current look
 test/                 node --test; fixtures/ holds a sanitized transcript
