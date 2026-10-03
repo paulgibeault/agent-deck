@@ -67,7 +67,17 @@ export function tagEl(ev) {
   const t = tagFor(ev);
   return h('span', { class: `tag f-${t.fam}`, title: t.title || null }, t.label);
 }
-export const askMini = (label = 'Ask') => h('button', { class: 'ask-mini', type: 'button', dataset: { askRow: '1' }, title: 'Ask about this' }, starIcon(11), label);
+export const askMini = () => h('button', { class: 'ask-ico ask-mini', type: 'button', dataset: { askRow: '1' }, 'aria-label': 'Ask about this', title: 'Ask about this' }, starIcon(11));
+/** Icon-only button: no box, no label; the label is its tooltip and accessible name. */
+export function ib(icon, label, onclick, { cls = '', size = 14, ...attrs } = {}) {
+  return h('button', { type: 'button', class: `ib${cls ? ' ' + cls : ''}`, 'aria-label': label, title: label, onclick, ...attrs }, svgUse(icon, size));
+}
+/** Swap an icon button's glyph to a check for a moment, as feedback. */
+export function flashDone(btn) {
+  const use = btn.querySelector('use'); if (!use) return;
+  const was = use.getAttribute('href'); use.setAttribute('href', '#i-check'); btn.classList.add('done');
+  setTimeout(() => { use.setAttribute('href', was); btn.classList.remove('done'); }, 900);
+}
 export function starIcon(n = 11) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', n); svg.setAttribute('height', n); svg.setAttribute('aria-hidden', 'true');
@@ -313,9 +323,9 @@ export function renderSideBySide(ops, { lang = null, startA = 1, startB = 1 } = 
 }
 
 // ------------------------------------------------------------ details
-const copyBtn = (text, label = 'Copy') => h('button', { class: 'mini', type: 'button', onclick: (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); e.currentTarget.textContent = 'Copied'; const b = e.currentTarget; setTimeout(() => b.textContent = label, 900); } }, label);
-const editorBtn = (path, line, api) => path ? h('button', { class: 'btn sm', type: 'button', onclick: () => api.openEditor(path, line) }, svgUse('i-code', 13), 'Open in editor') : null;
-const openBtn = (path, line, api) => path ? h('button', { class: 'mini', type: 'button', title: 'open in editor', onclick: () => api.openEditor(path, line) }, 'Open') : null;
+const copyBtn = (text, label = 'Copy') => ib('i-copy', label, (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); flashDone(e.currentTarget); }, { size: 13 });
+const editorBtn = (path, line, api) => path ? ib('i-open', 'Open in editor', () => api.openEditor(path, line)) : null;
+const openBtn = (path, line, api) => path ? ib('i-open', 'Open in editor', () => api.openEditor(path, line), { size: 13 }) : null;
 
 /** Icon-only Ask button; `spec` is the scope item app.js resolves. */
 export function askIco(spec, label = 'Ask about this') {
@@ -392,7 +402,7 @@ export function renderDetails(ev, detail, ctx) {
     : t.pending ? h('span', { class: 'chip st-running' }, 'running')
     : t.isError ? h('span', { class: 'chip err' }, t.name === 'Bash' && detail?.toolUseResult?.returnCodeInterpretation ? detail.toolUseResult.returnCodeInterpretation : 'error')
     : h('span', { class: 'chip ok' }, t.name === 'Bash' ? 'exit 0' : 'ok');
-  const rawToggle = h('button', { class: 'icon-btn sm mono', type: 'button', 'aria-label': 'Show raw record', title: 'Raw record', onclick: () => root.classList.toggle('show-raw') }, '{ }');
+  const rawToggle = ib('i-code', 'Raw record', () => root.classList.toggle('show-raw'));
   const tokens = ev.usage?.output_tokens ? `${fmtTokens(ev.usage.output_tokens)} tokens` : null;
   root.append(headerFor({
     tag: tagEl(ev), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
@@ -417,7 +427,7 @@ export function renderDetails(ev, detail, ctx) {
       case 'Edit': {
         const ops = lineDiff(t.input.old_string ?? '', t.input.new_string ?? '');
         const start = detail?.toolUseResult?.structuredPatch?.[0]?.oldStart ?? t.meta?.structuredPatch?.[0]?.oldStart ?? 1;
-        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, start, ctx.api), copyBtn(t.input.new_string ?? '', 'Copy new')], ask: evSpec('Edit', 'this change') },
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, start, ctx.api), copyBtn(t.input.new_string ?? '', 'Copy the new text')], ask: evSpec('Edit', 'this change') },
           renderSideBySide(ops, { lang: langFor(path), startA: start, startB: detail?.toolUseResult?.structuredPatch?.[0]?.newStart ?? start })));
         if (t.input.replace_all) body.append(h('div', { class: 'note' }, 'replace_all'));
         break;
@@ -437,7 +447,7 @@ export function renderDetails(ev, detail, ctx) {
         break;
       }
       case 'Bash': {
-        body.append(section('Command', { actions: [copyBtn(t.input.command ?? ''), h('button', { class: 'mini', type: 'button', onclick: () => ctx.runInShell?.(t.input.command ?? '') }, 'Run in Shell')], ask: evSpec('Command', 'this command') },
+        body.append(section('Command', { actions: [copyBtn(t.input.command ?? ''), ib('i-term', 'Run in Shell', () => ctx.runInShell?.(t.input.command ?? ''), { size: 13 })], ask: evSpec('Command', 'this command') },
           codeBlock(t.input.command ?? '', 'bash', { numbers: false })));
         const r = detail?.toolUseResult;
         const stdout = r?.stdout ?? resultText; const stderr = r?.stderr ?? '';
@@ -454,7 +464,7 @@ export function renderDetails(ev, detail, ctx) {
         card.append(h('div', { class: 'muted' }, [t.input.subagent_type || 'general-purpose', t.input.model, t.input.isolation ? `isolation: ${t.input.isolation}` : null, t.meta?.resolvedModel].filter(Boolean).join(' · ')));
         if (t.agentId) {
           const st = ctx.agentStatus?.(t.agentId) || 'unknown';
-          card.append(h('div', { class: 'card-row' }, h('span', { class: `chip st-${st}` }, st), h('button', { class: 'mini', type: 'button', onclick: () => ctx.selectSession(t.agentId) }, 'Open as session')));
+          card.append(h('div', { class: 'card-row' }, h('span', { class: `chip st-${st}` }, st), ib('i-open', 'Open as session', () => ctx.selectSession(t.agentId), { size: 13 })));
         }
         body.append(section('Subagent', { ask: evSpec('Subagent', 'this subagent') }, card));
         body.append(section('Prompt', { actions: [copyBtn(t.input.prompt ?? '')] }, h('details', {}, h('summary', {}, `${fmtTokens((t.input.prompt || '').length)} chars`), h('pre', { class: 'plain' }, t.input.prompt ?? ''))));

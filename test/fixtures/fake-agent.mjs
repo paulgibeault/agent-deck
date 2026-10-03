@@ -5,7 +5,8 @@
 // CLI would, and speaks the same stdout protocol the deck reads.
 //
 // Prompt words steer it: "permission" asks to run a Bash command first,
-// "slow" works for 60s (interruptible), "crash" exits with an error.
+// "slow" works for 60s (interruptible), "crash" exits with an error, "fail"
+// ends the turn on a failed tool call.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -76,13 +77,20 @@ async function turn(text) {
     record({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: ok ? '(no output)' : answer.message, is_error: !ok }] } });
     reply = ok ? `Cleaned the build folder${answer.updatedPermissions ? ' (and will not ask again)' : ''}.` : `Understood, I left the build folder alone.`;
   }
+  // "fail" ends the turn on a failed tool call, with nothing after it.
+  if (/fail/.test(text)) {
+    const toolUseId = `toolu_${randomUUID().slice(0, 8)}`;
+    record({ type: 'assistant', message: { model, id: `msg_${toolUseId}`, role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: 'npm test' } }] } });
+    record({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: '3 tests failed', is_error: true }] } });
+    reply = null;
+  }
   let interrupted = false;
   if (/slow/.test(text)) {
     interrupted = await new Promise((resolve) => { interrupt = () => resolve(true); setTimeout(() => resolve(false), 60_000); });
     interrupt = null;
   } else await sleep(400);
   if (interrupted) record({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } });
-  else record({ type: 'assistant', message: { model, id: `msg_${randomUUID().slice(0, 8)}`, role: 'assistant', content: [{ type: 'text', text: reply }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } } });
+  else if (reply) record({ type: 'assistant', message: { model, id: `msg_${randomUUID().slice(0, 8)}`, role: 'assistant', content: [{ type: 'text', text: reply }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } } });
   cost += 0.001;
   out({ type: 'result', subtype: interrupted ? 'error_during_execution' : 'success', is_error: false, duration_ms: Date.now() - started, total_cost_usd: cost, stop_reason: interrupted ? null : 'end_turn', session_id: id, result: interrupted ? '' : reply });
 }
