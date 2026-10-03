@@ -91,6 +91,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
   let lastView = null;     // the view still on screen after an item ends
   let gen = 0;
   let paused = false, held = false;
+  let repause = false;     // paused when a Read aloud button played: pause again after it
   let leader = !navigator.locks;
   let blocked = !(navigator.userActivation?.hasBeenActive ?? true);
   let hideTimer = null;
@@ -288,6 +289,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
       if (!head) { keepAlive.pause(); media('none'); }
       return;
     }
+    if (repause && !head.manual) { repause = false; paused = true; media('paused'); changed(); return; }
     const n = queue.next({ latest: s.latest });
     begin(buildView(n.item, n.skipped), n.item.at || 0);
   }
@@ -357,7 +359,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
   }
   function status() {
     return {
-      state: cur ? (blocked ? 'blocked' : paused ? 'paused' : 'playing') : queue.length ? (blocked ? 'blocked' : held ? 'held' : 'waiting') : 'idle',
+      state: blocked && (cur || queue.length) ? 'blocked' : paused ? 'paused' : cur ? 'playing' : queue.length ? (held ? 'held' : 'waiting') : 'idle',
       item: cur?.item || null, queued: queue.length, on: s.scope !== 'off', leader,
     };
   }
@@ -381,21 +383,29 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
   function read(item) {
     item = { title: titleOf(item.sessionId), ...item, manual: true, id: `manual:${Date.now()}` };
     if (cur) queue.resume({ ...cur.item, skipped: cur.skipped }, cur.i);
-    hush(); cur = null; paused = false;
+    if (paused) { repause = true; paused = false; }
+    hush(); cur = null;
     queue.items.unshift(item);
     if (blocked) { blocked = false; }   // a click is the gesture
     pump();
   }
-  function pause() { if (!cur || paused) return; paused = true; gen++; hush(); keepAlive.pause(); media('paused'); changed(); }
+  /** Pausing with nothing playing is allowed: new items then wait in the queue until play. */
+  function pause() { if (paused) return; paused = true; repause = false; gen++; hush(); keepAlive.pause(); media(cur ? 'paused' : 'none'); changed(); }
   function play() {
     if (blocked) { unblock(); return; }
-    if (paused) { paused = false; media('playing'); playChunk(); return; }
+    if (paused) { paused = false; if (cur) { media('playing'); playChunk(); } else pump(); return; }
     if (held) { held = false; }
     pump();
   }
-  function toggle() { cur && !paused ? pause() : play(); }
-  function skip() { if (!cur && !queue.length) return; hush(); cur = null; paused = false; pump(); }
-  function stop() { queue.clear(); hush(); cur = null; paused = false; gen++; mark(null); keepAlive.pause(); media('none'); hidePane(); changed(); }
+  function toggle() { paused || (blocked && (cur || queue.length)) ? play() : pause(); }
+  /** Next item. While paused, this drops what is on screen and stays paused. */
+  function skip() {
+    if (!cur && !queue.length) return;
+    hush(); cur = null;
+    if (paused) { mark(null); hidePane(); changed(); return; }
+    pump();
+  }
+  function stop() { queue.clear(); hush(); cur = null; repause = false; gen++; mark(null); keepAlive.pause(); media('none'); hidePane(); changed(); }
   /** While the pilot types, new items wait; what is playing finishes. */
   function hold(on) { if (held === on) return; held = on; if (!on) pump(); else changed(); }
   function set(key, value) {
