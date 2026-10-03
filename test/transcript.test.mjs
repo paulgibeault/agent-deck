@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { SessionState, TranscriptTail, parseLine, toolSummary, probeHead, probeTail, cwdSlug, displayToolName } from '../lib/transcript.mjs';
 import { computeBrief } from '../lib/brief.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
+import { runsClaude } from '../lib/spawns.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'session.jsonl');
@@ -167,7 +168,7 @@ test('toolSummary one-liners', () => {
 });
 
 test('probeHead / probeTail / cwdSlug', () => {
-  assert.deepEqual(probeHead(FIXTURE), { cwd: '/tmp/proj', sessionId: 'sess-1', version: '2.1.284', gitBranch: 'main' });
+  assert.deepEqual(probeHead(FIXTURE), { cwd: '/tmp/proj', sessionId: 'sess-1', version: '2.1.284', gitBranch: 'main', startTs: '2026-09-29T05:47:11.815Z', entrypoint: 'claude-desktop' });
   const t = probeTail(FIXTURE);
   assert.equal(t.title, 'Fix solver test');
   assert.equal(t.lastPrompt, 'fix the failing test');
@@ -205,4 +206,30 @@ test('SessionIndex: buckets, subagent tree, paging', () => {
   assert.equal(page.events.length + rest.events.length, page.total);
   assert.equal(idx.brief('sess-1').state, 'ended');
   assert.equal(idx.filesOf('sess-1').length, 1);
+});
+
+test('SessionIndex: a headless session started by a Bash `claude -p` call nests under that session', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-home-'));
+  const proj = path.join(dir, 'projects', '-tmp-proj');
+  fs.mkdirSync(proj, { recursive: true });
+  const rec = (o) => JSON.stringify({ sessionId: o.sid, cwd: '/tmp/proj', ...o }) + '\n';
+  const t = (s) => `2026-10-03T17:00:${String(s).padStart(2, '0')}.000Z`;
+  const bash = (sid, s, id, command) => rec({ sid, type: 'assistant', timestamp: t(s), message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const result = (sid, s, id) => rec({ sid, type: 'user', timestamp: t(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } });
+  const prompt = (sid, s, text, entrypoint) => rec({ sid, type: 'user', timestamp: t(s), entrypoint, message: { role: 'user', content: text } });
+  fs.writeFileSync(path.join(proj, 'parent.jsonl'), prompt('parent', 0, 'try the CLI', 'cli')
+    + bash('parent', 1, 'tu1', 'ls ~/.claude/projects') + result('parent', 2, 'tu1')
+    + bash('parent', 10, 'tu2', 'cd /tmp && claude -p "/usage"') + result('parent', 12, 'tu2'));
+  fs.writeFileSync(path.join(proj, 'child.jsonl'), prompt('child', 11, '<command-name>/usage</command-name>\n<command-args></command-args>', 'sdk-cli'));
+  fs.writeFileSync(path.join(proj, 'stray.jsonl'), prompt('stray', 30, 'unrelated headless run', 'sdk-cli'));
+  fs.writeFileSync(path.join(proj, 'early.jsonl'), prompt('early', 2, 'during ls, not claude', 'sdk-cli'));
+  const idx = new SessionIndex({ claudeDir: dir, recentDays: 3650 });
+  idx.scanProjects();
+  assert.equal(idx.summary('child').spawnedBy, 'parent');
+  assert.deepEqual(idx.summary('parent').spawned, ['child']);
+  assert.equal(idx.summary('stray').spawnedBy, null, 'outside every claude call');
+  assert.equal(idx.summary('early').spawnedBy, null, 'a call that only reads ~/.claude does not count');
+  assert.equal(idx.summary('child').title, '/usage', 'slash-command prompts read as the command');
+  assert.equal(runsClaude('npx claude-thing'), false);
+  assert.equal(runsClaude('/opt/homebrew/bin/claude -p hi'), true);
 });

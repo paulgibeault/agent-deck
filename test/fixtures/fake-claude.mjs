@@ -6,6 +6,13 @@ let input = '';
 process.stdin.on('data', d => { input += d; });
 process.stdin.on('end', () => {
   const args = process.argv.slice(2);
+  // `claude -p /usage`: the plan report, no model call.
+  if (args.includes('/usage')) {
+    const pctOf = (v, d) => Math.round(Number(v ?? d) * 100);
+    const result = `You are currently using your subscription to power your Claude Code usage\n\nCurrent session: ${pctOf(process.env.FAKE_5H, 0.42)}% used · resets 11:59pm\nCurrent week (all models): ${pctOf(process.env.FAKE_7D, 0.18)}% used · resets Dec 31 at 11:59pm\nCurrent week (Fable): 4% used · resets Dec 31 at 11:59pm\n\nWhat's contributing to your limits usage?\nApproximate, based on local sessions on this machine.\n\nLast 24h · 12 requests · 1 sessions\n  Top subagents: Explore 3%`;
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result, total_cost_usd: 0 }));
+    return;
+  }
   const system = args[args.indexOf('--system-prompt') + 1] || '';
   const title = /^Session: (.*)$/m.exec(input)?.[1] || 'this session';
   const prompts = [...input.matchAll(/ USER: (.*)$/gm)].map(m => m[1]);

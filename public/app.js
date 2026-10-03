@@ -23,7 +23,7 @@ const prefs = (() => { try { return JSON.parse(localStorage.getItem('deck.prefs'
 function savePrefs() { try { localStorage.setItem('deck.prefs', JSON.stringify(prefs)); } catch { /* private mode */ } }
 
 const state = {
-  snapshot: { active: [], recent: [], closed: [], hidden: [] },
+  snapshot: { active: [], recent: [], closed: [] },
   byId: new Map(),            // id -> summary (sessions and agents)
   selected: null,
   cache: new Map(),           // id -> { events, byId, lastSeq, meta, brief, summary, loaded }
@@ -34,7 +34,7 @@ const state = {
   cursor: null,               // selected event id
   rows: [], offsets: [], total: 0,
   filter: '', kind: 'all', showThinking: prefs.showThinking !== false,
-  treeFilter: '', ctr: null,
+  treeFilter: '',
   subsOpen: new Set(), subsAll: new Set(),
   files: null, changes: null,
   shell: { runs: new Map(), order: [], history: (() => { try { return JSON.parse(localStorage.getItem('deck.shhist') || '[]'); } catch { return []; } })(), hi: -1 },
@@ -244,9 +244,9 @@ function reportView() {
 document.addEventListener('visibilitychange', reportView);
 
 function applySnapshot(snap) {
-  state.snapshot = { hidden: [], ...snap };
+  state.snapshot = snap;
   state.byId.clear();
-  for (const b of ['active', 'recent', 'closed', 'hidden']) for (const s of state.snapshot[b]) { state.byId.set(s.id, s); for (const a of s.subagents || []) state.byId.set(a.id, a); if (s.deck) state.deck.set(s.id, s.deck); }
+  for (const b of ['active', 'recent', 'closed']) for (const s of state.snapshot[b]) { state.byId.set(s.id, s); for (const a of s.subagents || []) state.byId.set(a.id, a); if (s.deck) state.deck.set(s.id, s.deck); }
   renderTree();
   if (state.pendingOpen && state.byId.has(state.pendingOpen)) openLaunched(state.pendingOpen);
   else if (state.selected) renderHeader(); else scheduleOverview();
@@ -258,9 +258,10 @@ function onSession({ id, meta, brief, summary }) {
   if (summary) {
     const prev = state.byId.get(id);
     if (prev?.glance && !summary.glance) summary.glance = prev.glance;
+    if (prev?.hidden) summary.hidden = true;   // closed is the deck's, not the index's; snapshots carry it
     c.summary = summary; state.byId.set(id, summary); for (const a of summary.subagents || []) state.byId.set(a.id, a);
     if (summary.deck) state.deck.set(id, summary.deck);
-    for (const b of ['active', 'recent', 'closed', 'hidden']) { const i = state.snapshot[b].findIndex(x => x.id === id); if (i >= 0) state.snapshot[b][i] = summary; }
+    for (const b of ['active', 'recent', 'closed']) { const i = state.snapshot[b].findIndex(x => x.id === id); if (i >= 0) state.snapshot[b][i] = summary; }
     scheduleTree();
   }
   if (id === state.selected) { renderHeader(); renderQueue(); }
@@ -329,83 +330,114 @@ async function loadSession(id) {
 let treeTimer = null;
 function scheduleTree() { if (!treeTimer) treeTimer = requestAnimationFrame(() => { treeTimer = null; renderTree(); }); }
 
-function sessRow(s) {
+function sessRow(s, nested = false) {
   const phase = phaseOf(s);
   const sig = sigOf(s);
   const isAgent = s.kind === 'agent';
   const st = !isAgent && (phase === 'turn' || phase === 'working') ? statusOf(s, null, phase) : null;
   const meta = isAgent ? [s.agentType, s.worktreeBranch].filter(Boolean).join(' · ')
-    : s.bucket === 'active' && !state.snapshot.hidden.includes(s)
-      ? [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, sig === 'input' || sig === 'error' ? st?.head.toLowerCase() : null, s.subagents?.length ? `${s.subagents.length} subagent${s.subagents.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
-      : [s.project, s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ');
-  const btn = h('button', { type: 'button', class: `sess${isAgent ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, title: s.cwd || s.title },
-    h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}`, title: st?.head || SIG_LABEL[sig] }),
-    h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), !isAgent || meta ? h('span', { class: 'sub' }, meta || ' ') : null),
-    h('span', { class: 'r', title: new Date(s.mtime).toLocaleString() }, ago(Date.now() - (s.mtime || 0))));
+    : [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, ...(s.alive && !s.hidden ? [sig === 'input' || sig === 'error' ? st?.head.toLowerCase() : null] : [])].filter(Boolean).join(' · ');
+  // The folder leads a session's second line; rows are not grouped by it.
+  const sub = isAgent || nested ? (meta ? [meta] : null)
+    : [h('span', { class: 'fld' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
+  // No native tooltips: the hover card says all of it.
+  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}` },
+    h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
+    h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), sub ? h('span', { class: 'sub' }, ...sub) : null),
+    h('span', { class: 'r' }, ago(Date.now() - (s.mtime || 0))));
   return h('li', {}, btn);
 }
 
-function subsBlock(s, alwaysOpen) {
-  const subs = s.subagents || [];
-  const done = subs.filter(a => a.status === 'done').length;
-  const run = subs.filter(a => a.status === 'running').length;
-  const containsSel = subs.some(a => a.id === state.selected);
-  const open = state.subsOpen.has(s.id) ? true : state.subsOpen.has('!' + s.id) ? false : (alwaysOpen || containsSel || s.id === state.selected);
+/**
+ * A collapsible group under a session row: its subagents ('subs'), or the
+ * sessions it started with `claude -p` ('tasks'). Collapsed unless it holds
+ * the selection; the user's choice sticks.
+ */
+const spawnedOf = (s) => (s.spawned || []).map(id => state.byId.get(id)).filter(Boolean).sort((a, b) => b.mtime - a.mtime);
+function childBlock(s, kind) {
+  const tasks = kind === 'tasks';
+  const kids = tasks ? spawnedOf(s) : s.subagents || [];
+  const isRun = tasks ? (c) => sigOf(c) === 'working' : (a) => a.status === 'running';
+  const isDone = tasks ? (c) => !c.alive || sigOf(c) === 'done' : (a) => a.status === 'done';
+  const done = kids.filter(isDone).length;
+  const run = kids.filter(isRun).length;
+  const key = tasks ? `t:${s.id}` : s.id;
+  const containsSel = kids.some(a => a.id === state.selected);
+  const open = state.subsOpen.has(key) ? true : state.subsOpen.has('!' + key) ? false : containsSel;
   const li = h('li', { class: `subs${open ? '' : ' collapsed'}`, dataset: { parent: s.id } });
-  li.append(h('button', { type: 'button', class: 'subs-h', dataset: { subs: s.id }, 'aria-expanded': String(open) },
-    svgUse('i-down', 10), h('span', {}, 'Subagents'), h('span', { class: 'muted' }, `${done} of ${subs.length} done${run ? ` · ${run} running` : ''}`)));
+  li.append(h('button', { type: 'button', class: 'subs-h', dataset: { subs: key }, 'aria-expanded': String(open) },
+    svgUse('i-down', 10), h('span', {}, tasks ? 'Sub-tasks' : 'Subagents'), h('span', { class: 'muted' }, run || s.alive ? `${done} of ${kids.length} done${run ? ` · ${run} running` : ''}` : String(kids.length))));
   const bar = h('div', { class: 'bar', 'aria-hidden': 'true' });
   if (done) bar.append(h('span', { class: 'b-done', style: `flex-grow:${done}` }));
   if (run) bar.append(h('span', { class: 'b-run', style: `flex-grow:${run}` }));
-  if (subs.length - done - run) bar.append(h('span', { class: 'b-other', style: `flex-grow:${subs.length - done - run}` }));
+  if (kids.length - done - run) bar.append(h('span', { class: 'b-other', style: `flex-grow:${kids.length - done - run}` }));
   li.append(bar);
   const out = [li];
   if (open) {
-    const order = [...subs].sort((a, b) => (b.status === 'running') - (a.status === 'running') || b.mtime - a.mtime);
-    const all = state.subsAll.has(s.id) || containsSel;
+    const order = [...kids].sort((a, b) => isRun(b) - isRun(a) || b.mtime - a.mtime);
+    const all = state.subsAll.has(key) || containsSel;
     const shown = all ? order : order.slice(0, 4);
-    for (const a of shown) out.push(sessRow(a));
-    if (order.length > 4 && !containsSel) out.push(h('li', {}, h('button', { type: 'button', class: 'more', dataset: { more: s.id } }, all ? 'Show fewer' : `+ ${order.length - 4} more`)));
+    for (const a of shown) out.push(sessRow(a, true));
+    if (order.length > 4 && !containsSel) out.push(h('li', {}, h('button', { type: 'button', class: 'more', dataset: { more: key } }, all ? 'Show fewer' : `+ ${order.length - 4} more`)));
   }
   return out;
 }
 
-function matchesTree(s) {
-  if (state.ctr) {
-    if (s.bucket !== 'active') return false;
-    if (state.ctr === 'needs' ? !needsYou(s) : sigOf(s) !== state.ctr) return false;
-  }
-  if (!state.treeFilter) return true;
-  const q = state.treeFilter.toLowerCase();
-  return [s.title, s.project, s.cwd, s.gitBranch, s.id].some(x => x && String(x).toLowerCase().includes(q))
-    || (s.subagents || []).some(a => a.title?.toLowerCase().includes(q));
+function matchesQuery(s, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  return [s.title, s.project, s.cwd, s.gitBranch, s.id, s.pr ? `#${s.pr.number}` : null].some(x => x && String(x).toLowerCase().includes(q))
+    || (s.subagents || []).some(a => a.title?.toLowerCase().includes(q))
+    || (s.spawned || []).some(id => state.byId.get(id)?.title?.toLowerCase().includes(q));
+}
+const matchesTree = (s) => matchesQuery(s, state.treeFilter);
+
+/**
+ * The rail's buckets. The server sorts by process: alive, recent file,
+ * closed. The rail sorts by work: Active holds only sessions mid-turn (or
+ * stopped mid-turn on you); a live session whose turn finished is Recent.
+ */
+const busy = (s) => sigOf(s) === 'working' || needsYou(s);
+// Sessions another session started sit under it, not in the buckets.
+const nestedChild = (s) => !!s.spawnedBy && state.byId.has(s.spawnedBy);
+function railLists() {
+  const snap = state.snapshot;
+  const top = (list) => list.filter(s => !nestedChild(s));
+  return {
+    active: top(snap.active).filter(busy),
+    recent: top([...snap.active.filter(s => !busy(s)), ...snap.recent]).sort((a, b) => b.mtime - a.mtime),
+    closed: top(snap.closed),
+  };
 }
 
 function renderTree() {
   const snap = state.snapshot;
-  for (const b of ['active', 'recent', 'closed', 'hidden']) {
+  const lists = railLists();
+  for (const b of ['active', 'recent', 'closed']) {
     const sec = document.querySelector(`.bucket[data-bucket=${b}]`);
     const ul = sec.querySelector('ul');
-    const list = (snap[b] || []).filter(matchesTree);
+    const list = lists[b].filter(matchesTree);
     sec.querySelector('.count').textContent = list.length || '';
-    sec.hidden = b === 'hidden' && !snap.hidden.length;
     const frag = document.createDocumentFragment();
-    let lastRepo = null;
-    const groups = b === 'active' ? groupByRepo(list) : [[null, list]];
-    for (const [repo, items] of groups) {
-      if (repo && repo !== lastRepo) { frag.append(h('li', { class: 'repo', title: repo }, svgUse('i-folder', 12), tilde(repo))); lastRepo = repo; }
-      for (const s of items) {
-        frag.append(sessRow(s));
-        const subs = s.subagents || [];
-        if (subs.length && (b === 'active' || s.id === state.selected || subs.some(a => a.id === state.selected))) frag.append(...subsBlock(s, false));
-      }
+    for (const s of list) {
+      frag.append(sessRow(s));
+      if (s.subagents?.length) frag.append(...childBlock(s, 'subs'));
+      if (spawnedOf(s).length) frag.append(...childBlock(s, 'tasks'));
     }
     ul.replaceChildren(frag);
   }
   const total = snap.active.length + snap.recent.length + snap.closed.length;
-  renderMini();
-  $('tree-foot').textContent = `${total} sessions · ${snap.active.length} live${snap.hidden.length ? ` · ${snap.hidden.length} hidden` : ''}`;
-  renderCounters();
+  renderMini(lists);
+  $('tree-foot').textContent = `${total} sessions · ${snap.active.length} live`;
+  // A background tab still shows how many sessions need you.
+  const needs = snap.active.filter(needsYou).length;
+  document.title = needs ? `(${needs}) Agent Deck` : 'Agent Deck';
+  // The rows were rebuilt: keep an open card on its (new) anchor.
+  if (card.id && card.id !== 'quota') {
+    const anchor = document.querySelector(`#${prefs.railMin ? 'mini' : 'tree'} [data-id="${CSS.escape(card.id)}"]`);
+    anchor ? showCard(card.id, anchor, true) : hideCard(true);
+  }
+  if ($('history').open) renderHistory();
 }
 // ------------------------------------------------------------ needs you
 // The server turns signal changes into entries with a sentence to speak
@@ -424,9 +456,10 @@ function narrate(entry) {
 // ------------------------------------------------------------ plan quota
 // A small ring in the top bar: how full the tightest plan window is. Quiet
 // while there is room, amber when it is getting close, red when limited.
-// Hover for every number the deck has; click to check again.
-const WINDOW_LABEL = { five_hour: '5-hour window', seven_day: 'Weekly', seven_day_opus: 'Weekly · Opus', seven_day_sonnet: 'Weekly · Sonnet' };
-const winLabel = (k) => WINDOW_LABEL[k] || k.replace(/_/g, ' ');
+// Hover for every number the deck has; click to check again. The numbers come
+// from `claude /usage` (free, polled by the server) and from model calls.
+const WINDOW_LABEL = { five_hour: '5-hour session', seven_day: 'Weekly · all models' };
+const winLabel = (w) => (typeof w === 'string' ? WINDOW_LABEL[w] : WINDOW_LABEL[w.key] || w.label?.replace(/^Week \((.+)\)$/, 'Weekly · $1')) || (w.key || w).replace(/_/g, ' ');
 const pct = (u) => `${Math.round(u * 100)}%`;
 // Hours and minutes: a reset "in 1h" that is really 1h 59m away misleads.
 function dur(ms) {
@@ -451,8 +484,10 @@ function renderQuota() {
   const top = lim?.windows.length ? lim.windows.reduce((a, w) => (w.utilization > a.utilization ? w : a)) : null;
   btn.className = `quota ${tone}`;
   btn.querySelector('.qa').setAttribute('stroke-dasharray', `${top ? Math.min(100, Math.round(top.utilization * 100)) : 0} 100`);
-  btn.querySelector('.qpct').textContent = top ? pct(top.utilization) : '–';
-  btn.setAttribute('aria-label', top ? `Plan usage: ${winLabel(top.key)} ${pct(top.utilization)}${lim.status === 'rejected' ? ', limited' : ''}` : 'Plan usage: not known yet');
+  // The title bar has room for both everyday windows; the ring is the fullest of all.
+  const shown = ['five_hour', 'seven_day'].map(k => lim?.windows.find(w => w.key === k)).filter(Boolean);
+  btn.querySelector('.qpct').textContent = shown.length ? shown.map(w => `${w.key === 'five_hour' ? 'Session' : 'Week'} ${pct(w.utilization)}`).join(' · ') : top ? pct(top.utilization) : 'Plan usage –';
+  btn.setAttribute('aria-label', top ? `Plan usage: ${winLabel(top)} ${pct(top.utilization)}${lim.status === 'rejected' ? ', limited' : ''}` : 'Plan usage: not known yet');
   if (card.id === 'quota') showUsageCard(true);
 }
 function untilText(ts) {
@@ -471,13 +506,15 @@ function usageCardBody() {
   const rows = [];
   const statusTxt = !lim ? 'unknown' : lim.status === 'rejected' ? 'Limited' : lim.status === 'allowed_warning' ? 'Near the limit' : tone === 'warn' ? 'Filling up' : 'Room to work';
   rows.push(h('div', { class: 'hc-h' }, h('b', {}, 'Plan usage'), h('span', { class: `uq-st ${tone}` }, statusTxt)));
+  if (lim?.account) rows.push(h('div', { class: 'uq-acct' }, lim.account.replace(/^You are currently using /, 'Using ').replace(/ to power your Claude Code usage$/, '')));
+  if (u.error) rows.push(h('div', { class: 'uq-err' }, u.error.message));
   if (!lim) {
-    rows.push(h('p', { class: 'hc-sum muted' }, 'No quota reading yet. The deck learns it from its own model calls and from sessions it launches. Click the meter to check now (one tiny Haiku call).'));
+    rows.push(h('p', { class: 'hc-sum muted' }, u.error ? 'No quota reading yet.' : 'Reading claude /usage…'));
   } else {
     for (const w of lim.windows) {
       const wt = w.utilization >= 0.95 ? 'crit' : w.utilization >= 0.75 || w.pace?.hitsBeforeReset ? 'warn' : 'ok';
       const row = h('div', { class: 'uq-w' },
-        h('div', { class: 'uq-l' }, h('b', {}, winLabel(w.key)), h('span', { class: `uq-p ${wt}` }, pct(w.utilization))),
+        h('div', { class: 'uq-l' }, h('b', {}, winLabel(w)), h('span', { class: `uq-p ${wt}` }, pct(w.utilization))),
         h('div', { class: 'uq-bar' }, h('span', { class: wt, style: `width:${Math.min(100, w.utilization * 100)}%` }),
           w.pace?.atReset != null && w.pace.atReset > w.utilization ? h('i', { style: `left:${Math.min(100, w.pace.atReset * 100)}%`, title: `projected ${pct(Math.min(1, w.pace.atReset))} at reset` }) : null),
         h('div', { class: 'uq-r' }, untilText(w.resetsAt)));
@@ -492,6 +529,13 @@ function usageCardBody() {
     }
     const extra = lim.isUsingOverage ? 'in use now' : lim.overageStatus === 'rejected' ? `off${lim.overageDisabledReason ? ` (${lim.overageDisabledReason.replace(/_/g, ' ')})` : ''}` : lim.overageStatus || null;
     if (extra) rows.push(h('div', { class: 'hc-f' }, h('span', {}, `Extra usage: ${extra}`)));
+    for (const n of lim.notes || []) rows.push(h('div', { class: 'hc-f' }, h('span', {}, n)));
+  }
+  // What claude /usage says is driving it (this machine only).
+  const c = lim?.contributors;
+  if (c?.sections?.length) {
+    rows.push(h('div', { class: 'uq-sec', title: c.note || '' }, h('b', {}, 'What’s driving usage'), h('span', {}, 'this machine')));
+    for (const sec of c.sections) rows.push(h('div', { class: 'uq-why' }, h('b', {}, sec.title), h('ul', {}, ...sec.items.map(x => h('li', {}, x)))));
   }
   // What the deck itself spends on briefs, Ask and quota checks.
   const by = n.byPurpose || {};
@@ -514,7 +558,7 @@ function usageCardBody() {
   }
   rows.push(h('div', { class: 'hc-foot' },
     lim ? `as of ${ago(lim.ageMs + (Date.now() - (u._at || Date.now())))} ago · from ${lim.source || 'a model call'}` : 'not checked yet',
-    h('span', { class: 'spacer' }), state.narrator.enabled ? 'click to check now' : ''));
+    h('span', { class: 'spacer' }), 'click to check now'));
   return rows;
 }
 function showUsageCard(refresh = false) {
@@ -523,11 +567,10 @@ function showUsageCard(refresh = false) {
   card.id = 'quota'; card.anchor = a;
   el.replaceChildren(...usageCardBody());
   el.hidden = false;
+  // Hangs from the meter in the title bar, kept on screen.
   const r = a.getBoundingClientRect();
-  const railMin = $('deck').classList.contains('rail-min');
-  // Below the meter in the full rail; beside it when the rail is a strip of chips.
-  const left = railMin ? r.right + 10 : Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, r.left - 12));
-  const top = railMin ? Math.max(8, r.top - 6) : r.bottom + 8;
+  const left = Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, r.right - el.offsetWidth + 8));
+  const top = r.bottom + 6;
   el.style.left = `${left}px`; el.style.top = `${top}px`;
   if (!refresh) el.classList.remove('in'), void el.offsetWidth, el.classList.add('in');
 }
@@ -536,7 +579,6 @@ $('quota').addEventListener('mouseleave', () => hideCard());
 $('quota').addEventListener('focus', () => showUsageCard());
 $('quota').addEventListener('blur', () => hideCard());
 $('quota').onclick = async () => {
-  if (!state.narrator.enabled) return;
   $('quota').classList.add('checking');
   try { const r = await api.post('/api/usage/refresh'); state.usage = { ...r, _at: Date.now() }; renderQuota(); }
   catch (e) { toast(`Quota check failed: ${e.message}`); }
@@ -546,16 +588,18 @@ $('quota').onclick = async () => {
 setInterval(() => { if (card.id === 'quota') showUsageCard(true); }, 15_000);
 
 // ------------------------------------------------------------ minimized rail
-// Collapsed, the rail is a column of chips: one per live session, then the
-// most recent finished ones. Each chip carries the status at a glance (ring
-// colour, a ping when it waits on an answer, badges for errors, subagents and
-// queued prompts); hovering or focusing one opens a card with the rest.
+// Collapsed, the rail is a grid of two-letter chips: Active, then the live
+// sessions in Recent (waiting on their next prompt).
+// Each chip's outline and letters take its status colour (a ping when it
+// waits on an answer, badges for subagents and queued prompts); hovering or
+// focusing one opens the same card as the full rail's rows.
 function setRailMin(on) {
   prefs.railMin = on; savePrefs();
   $('deck').classList.toggle('rail-min', on);
   const t = $('rail-toggle');
   t.setAttribute('aria-expanded', String(!on));
   t.title = t.ariaLabel = on ? 'Expand the session list ([)' : 'Collapse the session list ([)';
+  t.querySelector('use').setAttribute('href', on ? '#i-right' : '#i-left');
   hideCard(true);
   renderTree(); renderRows();
 }
@@ -565,50 +609,77 @@ const initials = (t) => {
   const w = String(t || '?').replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/[\s-]+/).filter(Boolean);
   return ((w[0]?.[0] || '?') + (w[1]?.[0] || w[0]?.[1] || '')).toUpperCase();
 };
-function miniChip(s, recent = false) {
+function miniChip(s) {
   const phase = phaseOf(s);
   const st = phase === 'turn' || phase === 'working' ? statusOf(s, null, phase) : null;
-  const g = s.glance || {};
   const runSubs = (s.subagents || []).filter(a => a.status === 'running').length;
   const q = deckOf(s.id)?.queue?.length || 0;
   const sig = sigOf(s);
-  const chip = h('button', { type: 'button', class: `mchip sig-${sig}${st?.quiet ? ' quiet' : ''}${recent ? ' recent' : ''}${s.id === state.selected ? ' selected' : ''}`,
+  const chip = h('button', { type: 'button', class: `mchip sig-${sig}${st?.quiet ? ' quiet' : ''}${s.id === state.selected ? ' selected' : ''}`,
     dataset: { id: s.id }, 'aria-label': `${s.title} · ${st?.head || SIG_LABEL[sig]}` }, h('span', { class: 'mi' }, initials(s.title)));
   if (runSubs) chip.append(h('span', { class: 'mb subs', 'aria-hidden': 'true' }, String(runSubs)));
   if (q) chip.append(h('span', { class: 'mb q', 'aria-hidden': 'true' }, String(q)));
   return chip;
 }
-function renderMini() {
+function renderMini(lists) {
   if (!prefs.railMin) return;
-  const snap = state.snapshot;
-  const n = { needs: snap.active.filter(needsYou).length, working: snap.active.filter(s => sigOf(s) === 'working').length };
-  const out = [
-    h('div', { class: 'mctr', title: `${n.needs} need you · ${n.working} working` },
-      h('b', { class: `c-needs${n.needs ? ' lit' : ''}` }, String(n.needs)), h('b', { class: 'c-working' }, String(n.working))),
-    ...snap.active.map(s => miniChip(s)),
-  ];
-  const recent = snap.recent.slice(0, 6);
-  if (recent.length) out.push(h('hr'), ...recent.map(s => miniChip(s, true)));
+  const out = lists.active.map(miniChip);
+  // Only sessions whose process is still running; finished and closed ones stay in the full list.
+  const recent = lists.recent.filter(s => s.alive).slice(0, 8);
+  if (out.length && recent.length) out.push(h('hr'));
+  out.push(...recent.map(miniChip));
   $('mini').replaceChildren(...out);
-  if (card.id && card.id !== 'quota') showCard(card.id, card.anchor && document.contains(card.anchor) ? card.anchor : $('mini').querySelector(`.mchip[data-id="${CSS.escape(card.id)}"]`), true);
 }
 // Clicking opens the session and puts the card away until the pointer leaves that chip.
 $('mini').addEventListener('click', (e) => { const b = e.target.closest('.mchip'); if (b) { card.quiet = b.dataset.id; hideCard(true); select(b.dataset.id); } });
 
 // The hover card: everything worth knowing before deciding to open a session.
+// The same card serves the full rail's rows and the minimized rail's chips.
 const card = { id: null, anchor: null, timer: null, quiet: null };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+function cardFacts(s) {
+  const g = s.glance || {};
+  const isAgent = s.kind === 'agent';
+  const d = isAgent ? null : deckOf(s.id);
+  const subs = s.subagents || [];
+  const runSubs = subs.filter(a => a.status === 'running').length;
+  const doneSubs = subs.filter(a => a.status === 'done').length;
+  const when = (ts) => ts ? `${ago(Date.now() - ts)} ago · ${new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : null;
+  const bucket = isAgent ? null : s.hidden ? 'Closed (by you)' : busy(s) ? 'Active' : s.bucket === 'closed' ? 'Closed' : 'Recent';
+  return [
+    ['Status', [SIG_LABEL[sigOf(s)], bucket].filter(Boolean).join(' · ')],
+    isAgent ? ['Subagent of', state.byId.get(s.parentId)?.title || s.parentId] : null,
+    isAgent ? ['Type', s.agentType] : null,
+    s.spawnedBy ? ['Started by', state.byId.get(s.spawnedBy)?.title || s.spawnedBy] : null,
+    ['Folder', tilde(s.cwd), 'mono'],
+    ['Branch', s.gitBranch || s.worktreeBranch, 'mono'],
+    s.pr ? ['Pull request', `#${s.pr.number}${s.pr.title ? ` · ${oneLine(s.pr.title, 60)}` : ''}`] : null,
+    ['Model', (g.model || s.model) ? [(g.model || s.model).replace('claude-', ''), g.effort].filter(Boolean).join(' · ') : null],
+    isAgent ? null : ['Control', d?.alive ? `launched by the deck · ${PERM_LABEL[d.permissionMode] || d.permissionMode}` : s.alive ? 'observe only (outside the deck)' : 'not running'],
+    s.alive && s.pid ? ['Process', `pid ${s.pid}${s.startedAt ? ` · started ${ago(Date.now() - s.startedAt)} ago` : ''}`] : null,
+    ['Last active', when(s.mtime)],
+    g.turnMs != null && sigOf(s) === 'working' ? ['This turn', fmtMs(g.turnMs)] : null,
+    ['Turns', g.turns || null],
+    ['Files touched', g.filesTouched || null],
+    g.errors ? ['Errors', `${g.errors}${g.lastErrorTs ? ` · latest ${ago(Date.now() - Date.parse(g.lastErrorTs))} ago` : ''}`, recentErr(s) ? 'err' : ''] : null,
+    ['Cost', g.cost != null ? fmtUsd(g.cost) : null],
+    ['Output', g.outTokens ? `${fmtTokens(g.outTokens)} tokens` : null],
+    s.spawned?.length ? ['Sub-tasks', `${s.spawned.length} session${s.spawned.length === 1 ? '' : 's'} started with claude -p`] : null,
+    subs.length ? ['Subagents', [runSubs ? `${runSubs} running` : null, `${doneSubs} done`, `${subs.length} total`].filter(Boolean).join(' · ')] : null,
+    d?.alive && (d.queue.length || d.held) ? ['Queue', [d.queue.length ? plural(d.queue.length, 'prompt') : null, d.held ? 'held after interrupt' : null].filter(Boolean).join(' · ')] : null,
+    ['Events', s.eventCount || null],
+    ['Session', s.id, 'mono'],
+  ].filter(r => r && r[1] != null && r[1] !== '');
+}
 function cardBody(s) {
   const phase = phaseOf(s);
   const g = s.glance || {};
   const st = statusOf(s, null, phase);
   const d = deckOf(s.id);
   const pb = state.briefs.get(s.id);
-  const subs = s.subagents || [];
-  const runSubs = subs.filter(a => a.status === 'running');
-  const doneSubs = subs.filter(a => a.status === 'done').length;
+  const runSubs = (s.subagents || []).filter(a => a.status === 'running');
   const rows = [];
   rows.push(h('div', { class: 'hc-h' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}` }), h('b', {}, s.title || s.id)));
-  rows.push(h('div', { class: 'hc-w mono' }, [tilde(s.cwd), s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ')));
   // Whose move, and why.
   rows.push(h('div', { class: `hc-st sig-${st.sig}${st.quiet ? ' quiet' : ''}` }, h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
     st.icon ? svgUse(st.icon, 12) : null, h('b', {}, st.head),
@@ -624,22 +695,11 @@ function cardBody(s) {
     rows.push(h('div', { class: 'hc-prog' }, h('span', {}, `${p.total} ${p.unit}: ` + p.segments.map(x => `${x.count} ${x.label}`).join(', ')),
       h('div', { class: 'prog-b' }, ...p.segments.map(x => h('span', { class: `tone-${x.tone}`, style: `flex-grow:${x.count}` })))));
   }
-  if (runSubs.length) rows.push(h('div', { class: 'hc-subs' }, h('b', {}, `${runSubs.length} subagent${runSubs.length === 1 ? '' : 's'} running`), doneSubs ? ` · ${doneSubs} done` : '',
+  rows.push(h('table', { class: 'hc-tbl' }, h('tbody', {}, ...cardFacts(s).map(([k, v, cls]) => h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, String(v)))))));
+  if (runSubs.length) rows.push(h('div', { class: 'hc-subs' }, h('b', {}, 'Running'),
     h('ul', {}, ...runSubs.slice(0, 4).map(a => h('li', {}, a.title)), runSubs.length > 4 ? h('li', { class: 'muted' }, `+${runSubs.length - 4} more`) : null)));
-  if (d?.alive && (d.queue.length || d.held)) rows.push(h('div', { class: 'hc-q' }, h('b', {}, `${d.queue.length} queued`), d.held ? ' · held after interrupt' : '', d.queue[0] ? h('div', { class: 'mono muted' }, `next: ${oneLine(d.queue[0].text, 120)}`) : null));
-  // The numbers, in one quiet line.
-  const facts = [
-    recentErr(s) ? h('span', { class: 'err' }, `${g.errors} error${g.errors === 1 ? '' : 's'} · latest ${ago(Date.now() - Date.parse(g.lastErrorTs))} ago`) : g.errors ? `${g.errors} error${g.errors === 1 ? '' : 's'}` : null,
-    g.turns ? `${g.turns} turn${g.turns === 1 ? '' : 's'}` : null,
-    g.filesTouched ? `${g.filesTouched} file${g.filesTouched === 1 ? '' : 's'}` : null,
-    g.cost != null ? fmtUsd(g.cost) : null,
-    g.outTokens ? `${fmtTokens(g.outTokens)} out` : null,
-    g.model ? [g.model.replace('claude-', ''), g.effort].filter(Boolean).join(' · ') : null,
-  ].filter(Boolean);
-  if (facts.length) rows.push(h('div', { class: 'hc-f' }, ...facts.map(f => h('span', {}, f))));
-  rows.push(h('div', { class: 'hc-foot' },
-    d?.alive ? `launched by the deck${d.permissionMode !== 'default' ? ` · ${PERM_LABEL[d.permissionMode] || d.permissionMode}` : ''}` : s.alive ? 'observe only' : `last active ${ago(Date.now() - (s.mtime || 0))} ago`,
-    h('span', { class: 'spacer' }), 'click to open'));
+  if (d?.alive && d.queue[0]) rows.push(h('div', { class: 'hc-q' }, h('b', {}, 'Next up'), h('div', { class: 'mono muted' }, oneLine(d.queue[0].text, 120))));
+  rows.push(h('div', { class: 'hc-foot' }, h('span', { class: 'spacer' }), 'click to open'));
   return rows;
 }
 function showCard(id, anchor, refresh = false) {
@@ -649,8 +709,10 @@ function showCard(id, anchor, refresh = false) {
   el.replaceChildren(...cardBody(s));
   el.hidden = false;
   const r = anchor.getBoundingClientRect();
+  // Beside the rail when there is room, else over it.
+  const left = Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, r.right + 10));
   const top = Math.max(8, Math.min(window.innerHeight - el.offsetHeight - 8, r.top - 6));
-  el.style.left = `${r.right + 10}px`; el.style.top = `${top}px`;
+  el.style.left = `${left}px`; el.style.top = `${top}px`;
   if (!refresh) el.classList.remove('in'), void el.offsetWidth, el.classList.add('in');
 }
 function hideCard(now = false) {
@@ -658,16 +720,21 @@ function hideCard(now = false) {
   const go = () => { card.id = null; card.anchor = null; $('hovercard').hidden = true; };
   if (now) go(); else card.timer = setTimeout(go, 120);
 }
-$('mini').addEventListener('mouseover', (e) => {
-  const b = e.target.closest('.mchip'); if (!b) return;
-  clearTimeout(card.timer);
-  if (card.id === b.dataset.id || card.quiet === b.dataset.id) return;
-  card.quiet = null;
-  card.timer = setTimeout(() => showCard(b.dataset.id, b), card.id ? 0 : 160);
-});
-$('mini').addEventListener('mouseleave', () => { card.quiet = null; hideCard(); });
-$('mini').addEventListener('focusin', (e) => { const b = e.target.closest('.mchip'); if (b) showCard(b.dataset.id, b); });
-$('mini').addEventListener('focusout', () => hideCard());
+function hoverCards(root, sel) {
+  root.addEventListener('mouseover', (e) => {
+    const b = e.target.closest(sel);
+    if (!b) { if (card.id && card.id !== 'quota') hideCard(); return; }
+    clearTimeout(card.timer);
+    if (card.id === b.dataset.id || card.quiet === b.dataset.id) return;
+    card.quiet = null;
+    card.timer = setTimeout(() => showCard(b.dataset.id, b), card.id ? 0 : 160);
+  });
+  root.addEventListener('mouseleave', () => { card.quiet = null; hideCard(); });
+  root.addEventListener('focusin', (e) => { const b = e.target.closest(sel); if (b) showCard(b.dataset.id, b); });
+  root.addEventListener('focusout', () => hideCard());
+}
+hoverCards($('mini'), '.mchip');
+hoverCards($('tree'), '.sess');
 $('mini').addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
   const chips = [...$('mini').querySelectorAll('.mchip')]; const i = chips.indexOf(document.activeElement);
@@ -676,24 +743,6 @@ $('mini').addEventListener('keydown', (e) => {
   chips[Math.max(0, Math.min(chips.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))].focus();
 });
 
-function groupByRepo(list) {
-  const m = new Map();
-  for (const s of list) { const k = s.cwd || s.project || '?'; if (!m.has(k)) m.set(k, []); m.get(k).push(s); }
-  return [...m];
-}
-function renderCounters() {
-  const act = state.snapshot.active;
-  const n = { needs: act.filter(needsYou).length, working: act.filter(s => sigOf(s) === 'working').length, done: act.filter(s => sigOf(s) === 'done').length };
-  // A background tab still shows how many sessions need you.
-  document.title = n.needs ? `(${n.needs}) agent-deck` : 'agent-deck';
-  for (const b of $('counters').querySelectorAll('.ctr')) {
-    const k = b.dataset.c;
-    b.querySelector('b').textContent = n[k];
-    b.classList.toggle('lit', n[k] > 0);
-    b.setAttribute('aria-pressed', String(state.ctr === k));
-    b.disabled = !n[k] && state.ctr !== k;
-  }
-}
 
 $('tree').addEventListener('click', (e) => {
   const t = e.target.closest('button');
@@ -706,13 +755,7 @@ $('tree').addEventListener('click', (e) => {
     renderTree(); return;
   }
   if (t.dataset.more) { const id = t.dataset.more; state.subsAll.has(id) ? state.subsAll.delete(id) : state.subsAll.add(id); renderTree(); return; }
-  if (t.dataset.id) select(t.dataset.id);
-});
-$('counters').addEventListener('click', (e) => {
-  const b = e.target.closest('.ctr'); if (!b) return;
-  state.ctr = state.ctr === b.dataset.c ? null : b.dataset.c;
-  if (state.ctr) document.querySelector('.bucket[data-bucket=active]').classList.remove('collapsed');
-  renderTree();
+  if (t.dataset.id) { card.quiet = t.dataset.id; hideCard(true); select(t.dataset.id); }
 });
 
 // ------------------------------------------------------------ overview
@@ -872,12 +915,15 @@ function renderHeader() {
 
   const win = h('div', { class: 'sh-win' });
   const st = statusOf(s, b, phase);
-  win.append(ib('i-x', isAgent ? 'Back to parent session' : 'Close (hide from the deck)', closeSession));
+  if (s.hidden) win.append(ib('i-reuse', 'Reopen (move it out of Closed)', reopenSession));
+  else win.append(ib('i-x', isAgent ? 'Back to parent session' : 'Close (move it to Closed)', closeSession));
   if (!isAgent) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
   const top = h('div', { class: 'sh-top' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}`, title: st.head }), h('h1', { title: s.title }, s.title || id));
   if (isAgent) {
     const parent = state.byId.get(s.parentId);
     top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.parentId) }, `subagent of ${parent?.title || s.parentId}`));
+  } else if (s.spawnedBy && state.byId.has(s.spawnedBy)) {
+    top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.spawnedBy) }, `sub-task of ${state.byId.get(s.spawnedBy).title}`));
   }
   const d = isAgent ? null : deckOf(id);
   // The permission mode shows only when it is not the default (asks before acting).
@@ -1041,8 +1087,13 @@ async function closeSession() {
   try {
     await api.post(`/api/sessions/${sid(id)}/hide`, { hidden: true });
     goOverview();
-    toast(`Hid “${oneLine(s.title, 40)}” from the deck`, { label: 'Undo', fn: () => api.post(`/api/sessions/${sid(id)}/hide`, { hidden: false }).then(() => select(id)) });
+    toast(`Closed “${oneLine(s.title, 40)}”`, { label: 'Undo', fn: () => api.post(`/api/sessions/${sid(id)}/hide`, { hidden: false }).then(() => select(id)) });
   } catch (e) { toast(`Close failed: ${e.message}`); }
+}
+async function reopenSession() {
+  const id = state.selected;
+  try { await api.post(`/api/sessions/${sid(id)}/hide`, { hidden: false }); }
+  catch (e) { toast(`Reopen failed: ${e.message}`); }
 }
 function confirmDialog(title, body, okLabel) {
   const d = $('confirm');
@@ -1287,6 +1338,49 @@ function openLaunch({ resumeId } = {}) {
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
 }
 $('new-btn').onclick = () => openLaunch();
+
+// ------------------------------------------------------------ all sessions
+// A searchable list of every session the deck knows, closed ones included.
+const hist = { q: '', i: 0, ids: [] };
+function openHistory() {
+  hideCard(true);
+  hist.q = ''; hist.i = 0; $('hist-q').value = '';
+  renderHistory();
+  $('history').showModal(); $('hist-q').focus();
+}
+function renderHistory() {
+  const snap = state.snapshot;
+  const lists = railLists();
+  const where = new Map();
+  for (const b of ['active', 'recent', 'closed']) for (const s of lists[b]) where.set(s.id, b);
+  const all = [...snap.active, ...snap.recent, ...snap.closed].sort((a, b) => b.mtime - a.mtime);
+  const list = all.filter(s => matchesQuery(s, hist.q));
+  hist.ids = list.map(s => s.id);
+  hist.i = Math.max(0, Math.min(hist.i, list.length - 1));
+  $('hist-n').textContent = hist.q ? `${list.length} of ${all.length}` : `${all.length}`;
+  const rows = list.slice(0, 300).map((s, i) => {
+    const sig = sigOf(s);
+    const b = where.get(s.id);
+    return h('li', { role: 'option', class: `hist-row${i === hist.i ? ' cur' : ''}${s.id === state.selected ? ' selected' : ''}`, 'aria-selected': String(i === hist.i), dataset: { id: s.id } },
+      h('span', { class: `dot sig-${sig}` }),
+      h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), h('span', { class: 'sub' }, [nestedChild(s) ? `sub-task of ${state.byId.get(s.spawnedBy).title}` : null, tilde(s.cwd) || s.project, s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · '))),
+      h('span', { class: `hb hb-${b}` }, s.hidden ? 'closed by you' : b),
+      h('span', { class: 'r', title: new Date(s.mtime).toLocaleString() }, ago(Date.now() - (s.mtime || 0))));
+  });
+  if (!rows.length) rows.push(h('li', { class: 'hist-empty muted' }, hist.q ? `No session matches “${hist.q}”.` : 'No sessions yet.'));
+  if (list.length > 300) rows.push(h('li', { class: 'hist-empty muted' }, `+${list.length - 300} more · narrow the search`));
+  $('hist-list').replaceChildren(...rows);
+  $('hist-list').querySelector('.cur')?.scrollIntoView({ block: 'nearest' });
+}
+function pickHistory(id) { if (!id) return; $('history').close(); select(id); }
+$('history-btn').onclick = $('history-btn-f').onclick = openHistory;
+$('hist-q').addEventListener('input', (e) => { hist.q = e.target.value.trim(); hist.i = 0; renderHistory(); });
+$('hist-q').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); hist.i += e.key === 'ArrowDown' ? 1 : -1; renderHistory(); }
+  else if (e.key === 'Enter') { e.preventDefault(); pickHistory(hist.ids[hist.i]); }
+});
+$('hist-list').addEventListener('click', (e) => { const li = e.target.closest('.hist-row'); if (li) pickHistory(li.dataset.id); });
+$('history').addEventListener('click', (e) => { if (e.target === $('history')) $('history').close(); });
 $('ns-cancel').onclick = () => $('new-session').close();
 $('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
 $('ns-form').addEventListener('submit', async (e) => {
@@ -1507,6 +1601,7 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('dialog[open]')) return;
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
+  if (e.key === 'h') { e.preventDefault(); openHistory(); return; }
   if (e.key === '[') { e.preventDefault(); setRailMin(!prefs.railMin); return; }
   if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
@@ -1707,7 +1802,7 @@ function askList(key, btn) {
       ring = { type: 'sel', sel: '#changes' }; break;
     }
     case 'queue': spec = { kind: 'text', label: 'Prompt queue', text: (state.cache.get(state.selected)?.meta?.queue || []).map((x, i) => `${i + 1}. ${x.content}`).join('\n') || '(empty)', what: 'the prompt queue' }; ring = { type: 'sel', sel: '#queue' }; break;
-    case 'active': case 'recent': spec = { kind: 'text', label: `${key === 'active' ? 'Active' : 'Recent'} sessions`, text: sessLines(state.snapshot[key]), what: `${key} sessions` }; ring = { type: 'sel', sel: `.bucket[data-bucket=${key}] ul` }; break;
+    case 'active': case 'recent': spec = { kind: 'text', label: `${key === 'active' ? 'Active' : 'Recent'} sessions`, text: sessLines(railLists()[key]), what: `${key} sessions` }; ring = { type: 'sel', sel: `.bucket[data-bucket=${key}] ul` }; break;
     case 'ov-needs': spec = { kind: 'text', label: 'Sessions that need you', text: sessLines(state.snapshot.active.filter(s => needsYou(s) || recentErr(s))), what: 'what needs you' }; ring = { type: 'sel', sel: '[data-ov=needs]' }; break;
     case 'ov-working': spec = { kind: 'text', label: 'Working sessions', text: sessLines(state.snapshot.active.filter(s => sigOf(s) === 'working')), what: 'the working sessions' }; ring = { type: 'sel', sel: '[data-ov=working]' }; break;
     case 'ov-recent': spec = { kind: 'text', label: 'Recently finished sessions', text: sessLines(state.snapshot.recent.slice(0, 8)), what: 'recently finished sessions' }; ring = { type: 'sel', sel: '[data-ov=recent]' }; break;
@@ -1900,7 +1995,10 @@ function initLayout() {
   const deck = $('deck');
   deck.classList.toggle('rail-min', !!prefs.railMin);
   $('rail-toggle').setAttribute('aria-expanded', String(!prefs.railMin));
-  if (prefs.railMin) $('rail-toggle').title = $('rail-toggle').ariaLabel = 'Expand the session list ([)';
+  if (prefs.railMin) {
+    $('rail-toggle').title = $('rail-toggle').ariaLabel = 'Expand the session list ([)';
+    $('rail-toggle').querySelector('use').setAttribute('href', '#i-right');
+  }
   if (prefs.left) deck.style.setProperty('--left', prefs.left + 'px');
   if (prefs.right) deck.style.setProperty('--right', prefs.right + 'px');
   document.querySelectorAll('.gutter').forEach(g => {
