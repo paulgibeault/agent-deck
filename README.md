@@ -82,12 +82,38 @@ minute, "crash" exits with an error.
 - **Sessions rail.** Active sessions grouped by repo, Recent, Closed, Hidden.
   Counters for working / your turn / with errors filter the list. Subagents
   show as a progress bar under their parent, running first.
-- **States.** Four, one colour each: working (green), your turn (amber),
-  done (blue), ended (grey). Red only means something failed.
+  Collapse it (`[` or the panel button) to a column of chips: one per live
+  session, then recent ones. The ring colour is the state, an amber chip
+  pulses when Claude asked you something or wants a permission, and badges
+  count errors, running subagents and queued prompts. Hover or focus a chip
+  for a card with whose move it is, the current tool or question, the brief,
+  any Watch item, progress, running subagents, the queue, and errors, turns,
+  files, cost and model.
+- **Plan usage.** A small ring in the top bar shows how full your tightest
+  plan window is (green, amber from 75% or when the pace would run out
+  before the reset, red when limited). Hover for each window (5-hour,
+  weekly) with reset times and pace, extra-usage status, what the deck's
+  own brief / Ask / quota-check calls have cost, and live session spend.
+  Quota comes from the `rate_limit_event` every `claude` call reports, so it
+  updates for free whenever the deck or a deck-launched session makes a
+  call; if nothing has for 30 minutes while the deck is open, it checks
+  with a one-word Haiku call. Click the ring to check now.
+- **States.** One signal per session, the same colour in every view:
+  yellow working (pulses), orange paused on your input (a permission prompt,
+  or a turn that ended on a question), red the newest event is an error,
+  green done, grey ended. Orange and red are **Needs you**: they lead the
+  overview, fill the "need you" counter and the tab title count, and pulse
+  in the rail. The status line for a red session jumps to the error.
+- **Needs you events.** `lib/attention.mjs` watches the signals and turns
+  each settled change into an entry with a priority and one sentence to
+  speak ("release check is asking: should we ship it?"). They stream as
+  `attention` SSE events (and `GET /api/attention`); the page reads them
+  out through a polite live region for screen readers, and spoken
+  narration will consume the same entries.
 - **Brief.** A model-written summary of the session to date: what it has
   done, a progress bar when the work has countable units, done / now / next,
   and a Watch line for risks that links to the event. Refreshed
-  incrementally (previous brief + new events only): every 20s while you
+  incrementally (previous brief + new events only): every 45s while you
   look at a working session, once per new activity when it is idle, every
   2m in the background for live sessions, paused otherwise. The heuristic
   NOW line (current tool and how long it has run) and token, cost and error
@@ -102,27 +128,42 @@ minute, "crash" exits with an error.
 - **New session.** Pick a folder, write the first prompt, choose a model and
   a permission mode (ask me, accept edits, auto, plan only). The deck runs
   `claude -p --input-format stream-json --output-format stream-json
-  --permission-prompt-tool stdio`, and the session shows up like any other,
-  tagged **Deck**. Any ended session (the deck's or not) can be continued
-  with **Resume in deck**, which runs `--resume <id>`.
-- **Prompt.** For deck sessions: send (⌘↩), or queue while Claude works.
-  The deck owns the queue and writes the next prompt only when the turn
-  ends, so items can be moved, sent next or removed. **Interrupt** stops
-  the turn and holds the queue until you resume it or send. **End** closes
-  the process (sessions also end when the backend stops). For other
-  sessions the panel is a read-only mirror with copy buttons.
+  --permission-prompt-tool stdio`, and the session shows up like any other.
+  Any ended session (the deck's or not) can be continued
+  with the resume (▷) button, which runs `--resume <id>`.
+- **Status.** The line just above the prompt box says whose move it is: **CLAUDE**
+  (thinking, writing, running a tool, waiting on subagents, with a clock) or
+  **YOU** (your turn, Claude asked you a question, or a permission prompt).
+  A working session with no new events for 90s shows as **quiet**, which
+  may mean a stall. Sessions waiting on an answer pulse in the rail, and the
+  tab title counts the sessions waiting on you.
+- **Prompt.** Sits under the brief, above the tabs, so it stays in reach
+  whichever tab is open; its header line collapses it and keeps the queue
+  count in view. For deck sessions there is one send button (⌘↩): it sends
+  when Claude is idle and queues while it works. The deck owns the queue and
+  writes the next prompt only when the turn ends, so items can be moved,
+  sent next or removed. Click a queued prompt to reword it in place: ⌘↩ or
+  clicking away saves, Esc cancels, and the deck holds that prompt back
+  while you type so a turn ending mid-edit does not send the old wording.
+  **Send now** (the bolt, ⇧⌘↩) stops the current turn and sends the prompt
+  ahead of the queue. **Stop** (the square, ⌘.) shows while Claude works:
+  it ends the turn and holds the queue. The power button ends the process
+  (sessions also end when the backend stops). For other sessions the panel
+  is a read-only mirror of the queue.
 - **Permissions.** A deck session's permission prompt shows as a card with
   the command, path or plan: Allow, Allow for session (applies the CLI's
   suggested rule or mode), or Deny with an optional reason for Claude. It
   counts as "your turn" in the rail and the overview. AskUserQuestion is
   turned off for deck sessions; Claude asks in plain text instead.
-- **Events.** Virtualized, dense list, newest on top; "follow" keeps the
-  view pinned to the newest row. `tool_use` and its result fold into
+- **Events.** Virtualized, dense list, newest on top. **Live** (green
+  dot) keeps the list and the details pane on the newest event; picking an
+  event, scrolling away or opening a file greys it out, and clicking either
+  Live button (list or details) brings both back to the newest event. `tool_use` and its result fold into
   one row with a tool-specific one-liner, duration, error chip, token cost.
   Thinking collapses to a faint row. Agent rows can be opened as a session or
   expanded inline. Prompts and turn ends are visual separators. Filter box,
-  All / Tools / Messages / Errors, thinking toggle, follow-tail. Keys:
-  `j`/`k` move, `Enter` details, `a` ask, `Space` follow, `/` filter,
+  All / Tools / Messages / Errors, thinking toggle, Live. Keys:
+  `j`/`k` move, `Enter` details, `a` ask, `Space` live / pause, `/` filter,
   `1`–`4` tabs, `Esc` overview, `?` help.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +

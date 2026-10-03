@@ -11,6 +11,8 @@ import { BriefService } from '../lib/briefs.mjs';
 import { extractJson } from '../lib/narrator.mjs';
 import { resolveScope, ask } from '../lib/ask.mjs';
 import { DeckState } from '../lib/deckstate.mjs';
+import { UsageTracker } from '../lib/usage.mjs';
+import { Attention, sayFor } from '../lib/attention.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'session.jsonl');
@@ -37,7 +39,7 @@ function stubNarrator(reply) {
   return {
     briefModel: 'stub', askModel: 'stub', calls: [],
     blocked: () => false,
-    async run({ system, prompt, model }) { this.calls.push({ system, prompt, model }); return { text: reply(prompt, system), costUsd: 0.001, durationMs: 1 }; },
+    async run(opts) { this.calls.push(opts); return { text: reply(opts.prompt, opts.system), costUsd: 0.001, durationMs: 1 }; },
   };
 }
 
@@ -105,6 +107,36 @@ test('BriefService: shown session gets a brief once, then only on new records', 
   assert.match(n.calls[1].prompt, /Events since the previous brief \(1\):[\s\S]*and now the docs/);
 });
 
+test('BriefService: briefs run without thinking, skip invisible changes and keep history', async () => {
+  const { idx } = tempIndex();
+  idx.load('sess-1');
+  let k = 0;
+  const n = stubNarrator(() => JSON.stringify({ summary: `Brief ${++k}.` }));
+  const briefs = new BriefService({ index: idx, narrator: n });
+  briefs.setView('c1', 'sess-1');
+  briefs.tick();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(n.calls.length, 1);
+  assert.equal(n.calls[0].thinking, false);
+
+  // A sideband record bumps the record count but adds no event the model sees.
+  const st = idx.loaded.get('sess-1').state;
+  st.ingest({ type: 'file-history-snapshot', messageId: 'x', snapshot: {} });
+  assert.equal(briefs.publicBrief('sess-1').stale, true);
+  briefs.tick();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(n.calls.length, 1, 'no visible change: no call');
+  assert.equal(briefs.publicBrief('sess-1').stale, false);
+
+  st.ingest({ type: 'user', message: { role: 'user', content: 'next thing' }, uuid: 'new-2', timestamp: '2026-09-29T06:00:00.000Z' });
+  briefs.tick();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(n.calls.length, 2);
+  const b = briefs.publicBrief('sess-1');
+  assert.equal(b.brief.summary, 'Brief 2.');
+  assert.deepEqual(b.history.map(x => x.brief.summary), ['Brief 1.']);
+});
+
 test('BriefService: a reply that is not a brief is reported, not stored', async () => {
   const { idx } = tempIndex();
   idx.load('sess-1');
@@ -155,4 +187,65 @@ test('DeckState: hide persists; trash moves transcript and sidecar dir; index fo
   idx.forget('sess-1');
   const snap = idx.snapshot();
   assert.equal(snap.recent.length + snap.closed.length + snap.active.length, 0);
+});
+
+test('UsageTracker: keeps the latest quota and works out the pace of each window', () => {
+  const u = new UsageTracker();
+  const t0 = Date.parse('2026-10-03T10:00:00Z');
+  const reset = t0 / 1000 + 3 * 3600;
+  const info = (five) => ({ status: 'allowed', resetsAt: reset, rateLimitType: 'five_hour', overageStatus: 'rejected', overageDisabledReason: 'out_of_credits',
+    unifiedWindows: { five_hour: { utilization: five, resetsAt: reset }, seven_day: { utilization: 0.1, resetsAt: reset + 86400 } } });
+  let seen = 0; u.on('usage', () => seen++);
+  u.update(info(0.2), 'test', t0);
+  let s = u.snapshot(t0);
+  assert.equal(s.windows.length, 2);
+  assert.equal(s.windows[0].resetsAt, reset * 1000, 'seconds become milliseconds');
+  assert.equal(s.windows[0].pace, null, 'one sample: no pace yet');
+  u.update(info(0.3), 'test', t0 + 30 * 60_000);
+  s = u.snapshot(t0 + 30 * 60_000);
+  const p = s.windows.find(w => w.key === 'five_hour').pace;
+  assert.ok(Math.abs(p.perHour - 0.2) < 1e-9, '10 points in half an hour');
+  assert.ok(Math.abs(p.fullInMs - 3.5 * 3600_000) < 1000, '70 points left at 20 an hour');
+  assert.equal(p.hitsBeforeReset, false, 'the reset (2.5h away) comes first');
+  assert.equal(seen, 2);
+});
+
+test('Narrator: the quota in a verbose reply reaches onRateLimit, and calls are counted by purpose', async () => {
+  // The CLI path is read when narrator.mjs loads, so run it in a child with the fake CLI.
+  const { execFileSync } = await import('node:child_process');
+  const script = `import { Narrator } from ${JSON.stringify(path.join(__dirname, '..', 'lib', 'narrator.mjs'))};
+    const n = new Narrator(); let q = null; n.onRateLimit = (i) => { q = i; };
+    await n.probe();
+    console.log(JSON.stringify({ q, by: n.status().byPurpose }));`;
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', script],
+    { env: { ...process.env, DECK_CLAUDE_BIN: path.join(__dirname, 'fixtures', 'fake-claude.mjs'), FAKE_5H: '0.61' }, encoding: 'utf8' });
+  const { q, by } = JSON.parse(out.trim().split('\n').at(-1));
+  assert.equal(q.unifiedWindows.five_hour.utilization, 0.61);
+  assert.equal(by['quota check'].calls, 1);
+});
+
+test('Attention: signal changes become needs-you entries with a line to speak', () => {
+  const a = new Attention();
+  const heard = []; a.on('attention', (e) => heard.push(e));
+  const sess = (signal, need = null) => [{ id: 's1', title: 'Fix the solver', project: 'p', glance: { signal, need } }];
+  a.observe(sess('working'), 1000);
+  assert.equal(heard.length, 0, 'first sighting is recorded, not announced');
+  a.observe(sess('working'), 2000);
+  assert.equal(heard.length, 0, 'no change, no entry');
+  a.observe(sess('done'), 2500);
+  a.observe(sess('input', { kind: 'question', text: 'Ship it?' }), 2800);
+  assert.equal(heard.length, 0, 'a change is held until it settles');
+  a.observe(sess('input', { kind: 'question', text: 'Ship it?' }), 3900);
+  assert.equal(heard.length, 1, 'the brief "done" never surfaced; only the question');
+  assert.equal(heard.at(-1).needsYou, true);
+  assert.equal(heard.at(-1).priority, 'high');
+  assert.equal(heard.at(-1).say, 'Fix the solver is asking: Ship it?');
+  assert.equal(a.needs().length, 1);
+  a.observe(sess('done'), 4000);
+  a.observe(sess('done'), 5100);
+  assert.equal(heard.at(-1).say, 'Fix the solver is done.');
+  assert.equal(a.needs().length, 0);
+  a.observe([], 6000);
+  assert.equal(a.cur.size, 0, 'gone sessions are dropped');
+  assert.equal(sayFor('X', 'error', { text: 'npm test failed' }), 'X hit an error: npm test failed.');
 });

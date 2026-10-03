@@ -26,7 +26,15 @@ process.stdin.on('end', () => {
     const labels = [...input.matchAll(/^=== (THE ITEM|CONTEXT): (.*) ===$/gm)].map(m => m[2]);
     result = `**Fake answer** to: ${q}\n\nContext I was given: ${labels.map(l => '`' + l + '`').join(', ')} (${input.length} chars).`;
   }
+  const final = { type: 'result', subtype: 'success', is_error: false, result, total_cost_usd: 0.0012 };
+  // With --verbose the real CLI prints every message as an array, including
+  // the plan quota. FAKE_5H / FAKE_7D / FAKE_QUOTA_STATUS steer the numbers.
+  const now = Math.floor(Date.now() / 1000);
+  const quota = { type: 'rate_limit_event', rate_limit_info: {
+    status: process.env.FAKE_QUOTA_STATUS || 'allowed', resetsAt: now + 2 * 3600 + 780, rateLimitType: 'five_hour',
+    overageStatus: 'rejected', overageDisabledReason: 'out_of_credits', isUsingOverage: false,
+    unifiedWindows: { five_hour: { utilization: Number(process.env.FAKE_5H || 0.42), resetsAt: now + 2 * 3600 + 780 }, seven_day: { utilization: Number(process.env.FAKE_7D || 0.18), resetsAt: now + 3 * 86400 } } } };
   setTimeout(() => {
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result, total_cost_usd: 0.0012 }));
+    process.stdout.write(JSON.stringify(args.includes('--verbose') ? [{ type: 'system', subtype: 'init' }, quota, final] : final));
   }, 600);
 });
