@@ -114,6 +114,15 @@ minute, "crash" exits with an error.
   `attention` SSE events (and `GET /api/attention`); the page reads them
   out through a polite live region for screen readers, and spoken
   narration will consume the same entries.
+- **Which model, and how.** Every event a model produced carries a quiet
+  model label (with the effort on the first event of each API response; ↻
+  marks a model switch, amber a reply cut off at the output limit or
+  refused). Hover it for that response: model, effort, why it stopped,
+  context used of the window, cached / written / new input, output and
+  thinking tokens, cache hit or the reason for a miss (model changed,
+  history changed) with the tokens re-read, dropped thinking blocks, an
+  estimate of the cost at API list prices (`public/pricing.js`), and the
+  request id.
 - **Brief.** A model-written summary of the session to date: what it has
   done, a progress bar when the work has countable units, done / next, and
   a Watch line for risks that links to the event. It refreshes on events
