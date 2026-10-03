@@ -13,6 +13,8 @@ import { SessionIndex } from './lib/sessions.mjs';
 import { ShellRunner } from './lib/shell.mjs';
 import * as gitinfo from './lib/gitinfo.mjs';
 import { Narrator } from './lib/narrator.mjs';
+import { UsageTracker } from './lib/usage.mjs';
+import { Attention } from './lib/attention.mjs';
 import { BriefService } from './lib/briefs.mjs';
 import { ask } from './lib/ask.mjs';
 import { DeckState } from './lib/deckstate.mjs';
@@ -50,6 +52,8 @@ const deck = new DeckState();
 // survives backend restarts. --token / DECK_TOKEN override it.
 const TOKEN = String(arg('token', process.env.DECK_TOKEN || deck.token()));
 const narrator = new Narrator();
+const usage = new UsageTracker();
+narrator.onRateLimit = (info) => usage.update(info, 'the deck\'s own model calls');
 const briefs = new BriefService({ index, narrator, enabled: NARRATOR }).start();
 briefs.isHidden = (id) => deck.hidden.has(id);
 const snapshot = () => index.snapshot(deck.hidden);
@@ -66,8 +70,14 @@ function broadcast(event, data) {
 let snapshotTimer = null;
 function scheduleSnapshot() {
   if (snapshotTimer) return;
-  snapshotTimer = setTimeout(() => { snapshotTimer = null; broadcast('sessions.snapshot', snapshot()); }, 150);
+  snapshotTimer = setTimeout(() => { snapshotTimer = null; const snap = snapshot(); broadcast('sessions.snapshot', snap); attention.observe(snap.active); }, 150);
 }
+// Needs you: signal changes across live sessions, for the UI now and narration later.
+const attention = new Attention();
+attention.on('attention', (entry) => broadcast('attention', entry));
+// Signals also move without a file change (a question goes unanswered, a turn
+// goes quiet), and a change is announced once it settles, so look every second.
+setInterval(() => attention.observe(snapshot().active), 1000).unref();
 index.on('sessions', scheduleSnapshot);
 index.on('events', ({ sessionId, appended, updated }) => {
   if (appended.length) broadcast('event.batch', { sessionId, events: appended });
@@ -80,6 +90,22 @@ agents.on('change', (st) => {
   index.refresh(st.id);
   scheduleSnapshot();
 });
+agents.on('ratelimit', (info) => usage.update(info, 'a session the deck launched'));
+const usageView = () => ({ limits: usage.snapshot(), narrator: { enabled: NARRATOR, ...narrator.status() } });
+usage.on('usage', () => broadcast('usage', usageView()));
+// Quota only arrives with a model call. When nothing has made one for a while
+// and someone is watching, a one-word Haiku call refreshes it.
+const QUOTA_STALE_MS = 30 * 60_000;
+let probing = null;
+function probeQuota() {
+  if (!NARRATOR || probing) return probing;
+  probing = narrator.probe().catch(() => null).finally(() => { probing = null; broadcast('usage', usageView()); });
+  return probing;
+}
+setInterval(() => {
+  const snap = usage.snapshot();
+  if (clients.size && !narrator.blocked() && (!snap || snap.ageMs > QUOTA_STALE_MS)) probeQuota();
+}, 60_000).unref();
 shell.on('output', (d) => broadcast('shell.output', d));
 shell.on('exit', (d) => broadcast('shell.exit', d));
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 15_000).unref();
@@ -130,6 +156,8 @@ async function route(req, res, url) {
     res.write(`event: hello\ndata: ${JSON.stringify({ serverStartedAt: STARTED, token: TOKEN.slice(0, 4), version: VERSION, clientId, narrator: { enabled: NARRATOR, ...narrator.status() } })}\n\n`);
     res.write(`event: sessions.snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
     res.write(`event: briefs.snapshot\ndata: ${JSON.stringify(briefs.all())}\n\n`);
+    res.write(`event: usage\ndata: ${JSON.stringify(usageView())}\n\n`);
+    res.write(`event: attention.snapshot\ndata: ${JSON.stringify(attention.view())}\n\n`);
     clients.add(res);
     req.on('close', () => { clients.delete(res); briefs.dropClient(clientId); });
     return;
@@ -141,6 +169,13 @@ async function route(req, res, url) {
   }
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
+  if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
+  if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
+  if (p === '/api/usage/refresh' && req.method === 'POST') {
+    if (!NARRATOR) return send(res, 409, { error: 'model calls are off (started with --no-narrator)' });
+    await probeQuota();
+    return send(res, 200, usageView());
+  }
   if (p === '/api/briefs' && req.method === 'GET') return send(res, 200, { briefs: briefs.all(), narrator: { enabled: NARRATOR, ...narrator.status() } });
   if (p === '/api/view' && req.method === 'POST') {
     const { clientId, sessionId } = await readBody(req);
@@ -166,12 +201,13 @@ async function route(req, res, url) {
   }
 
   let m;
-  if ((m = /^\/api\/sessions\/([^/]+)\/(send|queue|interrupt|permission|stop|resume)$/.exec(p)) && req.method === 'POST') {
+  if ((m = /^\/api\/sessions\/([^/]+)\/(send|send-now|queue|interrupt|permission|stop|resume)$/.exec(p)) && req.method === 'POST') {
     const id = decodeURIComponent(m[1]);
     const body = await readBody(req);
     try {
       switch (m[2]) {
         case 'send': return send(res, 200, { item: agents.send(id, body.text) });
+        case 'send-now': return send(res, 200, { item: agents.sendNow(id, body.text) });
         case 'queue': agents.queueOp(id, body); break;
         case 'interrupt': return send(res, 200, { interrupted: agents.interrupt(id) });
         case 'permission': agents.answer(id, body.requestId, body.decision, body.message); break;

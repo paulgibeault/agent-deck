@@ -128,14 +128,33 @@ test('brief: pending tool → running; finished dead session → ended; live idl
   assert.equal(b.state, 'running');
   assert.match(b.detail, /^Bash npm test/);
   assert.equal(b.activeTool.name, 'Bash');
+  assert.equal(b.waitingOn, 'tool');
+  assert.equal(b.signal, 'working');
   const full = loadFixture();
   b = computeBrief(full, { kind: 'session', alive: false, subagents: [] }, null);
   assert.equal(b.state, 'ended');
+  assert.equal(b.waitingOn, null);
+  assert.equal(b.signal, 'ended');
   b = computeBrief(full, live, { status: 'idle' }, Date.parse('2026-09-29T05:50:00.000Z'));
   assert.equal(b.state, 'idle');
   assert.match(b.detail, /1 queued/);
   assert.equal(b.lastText, 'The test passes now.');
   assert.equal(b.queueDepth, 1);
+  assert.equal(b.waitingOn, 'you');
+  assert.equal(b.asked, false);
+  assert.equal(b.signal, 'done', 'a clean finish is green');
+  full.meta.lastText = 'Tests pass. Should I also update the docs?';
+  const q = computeBrief(full, live, { status: 'idle' });
+  assert.equal(q.asked, true);
+  assert.equal(q.signal, 'input');
+  assert.deepEqual([q.need.kind, q.need.text], ['question', 'Should I also update the docs?']);
+  assert.equal(computeBrief(full, live, { status: 'busy', waiting: 'permission' }).signal, 'input');
+  // The newest event an error: red, until something newer lands.
+  full.meta.lastText = 'The test passes now.';
+  full.events.push({ id: 'e-x', seq: 999, kind: 'tool', ts: '2026-09-29T05:49:00.000Z', tool: { name: 'Bash', display: 'Bash', summary: 'npm test', isError: true, pending: false, result: { text: 'exit 1' } } });
+  const e = computeBrief(full, live, { status: 'idle' });
+  assert.equal(e.signal, 'error');
+  assert.equal(e.need.seq, 999);
 });
 
 test('toolSummary one-liners', () => {

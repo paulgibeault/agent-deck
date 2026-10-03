@@ -1,6 +1,6 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
 import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
-  markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon } from './events.js';
+  markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -29,7 +29,8 @@ const state = {
   cache: new Map(),           // id -> { events, byId, lastSeq, meta, brief, summary, loaded }
   expanded: new Set(),        // agentIds expanded inline in the events list
   tab: 'events',
-  follow: true,
+  live: true,                 // the stream and the details pane both track the newest event
+  picked: false,              // the user picked an event to look at (scrolling back up does not resume live)
   cursor: null,               // selected event id
   rows: [], offsets: [], total: 0,
   filter: '', kind: 'all', showThinking: prefs.showThinking !== false,
@@ -38,13 +39,16 @@ const state = {
   files: null, changes: null,
   shell: { runs: new Map(), order: [], history: (() => { try { return JSON.parse(localStorage.getItem('deck.shhist') || '[]'); } catch { return []; } })(), hi: -1 },
   detailsKey: null,
-  pinned: !!prefs.pinDetails,
   briefs: new Map(),          // id -> generated brief (server publicBrief)
+  briefAt: null,              // { id, at }: an earlier brief being read (its updatedAt); null = latest
   narrator: { enabled: true },
   clientId: null,
   ask: null,                  // { spec, primary, extras, thread, sessionId, ring }
   deck: new Map(),            // id -> deck-launched session state (lib/agent.mjs publicState)
   pendingOpen: null,          // a session just launched, opened once the index lists it
+  qEdit: null,
+  usage: null,
+  attention: { needs: [], log: [] },   // needs-you entries from lib/attention.mjs                // { limits: plan quota (lib/usage.mjs), narrator: the deck's own model calls }                // a queued prompt being edited in place: { id, el, sessionId, original, done }
 };
 
 function toast(msg, action = null) {
@@ -64,7 +68,25 @@ function phaseOf(s) {
   return c?.brief?.phase || s.glance?.phase || (s.status === 'busy' ? 'working' : 'turn');
 }
 const PHASE_LABEL = { working: 'Working', turn: 'Your turn', done: 'Done', ended: 'Ended' };
-const pill = (phase) => h('span', { class: `pill ${phase}` }, h('span', { class: 'pd' }), PHASE_LABEL[phase]);
+/**
+ * The signal every view colours by (computed in lib/brief.mjs):
+ *   input   orange  paused on the pilot: a permission prompt or a question
+ *   error   red     the newest event is an error
+ *   working yellow  busy (pulses)
+ *   done    green   finished cleanly
+ *   ended   grey    the process is gone
+ * Input and error together are "needs you".
+ */
+const SIG_LABEL = { input: 'Needs input', error: 'Error', working: 'Working', done: 'Done', ended: 'Ended' };
+function sigOf(s) {
+  if (!s) return 'ended';
+  if (s.kind === 'agent') return s.status === 'running' ? 'working' : s.status === 'done' ? 'done' : 'ended';
+  if (!s.alive) return 'ended';
+  if (deckOf(s.id)?.permissions?.length) return 'input';   // the deck hears these before the transcript shows them
+  const c = state.cache.get(s.id);
+  return c?.brief?.signal || s.glance?.signal || (s.status === 'busy' ? 'working' : 'done');
+}
+const needsYou = (s) => { const g = sigOf(s); return g === 'input' || g === 'error'; };
 const tilde = (p) => String(p || '').replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, '~');
 const recentErr = (s) => s.glance?.errors && s.glance.lastErrorTs && Date.now() - Date.parse(s.glance.lastErrorTs) < 30 * 60_000;
 
@@ -76,6 +98,9 @@ function connect() {
   es.onerror = () => { setConn(false); watchBackend(); };
   es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.narrator = d.narrator || state.narrator; reportView(); });
   es.addEventListener('sessions.snapshot', (e) => applySnapshot(JSON.parse(e.data)));
+  es.addEventListener('attention.snapshot', (e) => { state.attention = JSON.parse(e.data); });
+  es.addEventListener('attention', (e) => { const a = JSON.parse(e.data); state.attention.log = [...state.attention.log, a].slice(-100); narrate(a); });
+  es.addEventListener('usage', (e) => { state.usage = JSON.parse(e.data); state.usage._at = Date.now(); if (state.usage.narrator) state.narrator = { ...state.narrator, ...state.usage.narrator }; renderQuota(); });
   es.addEventListener('briefs.snapshot', (e) => { const all = JSON.parse(e.data); for (const [id, b] of Object.entries(all)) state.briefs.set(id, b); refreshBriefViews(); });
   es.addEventListener('brief.update', (e) => { const b = JSON.parse(e.data); if (b.narrator) state.narrator = { ...state.narrator, ...b.narrator }; state.briefs.set(b.id, b); refreshBriefViews(b.id); });
   es.addEventListener('event.batch', (e) => { const { sessionId, events } = JSON.parse(e.data); onEvents(sessionId, events); });
@@ -88,13 +113,14 @@ function connect() {
 function setConn(on) {
   if (restarting) return;
   $('conn').classList.toggle('on', on);
-  $('conn').querySelector('.clbl').textContent = on ? 'Live' : 'Offline';
+  connTitle(on ? 'Server connected · click to restart it' : 'Server offline · click to restart it');
 }
 
 // ------------------------------------------------------------ restart backend
 // The server relaunches itself on the same port; once a new instance answers,
 // drop the cached shell and reload so the UI matches the new backend.
 let restarting = false;
+function connTitle(t) { $('conn').title = t; $('conn').setAttribute('aria-label', t); }
 $('conn').addEventListener('click', async () => {
   if (restarting) return;
   const live = [...state.deck.values()].filter(d => d.alive).length;
@@ -108,7 +134,7 @@ async function restartBackend() {
   catch (e) { toast(`Restart failed: ${e.message}`); return; }
   restarting = true;
   es?.close(); clearTimeout(launch.timer); launch.timer = null;
-  $('conn').classList.remove('on'); $('conn').querySelector('.clbl').textContent = 'Restarting…'; $('conn').disabled = true;
+  $('conn').classList.remove('on'); $('conn').classList.add('restarting'); connTitle('Server restarting…'); $('conn').disabled = true;
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 500));
@@ -305,13 +331,15 @@ function scheduleTree() { if (!treeTimer) treeTimer = requestAnimationFrame(() =
 
 function sessRow(s) {
   const phase = phaseOf(s);
+  const sig = sigOf(s);
   const isAgent = s.kind === 'agent';
+  const st = !isAgent && (phase === 'turn' || phase === 'working') ? statusOf(s, null, phase) : null;
   const meta = isAgent ? [s.agentType, s.worktreeBranch].filter(Boolean).join(' · ')
     : s.bucket === 'active' && !state.snapshot.hidden.includes(s)
-      ? [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, phase === 'turn' ? 'your turn' : null, s.subagents?.length ? `${s.subagents.length} subagent${s.subagents.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
+      ? [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, sig === 'input' || sig === 'error' ? st?.head.toLowerCase() : null, s.subagents?.length ? `${s.subagents.length} subagent${s.subagents.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
       : [s.project, s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ');
   const btn = h('button', { type: 'button', class: `sess${isAgent ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, title: s.cwd || s.title },
-    h('span', { class: `dot ${phase}` }),
+    h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}`, title: st?.head || SIG_LABEL[sig] }),
     h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), !isAgent || meta ? h('span', { class: 'sub' }, meta || ' ') : null),
     h('span', { class: 'r', title: new Date(s.mtime).toLocaleString() }, ago(Date.now() - (s.mtime || 0))));
   return h('li', {}, btn);
@@ -345,8 +373,7 @@ function subsBlock(s, alwaysOpen) {
 function matchesTree(s) {
   if (state.ctr) {
     if (s.bucket !== 'active') return false;
-    const p = phaseOf(s);
-    if (state.ctr === 'errors' ? !recentErr(s) : p !== state.ctr) return false;
+    if (state.ctr === 'needs' ? !needsYou(s) : sigOf(s) !== state.ctr) return false;
   }
   if (!state.treeFilter) return true;
   const q = state.treeFilter.toLowerCase();
@@ -376,9 +403,279 @@ function renderTree() {
     ul.replaceChildren(frag);
   }
   const total = snap.active.length + snap.recent.length + snap.closed.length;
+  renderMini();
   $('tree-foot').textContent = `${total} sessions · ${snap.active.length} live${snap.hidden.length ? ` · ${snap.hidden.length} hidden` : ''}`;
   renderCounters();
 }
+// ------------------------------------------------------------ needs you
+// The server turns signal changes into entries with a sentence to speak
+// (lib/attention.mjs). Narration reads them out; for now the sentence goes to
+// a polite live region, so a screen reader already announces when a session
+// needs you or finishes. Spoken narration plugs in here.
+function narrate(entry) {
+  if (entry.initial) return;
+  const worth = entry.needsYou || (entry.signal === 'done' && entry.from === 'working');
+  if (!worth || !entry.say) return;
+  const el = $('announcer');
+  el.textContent = '';
+  requestAnimationFrame(() => { el.textContent = entry.say; });
+}
+
+// ------------------------------------------------------------ plan quota
+// A small ring in the top bar: how full the tightest plan window is. Quiet
+// while there is room, amber when it is getting close, red when limited.
+// Hover for every number the deck has; click to check again.
+const WINDOW_LABEL = { five_hour: '5-hour window', seven_day: 'Weekly', seven_day_opus: 'Weekly · Opus', seven_day_sonnet: 'Weekly · Sonnet' };
+const winLabel = (k) => WINDOW_LABEL[k] || k.replace(/_/g, ' ');
+const pct = (u) => `${Math.round(u * 100)}%`;
+// Hours and minutes: a reset "in 1h" that is really 1h 59m away misleads.
+function dur(ms) {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  const hh = Math.floor(m / 60);
+  if (hh < 48) return `${hh}h${m % 60 ? ` ${m % 60}m` : ''}`;
+  return `${Math.floor(hh / 24)}d${hh % 24 ? ` ${hh % 24}h` : ''}`;
+}
+function quotaTone(lim) {
+  if (!lim) return 'none';
+  const max = Math.max(0, ...lim.windows.map(w => w.utilization));
+  if (lim.status === 'rejected' || max >= 0.95) return 'crit';
+  if (lim.status === 'allowed_warning' || max >= 0.75 || lim.windows.some(w => w.pace?.hitsBeforeReset)) return 'warn';
+  return 'ok';
+}
+function renderQuota() {
+  const lim = state.usage?.limits;
+  const btn = $('quota');
+  const tone = quotaTone(lim);
+  // The ring tracks the fullest window; the number is that window's use.
+  const top = lim?.windows.length ? lim.windows.reduce((a, w) => (w.utilization > a.utilization ? w : a)) : null;
+  btn.className = `quota ${tone}`;
+  btn.querySelector('.qa').setAttribute('stroke-dasharray', `${top ? Math.min(100, Math.round(top.utilization * 100)) : 0} 100`);
+  btn.querySelector('.qpct').textContent = top ? pct(top.utilization) : '–';
+  btn.setAttribute('aria-label', top ? `Plan usage: ${winLabel(top.key)} ${pct(top.utilization)}${lim.status === 'rejected' ? ', limited' : ''}` : 'Plan usage: not known yet');
+  if (card.id === 'quota') showUsageCard(true);
+}
+function untilText(ts) {
+  if (!ts) return '';
+  const ms = ts - Date.now();
+  const at = new Date(ts);
+  const sameDay = at.toDateString() === new Date().toDateString();
+  const clock = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `resets ${ms > 0 ? `in ${dur(ms)}` : 'now'} · ${sameDay ? clock : `${at.toLocaleDateString([], { weekday: 'short' })} ${clock}`}`;
+}
+function usageCardBody() {
+  const u = state.usage || {};
+  const lim = u.limits;
+  const n = u.narrator || state.narrator || {};
+  const tone = quotaTone(lim);
+  const rows = [];
+  const statusTxt = !lim ? 'unknown' : lim.status === 'rejected' ? 'Limited' : lim.status === 'allowed_warning' ? 'Near the limit' : tone === 'warn' ? 'Filling up' : 'Room to work';
+  rows.push(h('div', { class: 'hc-h' }, h('b', {}, 'Plan usage'), h('span', { class: `uq-st ${tone}` }, statusTxt)));
+  if (!lim) {
+    rows.push(h('p', { class: 'hc-sum muted' }, 'No quota reading yet. The deck learns it from its own model calls and from sessions it launches. Click the meter to check now (one tiny Haiku call).'));
+  } else {
+    for (const w of lim.windows) {
+      const wt = w.utilization >= 0.95 ? 'crit' : w.utilization >= 0.75 || w.pace?.hitsBeforeReset ? 'warn' : 'ok';
+      const row = h('div', { class: 'uq-w' },
+        h('div', { class: 'uq-l' }, h('b', {}, winLabel(w.key)), h('span', { class: `uq-p ${wt}` }, pct(w.utilization))),
+        h('div', { class: 'uq-bar' }, h('span', { class: wt, style: `width:${Math.min(100, w.utilization * 100)}%` }),
+          w.pace?.atReset != null && w.pace.atReset > w.utilization ? h('i', { style: `left:${Math.min(100, w.pace.atReset * 100)}%`, title: `projected ${pct(Math.min(1, w.pace.atReset))} at reset` }) : null),
+        h('div', { class: 'uq-r' }, untilText(w.resetsAt)));
+      // The pace: is this window going to run out before it resets?
+      const p = w.pace;
+      if (p && p.perHour > 0) {
+        row.append(h('div', { class: `uq-pace${p.hitsBeforeReset ? ' warn' : ''}` },
+          p.hitsBeforeReset ? `At this pace it runs out in ~${dur(p.fullInMs)}, before the reset.`
+            : `At this pace: ~${pct(Math.min(1, p.atReset ?? w.utilization))} by the reset (${(p.perHour * 100).toFixed(1)} points an hour over the last ${dur(p.sinceMs)}).`));
+      } else if (p) row.append(h('div', { class: 'uq-pace' }, `No change over the last ${dur(p.sinceMs)}.`));
+      rows.push(row);
+    }
+    const extra = lim.isUsingOverage ? 'in use now' : lim.overageStatus === 'rejected' ? `off${lim.overageDisabledReason ? ` (${lim.overageDisabledReason.replace(/_/g, ' ')})` : ''}` : lim.overageStatus || null;
+    if (extra) rows.push(h('div', { class: 'hc-f' }, h('span', {}, `Extra usage: ${extra}`)));
+  }
+  // What the deck itself spends on briefs, Ask and quota checks.
+  const by = n.byPurpose || {};
+  const kinds = Object.entries(by).sort((a, b) => b[1].costUsd - a[1].costUsd);
+  if (kinds.length) {
+    rows.push(h('div', { class: 'uq-sec' }, h('b', {}, 'This deck’s model calls'), h('span', {}, `${fmtUsd(n.totalCostUsd || 0)} · ${n.calls || 0} calls`)));
+    rows.push(h('div', { class: 'uq-tbl' }, ...kinds.map(([k, v]) => h('div', {}, h('span', {}, k[0].toUpperCase() + k.slice(1)), h('span', {}, `${v.calls}`), h('span', {}, fmtUsd(v.costUsd)), h('span', {}, `${(v.ms / v.calls / 1000).toFixed(1)}s avg`)))));
+    rows.push(h('div', { class: 'hc-f' }, h('span', {}, `models: brief ${n.briefModel || '?'} · ask ${n.askModel || '?'}`)));
+  }
+  // What the live sessions have spent, biggest first.
+  // Transcripts do not always record cost; output tokens are the fallback measure.
+  const live = state.snapshot.active.filter(s => s.glance?.cost != null || s.glance?.outTokens)
+    .sort((a, b) => (b.glance.cost ?? 0) - (a.glance.cost ?? 0) || (b.glance.outTokens || 0) - (a.glance.outTokens || 0));
+  if (live.length) {
+    const total = live.reduce((x, s) => x + (s.glance.cost || 0), 0);
+    const out = live.reduce((x, s) => x + (s.glance.outTokens || 0), 0);
+    rows.push(h('div', { class: 'uq-sec' }, h('b', {}, 'Live sessions'), h('span', {}, [total ? fmtUsd(total) : null, out ? `${fmtTokens(out)} tokens out` : null].filter(Boolean).join(' · '))));
+    rows.push(h('div', { class: 'uq-tbl three' }, ...live.slice(0, 5).map(s => h('div', {}, h('span', {}, oneLine(s.title, 30)),
+      h('span', {}, s.glance.outTokens ? `${fmtTokens(s.glance.outTokens)} out` : ''), h('span', {}, s.glance.cost != null ? fmtUsd(s.glance.cost) : '')))));
+  }
+  rows.push(h('div', { class: 'hc-foot' },
+    lim ? `as of ${ago(lim.ageMs + (Date.now() - (u._at || Date.now())))} ago · from ${lim.source || 'a model call'}` : 'not checked yet',
+    h('span', { class: 'spacer' }), state.narrator.enabled ? 'click to check now' : ''));
+  return rows;
+}
+function showUsageCard(refresh = false) {
+  const el = $('hovercard'); const a = $('quota');
+  clearTimeout(card.timer);
+  card.id = 'quota'; card.anchor = a;
+  el.replaceChildren(...usageCardBody());
+  el.hidden = false;
+  const r = a.getBoundingClientRect();
+  const railMin = $('deck').classList.contains('rail-min');
+  // Below the meter in the full rail; beside it when the rail is a strip of chips.
+  const left = railMin ? r.right + 10 : Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, r.left - 12));
+  const top = railMin ? Math.max(8, r.top - 6) : r.bottom + 8;
+  el.style.left = `${left}px`; el.style.top = `${top}px`;
+  if (!refresh) el.classList.remove('in'), void el.offsetWidth, el.classList.add('in');
+}
+$('quota').addEventListener('mouseenter', () => { clearTimeout(card.timer); card.timer = setTimeout(() => showUsageCard(), 160); });
+$('quota').addEventListener('mouseleave', () => hideCard());
+$('quota').addEventListener('focus', () => showUsageCard());
+$('quota').addEventListener('blur', () => hideCard());
+$('quota').onclick = async () => {
+  if (!state.narrator.enabled) return;
+  $('quota').classList.add('checking');
+  try { const r = await api.post('/api/usage/refresh'); state.usage = { ...r, _at: Date.now() }; renderQuota(); }
+  catch (e) { toast(`Quota check failed: ${e.message}`); }
+  finally { $('quota').classList.remove('checking'); }
+};
+// Reset countdowns and "as of" age move on their own.
+setInterval(() => { if (card.id === 'quota') showUsageCard(true); }, 15_000);
+
+// ------------------------------------------------------------ minimized rail
+// Collapsed, the rail is a column of chips: one per live session, then the
+// most recent finished ones. Each chip carries the status at a glance (ring
+// colour, a ping when it waits on an answer, badges for errors, subagents and
+// queued prompts); hovering or focusing one opens a card with the rest.
+function setRailMin(on) {
+  prefs.railMin = on; savePrefs();
+  $('deck').classList.toggle('rail-min', on);
+  const t = $('rail-toggle');
+  t.setAttribute('aria-expanded', String(!on));
+  t.title = t.ariaLabel = on ? 'Expand the session list ([)' : 'Collapse the session list ([)';
+  hideCard(true);
+  renderTree(); renderRows();
+}
+$('rail-toggle').onclick = () => setRailMin(!prefs.railMin);
+
+const initials = (t) => {
+  const w = String(t || '?').replace(/[^\p{L}\p{N}\s-]/gu, ' ').split(/[\s-]+/).filter(Boolean);
+  return ((w[0]?.[0] || '?') + (w[1]?.[0] || w[0]?.[1] || '')).toUpperCase();
+};
+function miniChip(s, recent = false) {
+  const phase = phaseOf(s);
+  const st = phase === 'turn' || phase === 'working' ? statusOf(s, null, phase) : null;
+  const g = s.glance || {};
+  const runSubs = (s.subagents || []).filter(a => a.status === 'running').length;
+  const q = deckOf(s.id)?.queue?.length || 0;
+  const sig = sigOf(s);
+  const chip = h('button', { type: 'button', class: `mchip sig-${sig}${st?.quiet ? ' quiet' : ''}${recent ? ' recent' : ''}${s.id === state.selected ? ' selected' : ''}`,
+    dataset: { id: s.id }, 'aria-label': `${s.title} · ${st?.head || SIG_LABEL[sig]}` }, h('span', { class: 'mi' }, initials(s.title)));
+  if (runSubs) chip.append(h('span', { class: 'mb subs', 'aria-hidden': 'true' }, String(runSubs)));
+  if (q) chip.append(h('span', { class: 'mb q', 'aria-hidden': 'true' }, String(q)));
+  return chip;
+}
+function renderMini() {
+  if (!prefs.railMin) return;
+  const snap = state.snapshot;
+  const n = { needs: snap.active.filter(needsYou).length, working: snap.active.filter(s => sigOf(s) === 'working').length };
+  const out = [
+    h('div', { class: 'mctr', title: `${n.needs} need you · ${n.working} working` },
+      h('b', { class: `c-needs${n.needs ? ' lit' : ''}` }, String(n.needs)), h('b', { class: 'c-working' }, String(n.working))),
+    ...snap.active.map(s => miniChip(s)),
+  ];
+  const recent = snap.recent.slice(0, 6);
+  if (recent.length) out.push(h('hr'), ...recent.map(s => miniChip(s, true)));
+  $('mini').replaceChildren(...out);
+  if (card.id && card.id !== 'quota') showCard(card.id, card.anchor && document.contains(card.anchor) ? card.anchor : $('mini').querySelector(`.mchip[data-id="${CSS.escape(card.id)}"]`), true);
+}
+// Clicking opens the session and puts the card away until the pointer leaves that chip.
+$('mini').addEventListener('click', (e) => { const b = e.target.closest('.mchip'); if (b) { card.quiet = b.dataset.id; hideCard(true); select(b.dataset.id); } });
+
+// The hover card: everything worth knowing before deciding to open a session.
+const card = { id: null, anchor: null, timer: null, quiet: null };
+function cardBody(s) {
+  const phase = phaseOf(s);
+  const g = s.glance || {};
+  const st = statusOf(s, null, phase);
+  const d = deckOf(s.id);
+  const pb = state.briefs.get(s.id);
+  const subs = s.subagents || [];
+  const runSubs = subs.filter(a => a.status === 'running');
+  const doneSubs = subs.filter(a => a.status === 'done').length;
+  const rows = [];
+  rows.push(h('div', { class: 'hc-h' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}` }), h('b', {}, s.title || s.id)));
+  rows.push(h('div', { class: 'hc-w mono' }, [tilde(s.cwd), s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ')));
+  // Whose move, and why.
+  rows.push(h('div', { class: `hc-st sig-${st.sig}${st.quiet ? ' quiet' : ''}` }, h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
+    st.icon ? svgUse(st.icon, 12) : null, h('b', {}, st.head),
+    st.clock != null ? h('span', { class: 'hc-clk' }, fmtClock(st.clock)) : st.right ? h('span', { class: 'hc-clk' }, st.right) : null));
+  if (st.text) rows.push(h('div', { class: `hc-t${st.mono ? ' mono' : ''}` }, oneLine(st.text, 220)));
+  // What it has done: the generated brief, else the last thing it said.
+  const sum = pb?.brief?.summary;
+  if (sum) rows.push(h('p', { class: 'hc-sum' }, oneLine(sum, 360)));
+  else if (g.lastText && !g.asked) rows.push(h('p', { class: 'hc-sum muted' }, 'Last said · ', oneLine(g.lastText, 240)));
+  if (pb?.brief?.watch) rows.push(h('div', { class: 'hc-watch' }, h('b', {}, 'WATCH '), oneLine(pb.brief.watch.text, 200)));
+  if (pb?.brief?.progress) {
+    const p = pb.brief.progress;
+    rows.push(h('div', { class: 'hc-prog' }, h('span', {}, `${p.total} ${p.unit}: ` + p.segments.map(x => `${x.count} ${x.label}`).join(', ')),
+      h('div', { class: 'prog-b' }, ...p.segments.map(x => h('span', { class: `tone-${x.tone}`, style: `flex-grow:${x.count}` })))));
+  }
+  if (runSubs.length) rows.push(h('div', { class: 'hc-subs' }, h('b', {}, `${runSubs.length} subagent${runSubs.length === 1 ? '' : 's'} running`), doneSubs ? ` · ${doneSubs} done` : '',
+    h('ul', {}, ...runSubs.slice(0, 4).map(a => h('li', {}, a.title)), runSubs.length > 4 ? h('li', { class: 'muted' }, `+${runSubs.length - 4} more`) : null)));
+  if (d?.alive && (d.queue.length || d.held)) rows.push(h('div', { class: 'hc-q' }, h('b', {}, `${d.queue.length} queued`), d.held ? ' · held after interrupt' : '', d.queue[0] ? h('div', { class: 'mono muted' }, `next: ${oneLine(d.queue[0].text, 120)}`) : null));
+  // The numbers, in one quiet line.
+  const facts = [
+    recentErr(s) ? h('span', { class: 'err' }, `${g.errors} error${g.errors === 1 ? '' : 's'} · latest ${ago(Date.now() - Date.parse(g.lastErrorTs))} ago`) : g.errors ? `${g.errors} error${g.errors === 1 ? '' : 's'}` : null,
+    g.turns ? `${g.turns} turn${g.turns === 1 ? '' : 's'}` : null,
+    g.filesTouched ? `${g.filesTouched} file${g.filesTouched === 1 ? '' : 's'}` : null,
+    g.cost != null ? fmtUsd(g.cost) : null,
+    g.outTokens ? `${fmtTokens(g.outTokens)} out` : null,
+    g.model ? [g.model.replace('claude-', ''), g.effort].filter(Boolean).join(' · ') : null,
+  ].filter(Boolean);
+  if (facts.length) rows.push(h('div', { class: 'hc-f' }, ...facts.map(f => h('span', {}, f))));
+  rows.push(h('div', { class: 'hc-foot' },
+    d?.alive ? `launched by the deck${d.permissionMode !== 'default' ? ` · ${PERM_LABEL[d.permissionMode] || d.permissionMode}` : ''}` : s.alive ? 'observe only' : `last active ${ago(Date.now() - (s.mtime || 0))} ago`,
+    h('span', { class: 'spacer' }), 'click to open'));
+  return rows;
+}
+function showCard(id, anchor, refresh = false) {
+  const s = state.byId.get(id); const el = $('hovercard');
+  if (!s || !anchor) { hideCard(true); return; }
+  card.id = id; card.anchor = anchor;
+  el.replaceChildren(...cardBody(s));
+  el.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const top = Math.max(8, Math.min(window.innerHeight - el.offsetHeight - 8, r.top - 6));
+  el.style.left = `${r.right + 10}px`; el.style.top = `${top}px`;
+  if (!refresh) el.classList.remove('in'), void el.offsetWidth, el.classList.add('in');
+}
+function hideCard(now = false) {
+  clearTimeout(card.timer);
+  const go = () => { card.id = null; card.anchor = null; $('hovercard').hidden = true; };
+  if (now) go(); else card.timer = setTimeout(go, 120);
+}
+$('mini').addEventListener('mouseover', (e) => {
+  const b = e.target.closest('.mchip'); if (!b) return;
+  clearTimeout(card.timer);
+  if (card.id === b.dataset.id || card.quiet === b.dataset.id) return;
+  card.quiet = null;
+  card.timer = setTimeout(() => showCard(b.dataset.id, b), card.id ? 0 : 160);
+});
+$('mini').addEventListener('mouseleave', () => { card.quiet = null; hideCard(); });
+$('mini').addEventListener('focusin', (e) => { const b = e.target.closest('.mchip'); if (b) showCard(b.dataset.id, b); });
+$('mini').addEventListener('focusout', () => hideCard());
+$('mini').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const chips = [...$('mini').querySelectorAll('.mchip')]; const i = chips.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault(); e.stopPropagation();
+  chips[Math.max(0, Math.min(chips.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))].focus();
+});
+
 function groupByRepo(list) {
   const m = new Map();
   for (const s of list) { const k = s.cwd || s.project || '?'; if (!m.has(k)) m.set(k, []); m.get(k).push(s); }
@@ -386,7 +683,9 @@ function groupByRepo(list) {
 }
 function renderCounters() {
   const act = state.snapshot.active;
-  const n = { working: act.filter(s => phaseOf(s) === 'working').length, turn: act.filter(s => phaseOf(s) === 'turn').length, errors: act.filter(recentErr).length };
+  const n = { needs: act.filter(needsYou).length, working: act.filter(s => sigOf(s) === 'working').length, done: act.filter(s => sigOf(s) === 'done').length };
+  // A background tab still shows how many sessions need you.
+  document.title = n.needs ? `(${n.needs}) agent-deck` : 'agent-deck';
   for (const b of $('counters').querySelectorAll('.ctr')) {
     const k = b.dataset.c;
     b.querySelector('b').textContent = n[k];
@@ -438,7 +737,7 @@ function freshness(id, shownHere) {
   }
   const live = s?.kind === 'session' ? !!s.alive : phase === 'working';
   const cad = shownHere
-    ? (phase === 'working' ? 'refreshes every 20s while working' : phase === 'turn' ? 'refreshes on new activity' : 'final')
+    ? (phase === 'working' ? 'refreshes every 45s while working' : phase === 'turn' ? 'refreshes on new activity' : 'final')
     : (phase === 'working' && live && s?.kind === 'session' ? 'every 2m in background' : 'paused · refreshes when opened');
   if (!pb?.brief) return { text: `No brief yet · ${cad}` };
   return { text: `Session to date · updated ${ago(Date.now() - pb.updatedAt)} ago · ${cad}${pb.error ? ' · last refresh failed' : ''}`, live: phase === 'working' };
@@ -454,37 +753,32 @@ function nowText(s) {
 function renderOverview() {
   const ov = $('overview');
   const act = state.snapshot.active;
-  const working = act.filter(s => phaseOf(s) === 'working');
-  const turn = act.filter(s => phaseOf(s) === 'turn');
-  const errs = act.filter(recentErr);
+  const working = act.filter(s => sigOf(s) === 'working');
+  const needs = act.filter(needsYou).sort((a, b) => (sigOf(a) === 'input' ? 0 : 1) - (sigOf(b) === 'input' ? 0 : 1));
+  const ready = act.filter(s => sigOf(s) === 'done');
   const runningSubs = act.reduce((n, s) => n + (s.running || 0), 0);
   const spent = act.reduce((n, s) => n + (s.glance?.cost || 0), 0);
   const repos = new Set(act.map(s => s.cwd)).size;
-  const askBtn = (key, what) => h('button', { type: 'button', class: 'ask-mini', dataset: { askList: key }, title: `Ask about ${what}` }, starIcon(10), 'Ask');
+  const askBtn = (key, what) => h('button', { type: 'button', class: 'ask-ico', dataset: { askList: key }, 'aria-label': `Ask about ${what}`, title: `Ask about ${what}` }, starIcon(11));
 
   const head = h('header', { class: 'ov-h' },
-    h('h1', {}, act.length ? `${working.length} agent${working.length === 1 ? '' : 's'} working, ${turn.length} waiting on you` : 'No agents running'),
+    h('h1', {}, act.length ? (needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you, ${working.length} working` : `${working.length} agent${working.length === 1 ? '' : 's'} working, nothing needs you`) : 'No agents running'),
     h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
       : 'Start one with New session, or run claude in a terminal or the desktop app and it shows up here.'));
-  head.append(h('button', { type: 'button', class: 'btn primary ov-new', onclick: () => openLaunch() }, svgUse('i-plus', 12), 'New session'));
+  head.append(ib('i-plus', 'New session (n)', () => openLaunch(), { cls: 'ov-new', size: 18 }));
   const out = [head];
 
-  if (turn.length || errs.length) {
+  // Needs you: questions and permission prompts first, then sessions stopped on an error.
+  if (needs.length) {
     const sec = h('section', { class: 'ov-sec', dataset: { ov: 'needs' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Needs you'), askBtn('ov-needs', 'what needs you')));
-    for (const s of turn) {
-      sec.append(h('button', { type: 'button', class: 'need turn', dataset: { open: s.id } },
-        pill('turn'),
-        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.gitBranch ? ' · ' + s.gitBranch : ''}`)), h('span', { class: 'nl' }, permLine(s.id) || briefLine(s.id) || s.glance?.lastText || '')),
-        h('span', { class: 'age' }, permLine(s.id) ? 'permission' : s.glance?.idleMs != null ? `idle ${ago(s.glance.idleMs)}` : ''),
-        h('span', { class: 'go' }, 'Open')));
-    }
-    for (const s of errs) {
-      if (turn.includes(s)) continue;
-      sec.append(h('button', { type: 'button', class: 'need err', dataset: { open: s.id, errors: '1' } },
-        h('span', { class: 'pill err' }, `${s.glance.errors} error${s.glance.errors === 1 ? '' : 's'}`),
-        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.pr ? ' · PR #' + s.pr.number : ''}`)), h('span', { class: 'nl' }, briefLine(s.id) || s.glance?.lastText || '')),
-        h('span', { class: 'age' }, `latest ${ago(Date.now() - Date.parse(s.glance.lastErrorTs))} ago`),
-        h('span', { class: 'go' }, 'Review')));
+    for (const s of needs) {
+      const sig = sigOf(s);
+      const st = statusOf(s, null, phaseOf(s));
+      sec.append(h('button', { type: 'button', class: `need sig-${sig}`, dataset: { open: s.id, ...(sig === 'error' && st.seq ? { seq: String(st.seq) } : {}) } },
+        h('span', { class: `pill sig-${sig}` }, st.icon ? svgUse(st.icon, 12) : h('span', { class: 'pd' }), st.head),
+        h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.gitBranch ? ' · ' + s.gitBranch : ''}`)), h('span', { class: 'nl' }, st.text || briefLine(s.id) || s.glance?.lastText || '')),
+        h('span', { class: 'age' }, st.right || ''),
+        h('span', { class: 'go' }, svgUse('i-right', 13))));
     }
     out.push(sec);
   }
@@ -496,7 +790,7 @@ function renderOverview() {
       const f = freshness(s.id, false);
       const g = s.glance || {};
       cards.append(h('button', { type: 'button', class: 'card', dataset: { open: s.id } },
-        h('span', { class: 'ch' }, h('span', { class: 'dot working' }), h('b', {}, s.title), h('span', { class: 'muted' }, ago(Date.now() - s.mtime))),
+        h('span', { class: 'ch' }, h('span', { class: `dot sig-working${statusOf(s, null, 'working').quiet ? ' quiet' : ''}` }), h('b', {}, s.title), h('span', { class: 'muted' }, ago(Date.now() - s.mtime))),
         h('span', { class: 'cw' }, [tilde(s.cwd), s.gitBranch, s.pr ? `PR #${s.pr.number}` : null].filter(Boolean).join(' · ')),
         h('span', { class: 'nowbox' }, nt.tag ? h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: nt.tag, isError: false, display: nt.tag } }).fam}` }, nt.tag) : null, h('span', { class: 'nb' }, nt.text)),
         h('span', { class: 'fresh' }, h('span', { class: `fdot2${f.live ? ' live' : ''}` }), `Brief · ${f.text.replace(/^Session to date · /, '')}`),
@@ -504,6 +798,15 @@ function renderOverview() {
         h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
     }
     out.push(h('section', { class: 'ov-sec', dataset: { ov: 'working' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Working'), askBtn('ov-working', 'the working sessions')), cards));
+  }
+
+  // Done: live sessions that finished cleanly and are ready for the next prompt.
+  if (ready.length) {
+    const sec = h('section', { class: 'ov-sec', dataset: { ov: 'ready' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Done · ready for more')));
+    for (const s of ready) sec.append(h('button', { type: 'button', class: 'recent-row ready', dataset: { open: s.id } },
+      h('span', {}, h('span', { class: 'dot sig-done' }), s.title), h('span', { class: 'w' }, oneLine(s.glance?.lastPrompt ? `finished: ${s.glance.lastPrompt}` : s.glance?.lastText || '', 80)),
+      h('span', { class: 'a' }, s.glance?.idleMs != null ? `idle ${ago(s.glance.idleMs)}` : '')));
+    out.push(sec);
   }
 
   const recent = state.snapshot.recent.slice(0, 8);
@@ -519,7 +822,7 @@ function renderOverview() {
 $('overview').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.askList) { e.stopPropagation(); askList(b.dataset.askList, b); return; }
-  if (b.dataset.open) { const errs = !!b.dataset.errors; select(b.dataset.open).then(() => { if (errs) setKind('errors'); }); }
+  if (b.dataset.open) { const seq = Number(b.dataset.seq) || null; select(b.dataset.open).then(() => { if (seq) jumpToSeq(seq); }); }
 });
 
 function goOverview() {
@@ -536,7 +839,7 @@ async function select(id) {
   if (!state.byId.has(id) && !state.cache.has(id)) return;
   const changed = state.selected !== id;
   state.selected = id;
-  if (changed) { state.cursor = null; setFollow(true, true); }
+  if (changed) { state.cursor = null; state.briefAt = null; setLive(true, true); }
   prefs.selected = id; savePrefs();
   $('overview').hidden = true; $('session-view').hidden = false;
   renderTree();
@@ -547,7 +850,6 @@ async function select(id) {
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
   renderHeader(); renderQueue(); renderPerms(); scheduleRows(true);
-  if (changed && deckOf(id)?.alive) showPromptPanel(true);
   if (changed) {
     state.files = null; state.changes = null;
     $('files-count').textContent = ''; $('changes-count').textContent = '';
@@ -564,32 +866,33 @@ function renderHeader() {
   const id = state.selected; if (!id) return;
   const c = state.cache.get(id); const s = state.byId.get(id) || c?.summary;
   const el = $('shead');
-  if (!s) { el.replaceChildren(h('div', { class: 'muted' }, 'Loading…')); return; }
+  if (!s) { el.replaceChildren(h('div', { class: 'muted' }, 'Loading…')); $('nowslot').replaceChildren(); return; }
   const b = c?.brief; const phase = phaseOf(s);
   const isAgent = s.kind === 'agent';
 
   const win = h('div', { class: 'sh-win' });
-  win.append(h('button', { type: 'button', class: 'icon-btn ghost', 'aria-label': isAgent ? 'Back to parent session' : 'Close session (hide it from the deck)', title: isAgent ? 'Back to parent session' : 'Close (hide from the deck)', onclick: closeSession }, svgUse('i-x', 14)));
-  if (!isAgent) win.append(h('button', { type: 'button', class: 'icon-btn ghost danger', 'aria-label': 'Delete session', title: s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', disabled: s.alive || null, onclick: deleteSession }, svgUse('i-trash', 14)));
-  const top = h('div', { class: 'sh-top' }, h('h1', { title: s.title }, s.title || id), pill(phase));
+  const st = statusOf(s, b, phase);
+  win.append(ib('i-x', isAgent ? 'Back to parent session' : 'Close (hide from the deck)', closeSession));
+  if (!isAgent) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
+  const top = h('div', { class: 'sh-top' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}`, title: st.head }), h('h1', { title: s.title }, s.title || id));
   if (isAgent) {
     const parent = state.byId.get(s.parentId);
     top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.parentId) }, `subagent of ${parent?.title || s.parentId}`));
   }
   const d = isAgent ? null : deckOf(id);
-  if (d?.alive) top.append(h('span', { class: 'pill outline deck', title: `Launched by the deck · pid ${d.pid} · permissions: ${d.permissionMode}` }, 'Deck', h('span', { class: 'muted' }, ` · ${PERM_LABEL[d.permissionMode] || d.permissionMode}`)));
-  else if (!isAgent && s.alive) top.append(h('span', { class: 'pill outline', title: 'Launched outside the deck. The deck can read it but not drive it.' }, 'Observe only'));
+  // The permission mode shows only when it is not the default (asks before acting).
+  if (d?.alive) { if (d.permissionMode !== 'default') top.append(h('span', { class: 'sh-mode', title: `Launched by the deck · pid ${d.pid} · permissions: ${d.permissionMode}` }, PERM_LABEL[d.permissionMode] || d.permissionMode)); }
+  else if (!isAgent && s.alive) top.append(h('span', { class: 'sh-mode', title: 'Observe only: launched outside the deck, so the deck can read it but not drive it' }, svgUse('i-eye', 14)));
   top.append(h('span', { class: 'spacer' }));
-  if (d?.alive) {
-    top.append(h('button', { type: 'button', class: 'btn', disabled: d.status === 'idle' || d.interrupting || null, title: 'Stop the current turn and hold the queue', onclick: interruptSession }, svgUse('i-stop', 11), d.interrupting ? 'Interrupting…' : 'Interrupt'));
-    top.append(h('button', { type: 'button', class: 'btn', title: 'End the claude process. You can resume the session later.', onclick: stopSession }, 'End'));
-  } else if (!isAgent && !s.alive) {
-    top.append(h('button', { type: 'button', class: 'btn', title: 'Continue this session under the deck', onclick: () => openLaunch({ resumeId: id }) }, svgUse('i-send', 12), 'Resume in deck'));
-  }
-  if (!isAgent) top.append(h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Copy resume command', title: 'Copy resume command', onclick: () => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); toast('Copied resume command'); } }, svgUse('i-copy', 14)));
+  if (d?.alive) top.append(ib('i-power', 'End the claude process (you can resume it later)', stopSession));
+  else if (!isAgent && !s.alive) top.append(ib('i-play', 'Resume in the deck', () => openLaunch({ resumeId: id })));
+  if (!isAgent) top.append(ib('i-copy', 'Copy resume command', (e) => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); flashDone(e.currentTarget); }));
   top.append(win);
 
-  const out = [top, renderNow(s, b, phase), renderBriefBox(id, s, b)];
+  // The status line sits in the prompt panel, right above the text box: whose
+  // move it is, next to where you would make yours.
+  $('nowslot').replaceChildren(renderNow(st, phase));
+  const out = [top, renderBriefBox(id, s, b)];
 
   const meta = h('div', { class: 'metaline' });
   if (s.cwd) meta.append(h('span', { class: 'mono', title: s.cwd }, tilde(s.cwd)));
@@ -602,54 +905,100 @@ function renderHeader() {
   if (b?.subagents?.total) meta.append(h('span', {}, `${b.subagents.running} / ${b.subagents.total} subagents running`));
   if (b?.errors) meta.append(h('button', { type: 'button', onclick: () => setKind('errors') }, `${b.errors} error${b.errors === 1 ? '' : 's'}`));
   out.push(meta);
-  el.replaceChildren(...out);
+  patchChildren(el, out);
   applyRing();
 }
 
-function renderNow(s, b, phase) {
-  const box = h('div', { class: `nowline ${phase}` });
-  if (b?.activeTool) {
-    const t = b.activeTool;
-    box.append(h('span', { class: 'nl-k' }, 'NOW'), h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: t.name, isError: false } }).fam}` }, t.name),
-      h('span', { class: 'nl-t', title: t.summary }, t.summary || t.name),
-      h('span', { class: 'nl-e', dataset: { started: String(Date.now() - (t.startedMs || 0)) } }, fmtClock(t.startedMs || 0)));
-  } else if (phase === 'turn' && permLine(s.id)) {
-    box.append(h('span', { class: 'nl-k' }, 'NEEDS PERMISSION'), h('span', { class: 'nl-t' }, permLine(s.id)), h('span', { class: 'nl-e' }, 'answer below'));
-  } else if (phase === 'turn') {
-    box.append(h('span', { class: 'nl-k' }, 'YOUR TURN'), h('span', { class: 'nl-t' }, b?.lastPrompt ? `Finished: ${b.lastPrompt}` : 'Waiting for your next prompt'), h('span', { class: 'nl-e' }, b?.idleMs != null ? `idle ${ago(b.idleMs)}` : ''));
-  } else if (phase === 'working') {
-    box.append(h('span', { class: 'nl-k' }, 'NOW'), h('span', { class: 'nl-t' }, [b?.state, b?.detail].filter(Boolean).join(' · ') || 'working'));
-  } else if (deckOf(s.id)?.exit && phase === 'ended') {
+/** Like replaceChildren, but leaves nodes that are already in place attached (keeps text selection in them). */
+function patchChildren(el, nodes) {
+  nodes.forEach((n, i) => { const cur = el.children[i]; if (cur !== n) cur ? cur.replaceWith(n) : el.append(n); });
+  while (el.children.length > nodes.length) el.lastElementChild.remove();
+}
+
+/**
+ * Whose move it is, in plain words. `who` leads the status line: CLAUDE while
+ * the agent has the ball, YOU when it is waiting on the pilot.
+ */
+function statusOf(s, b, phase) {
+  const QUIET_MS = 90_000;
+  const g = b || s.glance || {};
+  const sig = sigOf(s);
+  const observe = s.kind === 'session' && s.alive && !deckOf(s.id)?.alive;
+  const where = observe ? ' · reply in its terminal' : '';
+  const subs = g.subagents?.running || 0;
+  const subsTxt = subs ? `${subs} subagent${subs === 1 ? '' : 's'} running` : null;
+  const waited = g.need?.since ? ago(Date.now() - Date.parse(g.need.since)) : g.idleMs != null ? ago(g.idleMs) : null;
+  if (sig === 'input' && (permLine(s.id) || g.need?.kind === 'permission')) return { sig, who: 'you', icon: 'i-hand', head: 'Needs your permission', text: permLine(s.id)?.replace(/^Wants to use /, '') || g.need.text, right: deckOf(s.id)?.alive ? 'answer below' : waited ? `waiting ${waited}` : '' };
+  if (sig === 'input') return { sig, who: 'you', icon: 'i-q', head: 'Claude asked you', text: (g.need?.text || g.lastText || '') + where, right: waited ? `waiting ${waited}` : '' };
+  if (sig === 'error') return { sig, who: phase === 'working' ? 'claude' : 'you', icon: 'i-x', head: phase === 'working' ? 'Hit an error' : 'Stopped on an error', text: g.need?.text || '', right: waited ? `${waited} ago` : '', seq: g.need?.seq };
+  if (phase === 'turn') return { sig, who: 'you', icon: 'i-check', head: 'Done · your turn', text: (g.lastPrompt ? `finished: ${g.lastPrompt}` : 'waiting for your next prompt') + where, right: g.idleMs != null ? `idle ${ago(g.idleMs)}` : '' };
+  if (phase === 'working') {
+    const t = g.activeTool;
+    if (t) return { sig, who: 'claude', head: `Running ${t.name}`, text: [t.summary, subsTxt].filter(Boolean).join(' · '), clock: t.startedMs || 0, mono: true };
+    if (g.quietMs != null && g.quietMs > QUIET_MS) return { sig, quiet: true, who: 'claude', head: `Quiet for ${ago(g.quietMs)}`, text: `no new events while ${g.state || 'working'}; it may be thinking hard, or stalled`, clock: g.turnMs };
+    if (g.waitingOn === 'subagents') return { sig, who: 'claude', head: `Waiting on ${subsTxt.replace(' running', '')}`, text: g.detail || '', clock: g.turnMs };
+    const head = { thinking: 'Thinking', responding: 'Writing', 'starting turn': 'Starting the turn' }[g.state] || 'Working';
+    return { sig, who: 'claude', head, text: [g.state === 'working' ? g.detail : null, subsTxt].filter(Boolean).join(' · '), clock: g.turnMs };
+  }
+  if (deckOf(s.id)?.exit && phase === 'ended') {
     const x = deckOf(s.id).exit;
     const bad = x.code !== 0 && x.code !== null || (x.signal && x.signal !== 'SIGTERM');
-    box.classList.toggle('err', !!bad);
-    box.append(h('span', { class: 'nl-k' }, 'ENDED'), h('span', { class: 'nl-t', title: x.stderr || '' }, bad ? `claude exited ${x.signal || `with code ${x.code}`}${x.stderr ? ': ' + x.stderr.split('\n').at(-1) : ''}` : 'Ended from the deck'), h('span', { class: 'nl-e' }, `${ago(Date.now() - x.at)} ago`));
-  } else {
-    box.append(h('span', { class: 'nl-k' }, phase === 'done' ? 'DONE' : 'ENDED'), h('span', { class: 'nl-t' }, b?.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(b.lastEventTs))} ago` : 'no activity recorded'));
+    return { sig: bad ? 'error' : 'ended', who: 'ended', head: bad ? `claude exited ${x.signal || `with code ${x.code}`}` : 'Ended from the deck', text: bad && x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
   }
+  return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded' };
+}
+
+function renderNow(st) {
+  const box = h('div', { class: `nowline sig-${st.sig}${st.quiet ? ' quiet' : ''}`, role: 'status' },
+    h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
+    st.icon ? svgUse(st.icon, 14) : null,
+    h('b', { class: 'nl-h' }, st.head),
+    h('span', { class: `nl-t${st.mono ? ' mono' : ''}`, title: st.title || st.text }, st.text));
+  if (st.clock != null) box.append(h('span', { class: 'nl-e', title: 'elapsed', dataset: { started: String(Date.now() - st.clock) } }, fmtClock(st.clock)));
+  else if (st.right) box.append(h('span', { class: 'nl-e' }, st.right));
+  if (st.seq) box.append(ib('i-right', 'Jump to the error', () => jumpToSeq(st.seq), { size: 13 }));
   return box;
 }
 function fmtClock(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 setInterval(() => { for (const e of document.querySelectorAll('.nl-e[data-started]')) e.textContent = fmtClock(Date.now() - Number(e.dataset.started)); }, 1000);
 
+// The brief box is rebuilt only when what it shows changes; the 5s header
+// refresh otherwise just updates its freshness line, so a brief being read
+// (or selected) is not torn down underneath the reader.
+let briefBoxCache = null;   // { key, el, at }
 function renderBriefBox(id, s, b) {
   const pb = state.briefs.get(id);
   const nb = pb?.brief;
-  const f = freshness(id, true);
-  const box = h('section', { id: 'brief-box', class: `brief${prefs.briefCollapsed ? ' collapsed' : ''}`, 'aria-labelledby': 'brief-h' });
-  const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, 'Brief'),
-    h('span', { class: `fr${f.err ? ' err' : ''}`, title: f.text }, f.spin ? h('span', { class: 'spin' }) : null, f.text),
-    h('span', { class: 'spacer' }));
-  if (nb) head.append(h('button', { type: 'button', class: 'icon-btn sm', 'aria-label': prefs.briefCollapsed ? 'Expand brief' : 'Collapse brief', title: prefs.briefCollapsed ? 'Expand' : 'Collapse', onclick: () => { prefs.briefCollapsed = !prefs.briefCollapsed; savePrefs(); renderHeader(); } }, svgUse(prefs.briefCollapsed ? 'i-down' : 'i-up', 12)));
-  if (state.narrator.enabled) head.append(h('button', { type: 'button', class: 'icon-btn sm', 'aria-label': 'Refresh brief now', title: 'Refresh now', disabled: pb?.pending || null, onclick: refreshBrief }, svgUse('i-refresh', 13)));
-  head.append(h('button', { type: 'button', class: 'ask-btn', onclick: () => openAsk({ kind: 'brief', sessionId: id, label: 'Session brief', what: 'this session' }, { type: 'brief' }) }, starIcon(12), 'Ask about this'));
+  const all = nb ? [{ brief: nb, updatedAt: pb.updatedAt }, ...(pb.history || [])] : [];
+  let i = state.briefAt?.id === id ? all.findIndex(x => x.updatedAt === state.briefAt.at) : 0;
+  if (i < 0) { i = 0; state.briefAt = null; }
+  const cur = all[i]?.brief, prev = all[i + 1]?.brief;
+  const f = i ? { text: `Earlier brief · from ${ago(Date.now() - all[i].updatedAt)} ago · ${i} of ${all.length - 1} back` } : freshness(id, true);
+  const fr = h('span', { class: `fr${f.err ? ' err' : ''}`, title: f.text }, f.spin ? h('span', { class: 'spin' }) : null, f.text);
+
+  const key = JSON.stringify([id, pb?.updatedAt, pb?.pending, pb?.error, state.narrator.enabled, state.narrator.error?.message, prefs.briefCollapsed, i, all.length, nb ? null : b?.lastText]);
+  if (briefBoxCache?.key === key) { briefBoxCache.el.querySelector('.brief-h .fr').replaceWith(fr); return briefBoxCache.el; }
+  const landed = !i && briefBoxCache?.id === id && briefBoxCache.at && pb?.updatedAt > briefBoxCache.at;
+
+  const box = h('section', { id: 'brief-box', class: `brief${prefs.briefCollapsed ? ' collapsed' : ''}${landed ? ' landed' : ''}${i ? ' earlier' : ''}`, 'aria-labelledby': 'brief-h' });
+  const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, 'Brief'), fr, h('span', { class: 'spacer' }));
+  if (all.length > 1) {
+    const go = (j) => { state.briefAt = j ? { id, at: all[j].updatedAt } : null; renderHeader(); };
+    head.append(h('span', { class: 'bhist' },
+      ib('i-left', 'Earlier brief', () => go(i + 1), { size: 13, disabled: i >= all.length - 1 || null }),
+      ib('i-right', 'Later brief', () => go(i - 1), { size: 13, disabled: !i || null }),
+      i ? ib('i-latest', 'Latest brief', () => go(0), { size: 13 }) : null));
+  }
+  if (nb) head.append(ib(prefs.briefCollapsed ? 'i-down' : 'i-up', prefs.briefCollapsed ? 'Expand brief' : 'Collapse brief', () => { prefs.briefCollapsed = !prefs.briefCollapsed; savePrefs(); renderHeader(); }, { size: 13 }));
+  if (state.narrator.enabled) head.append(ib('i-refresh', 'Refresh the brief now', refreshBrief, { size: 13, disabled: pb?.pending || null }));
+  head.append(h('button', { type: 'button', class: 'ask-ico', 'aria-label': 'Ask about this session', title: 'Ask about this session', onclick: () => openAsk({ kind: 'brief', sessionId: id, label: 'Session brief', what: 'this session' }, { type: 'brief' }) }, starIcon(12)));
   box.append(head);
 
-  if (nb?.summary) box.append(h('p', { class: 'sum' }, nb.summary));
+  if (cur?.summary) box.append(h('p', { class: 'sum' }, cur.summary));
   else box.append(h('p', { class: 'sum fallback' }, b?.lastText ? [h('span', { class: 'lbl2' }, 'Last said · '), b.lastText] : 'No assistant message yet.'));
 
-  if (nb?.progress) {
-    const p = nb.progress;
+  if (cur?.progress) {
+    const p = cur.progress;
     const legend = h('div', { class: 'prog-l' }, h('b', {}, `${p.total} ${p.unit}`));
     const bar = h('div', { class: 'prog-b', role: 'img', 'aria-label': p.segments.map(x => `${x.count} ${x.label}`).join(', ') });
     for (const sg of p.segments) {
@@ -658,17 +1007,21 @@ function renderBriefBox(id, s, b) {
     }
     box.append(h('div', { class: 'prog' }, legend, bar));
   }
-  if (nb && (nb.done.length || nb.now || nb.next)) {
+  // Items this brief added over the one before it are marked, so a refresh
+  // reads as a change rather than a wholesale rewrite.
+  const isNew = (x) => prev && !prev.done.includes(x);
+  if (cur && (cur.done.length || cur.now || cur.next)) {
     box.append(h('div', { class: 'dnn' },
-      h('div', {}, h('h3', {}, 'Done so far'), nb.done.length ? h('ul', {}, ...nb.done.map(x => h('li', {}, x))) : h('p', { class: 'muted' }, '—')),
-      h('div', { class: 'now' }, h('h3', {}, 'Now'), h('p', {}, nb.now || '—')),
-      h('div', {}, h('h3', {}, 'Next'), h('p', {}, nb.next || '—'))));
+      h('div', {}, h('h3', {}, 'Done so far'), cur.done.length ? h('ul', {}, ...cur.done.map(x => h('li', { class: isNew(x) ? 'new' : null, title: isNew(x) ? 'New since the previous brief' : null }, x))) : h('p', { class: 'muted' }, '—')),
+      h('div', { class: 'now' }, h('h3', {}, 'Now'), h('p', {}, cur.now || '—')),
+      h('div', {}, h('h3', {}, 'Next'), h('p', {}, cur.next || '—'))));
   }
-  if (nb?.watch) {
-    const w = h('div', { class: 'watch' }, h('span', { class: 'wk' }, 'WATCH'), h('span', { class: 'wt' }, nb.watch.text));
-    if (nb.watch.seq) w.append(h('button', { type: 'button', onclick: () => jumpToSeq(nb.watch.seq) }, 'Jump to event'));
+  if (cur?.watch) {
+    const w = h('div', { class: 'watch' }, h('span', { class: 'wk' }, 'WATCH'), h('span', { class: 'wt' }, cur.watch.text));
+    if (cur.watch.seq) w.append(h('button', { type: 'button', onclick: () => jumpToSeq(cur.watch.seq) }, 'Jump to event'));
     box.append(w);
   }
+  briefBoxCache = { key, el: box, id, at: pb?.updatedAt || 0 };
   return box;
 }
 async function refreshBrief() {
@@ -714,38 +1067,64 @@ function renderQueue() {
   const c = state.cache.get(id);
   const s = state.byId.get(id);
   const d = s?.kind === 'session' ? deckOf(id) : null;
-  const compose = $('compose'), sendBtn = $('send'), intBtn = $('interrupt');
+  const compose = $('compose'), sendBtn = $('send'), nowBtn = $('send-now'), stopBtn = $('stop');
+  // Only a deck session can take a prompt; for the rest the panel is one line.
+  $('prompt').classList.toggle('readonly', !d?.alive);
+  $('prompt').hidden = !s;
   if (d?.alive) {
     const q = d.queue;
     const idle = d.status === 'idle';
-    $('queue-count').textContent = q.length ? `· ${q.length}` : '· empty';
+    $('queue-count').textContent = q.length ? `· ${q.length} queued` : '';
     $('prompt-note').textContent = d.held ? 'held after interrupt' : q.length ? 'sends when the current turn ends' : idle ? 'idle · a prompt goes out at once' : 'prompts wait for the current turn';
-    const rows = q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.text }, item.text.replace(/\s+/g, ' ')),
-      h('button', { class: 'mini', type: 'button', title: 'Send this next', disabled: i === 0 && !d.held || null, onclick: () => queueOp('top', item.id) }, 'Next'),
-      h('button', { class: 'mini', type: 'button', 'aria-label': 'Move up', disabled: i === 0 || null, onclick: () => queueOp('up', item.id) }, svgUse('i-up', 10)),
-      h('button', { class: 'mini', type: 'button', 'aria-label': 'Move down', disabled: i === q.length - 1 || null, onclick: () => queueOp('down', item.id) }, svgUse('i-down', 10)),
-      h('button', { class: 'mini', type: 'button', title: 'Remove from the queue', onclick: () => queueOp('remove', item.id) }, 'Remove')));
-    if (d.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, 'Queue held after interrupt. Nothing goes out until you resume or send.'), h('button', { class: 'mini', type: 'button', onclick: () => queueOp('resume') }, 'Resume queue')));
-    $('queue').replaceChildren(...rows);
+    const rows = q.map((item, i) => h('li', { dataset: { qid: item.id } }, h('span', { class: 'muted' }, `${i + 1}.`),
+      h('span', { class: 'q editable', title: 'Click to edit', tabindex: '0', role: 'button', 'aria-label': `Edit queued prompt: ${oneLine(item.text, 80)}`, onclick: (e) => editQueued(item, e.currentTarget), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); editQueued(item, e.currentTarget); } } }, item.text.replace(/\s+/g, ' ')),
+      ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || null }),
+      ib('i-up', 'Move up', () => queueOp('up', item.id), { size: 12, disabled: i === 0 || null }),
+      ib('i-down', 'Move down', () => queueOp('down', item.id), { size: 12, disabled: i === q.length - 1 || null }),
+      ib('i-x', 'Remove from the queue', () => queueOp('remove', item.id), { size: 12 })));
+    if (d.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, 'Queue held after interrupt. Nothing goes out until you resume or send.'), ib('i-play', 'Resume the queue', () => queueOp('resume'), { size: 13 })));
+    // An open editor is left alone; the list catches up when it closes.
+    if (!(state.qEdit && $('queue').contains(state.qEdit.el))) $('queue').replaceChildren(...rows);
+    // One send button: it sends when Claude is idle and queues otherwise.
+    // The bolt cuts in: interrupt the turn and send this prompt next.
+    const queues = !idle || q.length > 0 || d.held;
     compose.disabled = false;
-    compose.placeholder = idle && !q.length ? 'Prompt (⌘↩ to send)' : 'Queue a prompt (⌘↩)';
-    sendBtn.disabled = false; sendBtn.textContent = idle && !q.length ? 'Send' : 'Queue';
-    sendBtn.title = idle && !q.length ? 'Send now (⌘↩)' : 'Add to the queue; it goes out when the current turn ends (⌘↩)';
-    intBtn.hidden = false; intBtn.disabled = idle || d.interrupting;
+    compose.placeholder = queues ? 'Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends now' : 'Prompt · ⌘↩ to send';
+    sendBtn.disabled = false;
+    sendBtn.classList.toggle('queues', queues);
+    sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
+    sendBtn.setAttribute('aria-label', queues ? 'Queue prompt' : 'Send');
+    nowBtn.hidden = idle && !q.length && !d.held;
+    nowBtn.disabled = !!d.interrupting;
+    nowBtn.title = d.interrupting ? 'Stopping…' : 'Send now: stop the current turn and send this prompt (⇧⌘↩)';
+    // Stop: only while Claude is working. Ends the turn and holds the queue.
+    stopBtn.hidden = idle;
+    stopBtn.disabled = !!d.interrupting;
+    stopBtn.title = d.interrupting ? 'Stopping…' : `Stop the current turn (⌘.)${q.length ? '; the queue is held until you resume or send' : ''}`;
     return;
   }
   const q = c?.meta?.queue || [];
-  $('queue-count').textContent = q.length ? `· ${q.length}` : '· empty';
-  $('prompt-note').textContent = q.length ? 'read-only mirror of the session queue' : 'nothing queued';
+  $('queue-count').textContent = q.length ? `· ${q.length} queued` : '';
+  $('prompt-note').textContent = s?.kind === 'agent' ? 'subagents take their prompt from the parent session'
+    : s?.alive ? `observe only · reply in its terminal${q.length ? ' · read-only mirror of its queue' : ''}`
+    : 'ended · resume it in the deck to send prompts';
   $('queue').replaceChildren(...q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
-    h('button', { class: 'mini', type: 'button', onclick: () => navigator.clipboard?.writeText(item.content) }, 'Copy'))));
-  compose.disabled = true; sendBtn.disabled = true; sendBtn.textContent = 'Send'; intBtn.hidden = true;
+    ib('i-copy', 'Copy', (e) => { navigator.clipboard?.writeText(item.content); flashDone(e.currentTarget); }, { size: 12 }))));
+  compose.disabled = true; sendBtn.disabled = true; sendBtn.classList.remove('queues'); nowBtn.hidden = true; stopBtn.hidden = true;
   compose.placeholder = s?.alive ? 'Launched outside the deck, so it is observe-only here.' : 'This session has ended. Resume it in the deck to send prompts.';
   sendBtn.title = s?.alive ? 'This session was launched outside the deck; the deck can only observe it.' : 'Resume the session in the deck first';
 }
-function showPromptPanel(open) { const p = $('prompt'); p.hidden = !open; $('prompt-toggle').setAttribute('aria-expanded', String(open)); }
-$('prompt-toggle').onclick = () => showPromptPanel($('prompt').hidden);
-$('copy-last').onclick = () => { const p = state.cache.get(state.selected)?.meta?.lastPrompt; if (p) { navigator.clipboard?.writeText(p); toast('Copied last prompt'); } };
+// Collapsing the prompt keeps its header line (with the queue count) in view.
+function showPromptPanel(open) {
+  prefs.promptCollapsed = !open; savePrefs();
+  $('prompt').classList.toggle('collapsed', !open);
+  $('prompt-toggle').setAttribute('aria-expanded', String(open));
+  $('prompt-toggle').title = open ? 'Collapse the prompt' : 'Expand the prompt';
+  if (open && !$('compose').disabled) $('compose').focus({ preventScroll: true });
+}
+$('prompt-toggle').onclick = () => showPromptPanel($('prompt').classList.contains('collapsed'));
+$('prompt').classList.toggle('collapsed', !!prefs.promptCollapsed);
+$('prompt-toggle').setAttribute('aria-expanded', String(!prefs.promptCollapsed));
 
 // ------------------------------------------------------------ deck-launched sessions
 const PERM_LABEL = { default: 'asks', acceptEdits: 'accept edits', auto: 'auto', plan: 'plan only' };
@@ -810,22 +1189,63 @@ async function answerPerm(requestId, decision, message) {
   catch (e) { toast(`Answer failed: ${e.message}`); }
 }
 
-async function sendPrompt() {
+async function sendPrompt(now = false) {
   const text = $('compose').value;
-  if (!text.trim() || $('compose').disabled) return;
+  if ($('compose').disabled) return;
   const id = state.selected;
-  $('send').disabled = true;
-  try { await api.post(`/api/sessions/${sid(id)}/send`, { text }); $('compose').value = ''; setFollow(true, true); }
+  if (!text.trim()) { $('compose').focus(); return; }
+  $('send').disabled = true; $('send-now').disabled = true;
+  try { await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text }); $('compose').value = ''; setLive(true, true); }
   catch (e) { toast(`Send failed: ${e.message}`); }
   finally { if (id === state.selected) renderQueue(); }
 }
-$('send').onclick = sendPrompt;
-$('compose').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendPrompt(); } });
-$('interrupt').onclick = interruptSession;
+$('send').onclick = () => sendPrompt(false);
+$('send-now').onclick = () => sendPrompt(true);
+$('stop').onclick = interruptSession;
+$('compose').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendPrompt(e.shiftKey); } });
 
-async function queueOp(op, itemId) {
-  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId }); }
-  catch (e) { toast(`Queue: ${e.message}`); }
+async function queueOp(op, itemId, text) {
+  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId, text }); return true; }
+  catch (e) { if (op !== 'editing') toast(`Queue: ${e.message}`); return false; }
+}
+
+// Click a queued prompt to reword it in place. Leaving the box or ⌘↩ saves,
+// Esc cancels. While it is open the deck holds that prompt back, so a turn
+// ending mid-edit does not send the old wording.
+function editQueued(item, span) {
+  if (state.qEdit) return;
+  const ta = h('textarea', { class: 'q-edit', rows: '1', spellcheck: 'true', 'aria-label': 'Edit queued prompt (⌘↩ or click away to save, Esc to cancel)' });
+  ta.value = item.text;
+  const fit = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`; };
+  state.qEdit = { id: item.id, el: ta, sessionId: state.selected, original: item.text, done: false };
+  span.replaceWith(ta);
+  fit(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.addEventListener('input', fit);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); finishEdit(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishEdit(false); }
+  });
+  ta.addEventListener('blur', () => finishEdit(true));
+  queueOp('editing', item.id);
+}
+async function finishEdit(save) {
+  const ed = state.qEdit; if (!ed || ed.done) return;
+  ed.done = true;
+  const text = ed.el.value;
+  const changed = save && text.trim() && text !== ed.original;
+  state.qEdit = null;
+  const item = changed && deckOf(ed.sessionId)?.queue.find(x => x.id === ed.id);
+  if (item) item.text = text;   // show the new wording now; the server confirms it
+  if (ed.sessionId === state.selected) renderQueue();
+  const path = `/api/sessions/${sid(ed.sessionId)}/queue`;
+  if (!changed) { api.post(path, { op: 'editing', itemId: null }).catch(() => {}); return; }
+  try { await api.post(path, { op: 'edit', itemId: ed.id, text }); }
+  catch (e) {
+    // Already sent or removed: keep the new wording rather than lose it.
+    api.post(path, { op: 'editing', itemId: null }).catch(() => {});
+    if (ed.sessionId === state.selected && !$('compose').value.trim()) { $('compose').value = text; toast('That prompt had already gone out. Your edit is in the prompt box.'); }
+    else toast(`Edit not saved: ${e.message}`);
+  }
 }
 async function interruptSession() {
   try { await api.post(`/api/sessions/${sid(state.selected)}/interrupt`); }
@@ -906,7 +1326,7 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followPin(); renderRows(t.jump); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 function evMatches(ev, q) {
@@ -984,7 +1404,7 @@ function rowIndexAt(y) {
 function renderRows(jump = false) {
   const n = state.rows.length;
   vspacer.style.height = `${state.total + 12}px`;
-  if (jump || state.follow) vlist.scrollTop = 0; // newest rows live at the top
+  if (jump || state.live) vlist.scrollTop = 0; // newest rows live at the top
   if (!n) {
     vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || state.kind !== 'all' ? 'No events match.' : 'No events yet.') : 'Loading…'));
     return;
@@ -1003,8 +1423,8 @@ function renderRows(jump = false) {
 }
 vlist.addEventListener('scroll', () => {
   const atTop = vlist.scrollTop <= 30;
-  if (!atTop && state.follow) setFollow(false, true);
-  else if (atTop && !state.follow) setFollow(true, true);
+  if (!atTop && state.live) setLive(false);
+  else if (atTop && !state.live && !state.picked) setLive(true);
   renderRows();
 });
 vlist.addEventListener('click', async (e) => {
@@ -1021,22 +1441,30 @@ vlist.addEventListener('click', async (e) => {
   if (!row || row.classList.contains('k-turn_end')) return;
   const ev = findEvent(row.dataset.sid, row.dataset.id);
   if (!ev) return;
-  setPin(false); setCursor(ev.id); showEventDetails(ev);
+  pickEvent(); setCursor(ev.id); showEventDetails(ev);
   if (btn?.dataset.askRow) askEvent(ev);
 });
 function findEvent(sessionId, id) { return state.cache.get(sessionId)?.byId.get(id) || null; }
 function setCursor(id) { state.cursor = id; renderRows(); }
-function setFollow(on, quiet = false) {
-  state.follow = on; $('follow').setAttribute('aria-pressed', String(on));
-  if (on && !quiet) { vlist.scrollTop = 0; renderRows(); }
+/**
+ * Live: the event list sits on the newest event and an open details pane shows
+ * it. Looking at anything else drops out of live; either Live button (stream
+ * toolbar or details pane) brings both back to the newest event.
+ */
+function setLive(on, quiet = false) {
+  state.live = on;
+  if (on) state.picked = false;
+  for (const b of [$('follow'), $('details-pin')]) { b.setAttribute('aria-pressed', String(on)); b.title = on ? 'Live: showing the newest event (Space to pause)' : 'Go live: jump to the newest event (Space)'; }
+  if (on && !quiet) { vlist.scrollTop = 0; followLive(); renderRows(); }
 }
+function pickEvent() { state.picked = true; setLive(false); }
 function setKind(k) {
   state.kind = k;
   for (const b of $('kind-seg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.k === k));
   setTab('events');
   scheduleRows(true);
 }
-$('follow').onclick = () => setFollow(!state.follow);
+$('follow').onclick = () => setLive(true);
 $('ev-filter').oninput = (e) => { state.filter = e.target.value; scheduleRows(); };
 $('kind-seg').onclick = (e) => { const b = e.target.closest('button'); if (b) setKind(b.dataset.k); };
 $('show-thinking').setAttribute('aria-pressed', String(state.showThinking));
@@ -1054,7 +1482,7 @@ function moveCursor(delta) {
     i = i < 0 ? (delta > 0 ? 0 : state.rows.length - 1) : Math.max(0, Math.min(state.rows.length - 1, i + delta));
   } while (state.rows[i].ev.kind === 'turn_end' && i > 0 && i < state.rows.length - 1);
   const ev = state.rows[i].ev;
-  setFollow(false, true); setPin(false);
+  pickEvent();
   state.cursor = ev.id;
   scrollToRow(i);
   renderRows();
@@ -1064,25 +1492,27 @@ function jumpToSeq(seq) {
   const c = state.cache.get(state.selected); if (!c) return;
   const ev = c.events.find(e => e.seq === seq); if (!ev) { toast('That event is not loaded'); return; }
   if (state.kind !== 'all' || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKind('all'); buildRows(); }
-  setTab('events'); setPin(false);
+  setTab('events'); pickEvent();
   const i = state.rows.findIndex(r => r.ev.id === ev.id);
-  setFollow(false, true); state.cursor = ev.id;
+  state.cursor = ev.id;
   if (i >= 0) scrollToRow(i);
   renderRows(); showEventDetails(ev);
 }
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === '.' && (e.metaKey || e.ctrlKey) && state.selected && !$('stop').hidden && !$('stop').disabled) { e.preventDefault(); interruptSession(); return; }
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') { if (e.key === 'Escape') e.target.blur(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector('dialog[open]')) return;
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
+  if (e.key === '[') { e.preventDefault(); setRailMin(!prefs.railMin); return; }
   if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
   else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
   else if (e.key === 'Enter') { const ev = state.cursor && findEvent(state.selected, state.cursor); if (ev) showEventDetails(ev); }
-  else if (e.key === ' ') { e.preventDefault(); setFollow(!state.follow); }
+  else if (e.key === ' ') { e.preventDefault(); state.live ? pickEvent() : setLive(true); }
   else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
   else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }
   else if (e.key === '?') $('keys').showModal();
@@ -1112,7 +1542,6 @@ const detailCtx = (ev) => {
 };
 function syncDetailsPane() { $('deck').classList.toggle('no-details', !state.detailsKey && !state.ask); }
 function closeDetails() {
-  setPin(false);
   if (state.ask) closeAsk();
   showDetailsEmpty();
   if (state.cursor) { state.cursor = null; renderRows(); }
@@ -1120,22 +1549,16 @@ function closeDetails() {
 }
 $('details-close').onclick = closeDetails;
 
-// Pinned: the pane tracks the newest event in the stream until something else is picked.
-function setPin(on) {
-  if (state.pinned === on) return;
-  state.pinned = on; prefs.pinDetails = on; savePrefs();
-  $('details-pin').setAttribute('aria-pressed', String(on));
-  if (on && followPin()) renderRows();
-}
-function followPin() {
-  if (!state.pinned || !state.selected) return false;
+// While live, an open details pane tracks the newest event in the stream.
+function followLive() {
+  if (!state.live || !state.selected || !state.detailsKey || state.ask) return false;
   const ev = state.rows.find(r => r.ev.kind !== 'turn_end' && !r.ev.id.startsWith('loading:'))?.ev;
   if (!ev || state.detailsKey === `${ev.sessionId}:${ev.id}`) return false;
   state.cursor = ev.id; showEventDetails(ev);
   return true;
 }
-$('details-pin').onclick = () => setPin(!state.pinned);
-$('details-pin').setAttribute('aria-pressed', String(state.pinned));
+$('details-pin').onclick = () => setLive(true);
+setLive(true, true);
 function showDetailsEmpty() {
   state.detailsKey = null;
   syncDetailsPane();
@@ -1267,7 +1690,7 @@ async function sendAsk(q) {
 
 /** Ask about a whole list: the text sent is what the list shows. */
 function askList(key, btn) {
-  const sessLines = (list) => list.map(s => `- ${s.title} | ${tilde(s.cwd)} | ${PHASE_LABEL[phaseOf(s)]}${s.gitBranch ? ' | ' + s.gitBranch : ''}${s.glance?.errors ? ` | ${s.glance.errors} errors` : ''} | last said: ${oneLine(s.glance?.lastText || '', 160)}${briefLine(s.id) ? ' | brief: ' + oneLine(briefLine(s.id), 300) : ''}`).join('\n');
+  const sessLines = (list) => list.map(s => `- ${s.title} | ${tilde(s.cwd)} | ${SIG_LABEL[sigOf(s)]}${s.gitBranch ? ' | ' + s.gitBranch : ''}${s.glance?.errors ? ` | ${s.glance.errors} errors` : ''} | last said: ${oneLine(s.glance?.lastText || '', 160)}${briefLine(s.id) ? ' | brief: ' + oneLine(briefLine(s.id), 300) : ''}`).join('\n');
   let spec, ring;
   switch (key) {
     case 'events': {
@@ -1285,8 +1708,8 @@ function askList(key, btn) {
     }
     case 'queue': spec = { kind: 'text', label: 'Prompt queue', text: (state.cache.get(state.selected)?.meta?.queue || []).map((x, i) => `${i + 1}. ${x.content}`).join('\n') || '(empty)', what: 'the prompt queue' }; ring = { type: 'sel', sel: '#queue' }; break;
     case 'active': case 'recent': spec = { kind: 'text', label: `${key === 'active' ? 'Active' : 'Recent'} sessions`, text: sessLines(state.snapshot[key]), what: `${key} sessions` }; ring = { type: 'sel', sel: `.bucket[data-bucket=${key}] ul` }; break;
-    case 'ov-needs': spec = { kind: 'text', label: 'Sessions that need you', text: sessLines(state.snapshot.active.filter(s => phaseOf(s) === 'turn' || recentErr(s))), what: 'what needs you' }; ring = { type: 'sel', sel: '[data-ov=needs]' }; break;
-    case 'ov-working': spec = { kind: 'text', label: 'Working sessions', text: sessLines(state.snapshot.active.filter(s => phaseOf(s) === 'working')), what: 'the working sessions' }; ring = { type: 'sel', sel: '[data-ov=working]' }; break;
+    case 'ov-needs': spec = { kind: 'text', label: 'Sessions that need you', text: sessLines(state.snapshot.active.filter(s => needsYou(s) || recentErr(s))), what: 'what needs you' }; ring = { type: 'sel', sel: '[data-ov=needs]' }; break;
+    case 'ov-working': spec = { kind: 'text', label: 'Working sessions', text: sessLines(state.snapshot.active.filter(s => sigOf(s) === 'working')), what: 'the working sessions' }; ring = { type: 'sel', sel: '[data-ov=working]' }; break;
     case 'ov-recent': spec = { kind: 'text', label: 'Recently finished sessions', text: sessLines(state.snapshot.recent.slice(0, 8)), what: 'recently finished sessions' }; ring = { type: 'sel', sel: '[data-ov=recent]' }; break;
     default: return;
   }
@@ -1342,13 +1765,13 @@ function renderFiles() {
       h('td', { title: f.path }, hot ? h('span', { class: 'hot', title: 'touched in the last 10 minutes' }, '● ') : null, relPath(f.path, cwd)),
       h('td', { class: 'num' }, f.reads || ''), h('td', { class: 'num' }, f.writes || ''),
       h('td', { class: 'num', title: f.lastTs || '' }, f.lastTs ? ago(age) + ' ago' : ''),
-      h('td', {}, h('button', { class: 'mini', type: 'button', onclick: (e) => { e.stopPropagation(); api.openEditor(f.path, 1); } }, 'Open'))));
+      h('td', {}, ib('i-open', 'Open in editor', (e) => { e.stopPropagation(); api.openEditor(f.path, 1); }, { size: 13 }))));
   }
   table.append(tb);
   $('files').replaceChildren(files.length ? table : h('div', { class: 'pad muted' }, 'No files touched yet.'));
 }
 async function openFile(path, line = null) {
-  setPin(false); state.detailsKey = `file:${path}`; syncDetailsPane();
+  pickEvent(); state.detailsKey = `file:${path}`; syncDetailsPane();
   try {
     const f = await api.get(`/api/file?path=${encodeURIComponent(path)}`);
     if (state.detailsKey !== `file:${path}`) return;
@@ -1385,7 +1808,7 @@ function renderChanges() {
       h('td', {}, h('span', { class: 'st-x', title: `index: ${f.x} · worktree: ${f.y}` }, st)),
       h('td', { title: f.from ? `renamed from ${f.from}` : f.path }, f.path),
       h('td', { class: 'num add-n' }, f.added ?? (f.binary ? 'bin' : '')), h('td', { class: 'num del-n' }, f.deleted ?? ''),
-      h('td', {}, h('button', { class: 'mini', type: 'button', onclick: (e) => { e.stopPropagation(); api.openEditor(`${c.root}/${f.path}`, 1); } }, 'Open'))));
+      h('td', {}, ib('i-open', 'Open in editor', (e) => { e.stopPropagation(); api.openEditor(`${c.root}/${f.path}`, 1); }, { size: 13 }))));
   }
   table.append(tb);
   const commits = h('div', { class: 'commits' }, h('div', { class: 'sec-t', style: 'padding: 6px 14px 4px' }, 'Recent commits'));
@@ -1393,7 +1816,7 @@ function renderChanges() {
   root.replaceChildren(c.files.length ? table : h('div', { class: 'pad muted' }, 'Working tree clean.'), commits);
 }
 async function openDiff(file) {
-  setPin(false); const id = state.selected; state.detailsKey = `diff:${file}`; syncDetailsPane();
+  pickEvent(); const id = state.selected; state.detailsKey = `diff:${file}`; syncDetailsPane();
   try {
     const d = await api.get(`/api/sessions/${sid(id)}/diff?file=${encodeURIComponent(file)}`);
     if (state.detailsKey !== `diff:${file}`) return;
@@ -1411,7 +1834,7 @@ function shellRunEl(run) {
   head.append(h('span', { class: 'cmd', title: run.cmd }, `$ ${run.cmd}`));
   head.append(h('span', { class: 'cwd', title: run.cwd }, basename(run.cwd || '')));
   head.append(h('span', { class: 'chip status' }, run.running ? 'running' : ''));
-  head.append(h('button', { class: 'mini', type: 'button', onclick: () => { $('sh-cmd').value = run.cmd; $('sh-cmd').focus(); } }, 'Reuse'));
+  head.append(ib('i-reuse', 'Reuse this command', () => { $('sh-cmd').value = run.cmd; $('sh-cmd').focus(); }, { size: 13 }));
   head.append(h('button', { class: 'mini kill', type: 'button', onclick: () => api.post('/api/shell/kill', { runId: run.id }) }, 'Kill'));
   head.append(h('button', { class: 'ask-ico', type: 'button', 'aria-label': 'Ask about this run', title: 'Ask about this run', onclick: () => {
     const r = state.shell.runs.get(run.id) || run;
@@ -1475,6 +1898,9 @@ async function loadShellHistory() {
 // ------------------------------------------------------------ layout
 function initLayout() {
   const deck = $('deck');
+  deck.classList.toggle('rail-min', !!prefs.railMin);
+  $('rail-toggle').setAttribute('aria-expanded', String(!prefs.railMin));
+  if (prefs.railMin) $('rail-toggle').title = $('rail-toggle').ariaLabel = 'Expand the session list ([)';
   if (prefs.left) deck.style.setProperty('--left', prefs.left + 'px');
   if (prefs.right) deck.style.setProperty('--right', prefs.right + 'px');
   document.querySelectorAll('.gutter').forEach(g => {
