@@ -153,6 +153,10 @@ svg { flex: none; }
 .titlebar button { -webkit-app-region: no-drag; app-region: no-drag; }
 .tb-title { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 2px 4px; border-radius: 6px; font-weight: 600; font-size: 12.5px; letter-spacing: .01em; color: var(--fg); }
 .tb-title:hover { background: var(--hover); }
+.tb-model { -webkit-app-region: no-drag; app-region: no-drag; display: inline-flex; }
+.tb-model select { height: 22px; padding: 0 4px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font: 11.5px var(--sans); cursor: pointer; }
+.tb-model select:hover { color: var(--fg2); border-color: var(--line2); }
+.tb-model select:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
 #deck { display: grid; flex: 1; min-height: 0; grid-template-columns: var(--rail-w, var(--left, 288px)) var(--gut-l, 4px) minmax(0, 1fr) 4px var(--right, 460px); }
 .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .gutter { background: var(--line); cursor: col-resize; }

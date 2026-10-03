@@ -1397,6 +1397,26 @@ async function stopSession() {
 
 // The launch dialog: a new session, or an ended one resumed under the deck.
 let launchCtx = null;
+// The model new sessions start with: picked in the title bar, preselected in
+// the launch dialog (where a different pick applies to that launch only).
+const MODELS = [['', 'Default'], ['opus', 'Opus'], ['opus[1m]', 'Opus 1M'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
+let cliModel = null;
+function modelOptions(sel) {
+  const opts = MODELS.map(([v, l]) => h('option', { value: v }, v ? l : cliModel ? `${l} · ${cliModel}` : `${l} model`));
+  // A saved pick no longer in the list still shows.
+  if (prefs.launchModel && !MODELS.some(([v]) => v === prefs.launchModel)) opts.push(h('option', { value: prefs.launchModel }, prefs.launchModel));
+  sel.replaceChildren(...opts);
+}
+function renderModelPicker() {
+  const sel = $('tb-model');
+  modelOptions(sel);
+  sel.value = prefs.launchModel || '';
+  sel.title = `New sessions start on ${sel.selectedOptions[0]?.textContent.replace(/^Default · /, '') || 'the CLI default'}`;
+}
+$('tb-model').addEventListener('change', (e) => { prefs.launchModel = e.target.value; savePrefs(); renderModelPicker(); });
+renderModelPicker();
+api.get('/api/config').then(r => { cliModel = r.cliModel; renderModelPicker(); }).catch(() => {});
+
 function openLaunch({ resumeId } = {}) {
   const dlg = $('new-session');
   if (dlg.open) return;
@@ -1410,6 +1430,7 @@ function openLaunch({ resumeId } = {}) {
   $('ns-cwd').readOnly = !!resume;
   $('ns-name-w').hidden = !!resume;
   $('ns-name').value = '';
+  modelOptions($('ns-model'));
   $('ns-model').value = prefs.launchModel || '';
   $('ns-perm').value = prefs.launchPerm || 'default';
   $('ns-err').hidden = true;
@@ -1475,7 +1496,7 @@ $('ns-form').addEventListener('submit', async (e) => {
       ? await api.post(`/api/sessions/${sid(launchCtx.resumeId)}/resume`, body)
       : await api.post('/api/launch', body);
     if (!launchCtx?.resumeId) prefs.launchCwd = body.cwd;
-    prefs.launchModel = body.model; prefs.launchPerm = body.permissionMode; savePrefs();
+    prefs.launchPerm = body.permissionMode; savePrefs();
     state.deck.set(st.id, st);
     $('ns-prompt').value = '';
     $('new-session').close();

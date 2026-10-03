@@ -154,6 +154,11 @@ function serveStatic(res, rel) {
   });
 }
 
+/** The model the CLI uses when none is passed: the `model` in Claude Code's user settings. */
+function cliModel() {
+  try { return JSON.parse(fs.readFileSync(path.join(index.claudeDir, 'settings.json'), 'utf8')).model || null; } catch { return null; }
+}
+
 // --------------------------------------------------------------- routes
 async function route(req, res, url) {
   const p = url.pathname;
@@ -179,6 +184,7 @@ async function route(req, res, url) {
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
   if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
+  if (p === '/api/config' && req.method === 'GET') return send(res, 200, { cliModel: cliModel() });
   if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
   if (p === '/api/usage/refresh' && req.method === 'POST') {
     await probeQuota();

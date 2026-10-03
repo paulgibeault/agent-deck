@@ -56,6 +56,7 @@
   <button id="conn" type="button" class="conn" aria-label="Server: offline" title="Server offline"><span class="cdot"></span></button>
   <button id="home" class="tb-title" type="button" title="Overview (Esc)">Agent Deck</button>
   <span class="spacer"></span>
+  <label class="tb-model" title="Model new sessions start with"><span class="sr">Model for new sessions</span><select id="tb-model"></select></label>
   <button id="quota" type="button" class="quota" aria-label="Plan usage" aria-describedby="hovercard"><svg class="qring" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="qt" cx="8" cy="8" r="6"/><circle class="qa" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 8 8)"/></svg><span class="qpct"></span></button>
 </header>
 <div id="deck">
@@ -211,7 +212,7 @@
     <textarea id="ns-prompt" class="ns-prompt" rows="4" required placeholder="What should Claude do? (⌘↩ to start)"></textarea>
     <div class="ns-row">
       <div><label class="ns-l" for="ns-model">Model</label>
-        <select id="ns-model" class="field"><option value="">CLI default</option><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option></select></div>
+        <select id="ns-model" class="field"></select></div>
       <div><label class="ns-l" for="ns-perm">Permissions</label>
         <select id="ns-perm" class="field">
           <option value="default">Ask me in the deck</option>
