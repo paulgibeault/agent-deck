@@ -1,5 +1,5 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
-import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
+import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 
@@ -434,7 +434,7 @@ function renderTree() {
   const needs = snap.active.filter(needsYou).length;
   document.title = needs ? `(${needs}) Agent Deck` : 'Agent Deck';
   // The rows were rebuilt: keep an open card on its (new) anchor.
-  if (card.id && card.id !== 'quota' && card.id !== 'details') {
+  if (card.id && !OWN_CARDS.has(card.id)) {
     const anchor = document.querySelector(`#${prefs.railMin ? 'mini' : 'tree'} [data-id="${CSS.escape(card.id)}"]`);
     anchor ? showCard(card.id, anchor, true) : hideCard(true);
   }
@@ -637,6 +637,8 @@ $('mini').addEventListener('click', (e) => { const b = e.target.closest('.mchip'
 // The hover card: everything worth knowing before deciding to open a session.
 // The same card serves the full rail's rows and the minimized rail's chips.
 const card = { id: null, anchor: null, timer: null, quiet: null };
+// Cards that are not a session's: the rail's hover logic leaves these alone.
+const OWN_CARDS = new Set(['quota', 'details', 'inference']);
 const plural = (n, w, many = w + 's') => `${n} ${n === 1 ? w : many}`;
 function cardFacts(s) {
   const g = s.glance || {};
@@ -724,7 +726,7 @@ function hideCard(now = false) {
 function hoverCards(root, sel) {
   root.addEventListener('mouseover', (e) => {
     const b = e.target.closest(sel);
-    if (!b) { if (card.id && card.id !== 'quota' && card.id !== 'details') hideCard(); return; }
+    if (!b) { if (card.id && !OWN_CARDS.has(card.id)) hideCard(); return; }
     clearTimeout(card.timer);
     if (card.id === b.dataset.id || card.quiet === b.dataset.id) return;
     card.quiet = null;
@@ -966,6 +968,36 @@ function detailsCardBody(s, b) {
   if (pb?.count) row('Brief', `${plural(pb.count, 'refresh', 'refreshes')} · ${fmtUsd(pb.costUsd || 0)} on ${state.narrator.briefModel || 'the brief model'}`);
   return [h('div', { class: 'hc-h' }, h('b', {}, 'Session details')), h('table', { class: 'hc-tbl' }, h('tbody', {}, ...rows))];
 }
+// The model label on an event row: hover for how that API response was produced.
+function showInferenceCard(anchor) {
+  const r = anchor.closest('.row');
+  const sessionId = r?.dataset.sid || state.selected;
+  let ev = r && findEvent(sessionId, r.dataset.id);
+  // A later block of the response: the details sit on its first event.
+  if (ev && !ev.inference && ev.msgId) {
+    const evs = state.cache.get(sessionId)?.events || [];
+    for (let i = evs.indexOf(ev); i >= 0; i--) if (evs[i].msgId === ev.msgId && evs[i].inference) { ev = evs[i]; break; }
+  }
+  if (!ev?.inference) return;
+  const el = $('hovercard');
+  clearTimeout(card.timer);
+  card.id = 'inference'; card.anchor = anchor;
+  el.replaceChildren(...inferenceCard(ev));
+  el.hidden = false;
+  const a = anchor.getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(window.innerWidth - el.offsetWidth - 8, a.right - el.offsetWidth + 8))}px`;
+  el.style.top = `${a.bottom + el.offsetHeight + 12 > window.innerHeight ? Math.max(8, a.top - el.offsetHeight - 6) : a.bottom + 6}px`;
+  el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
+}
+$('vlist').addEventListener('mouseover', (e) => {
+  const m = e.target.closest('.mdl');
+  if (!m) { if (card.id === 'inference') hideCard(); return; }
+  if (card.anchor === m) { clearTimeout(card.timer); return; }
+  clearTimeout(card.timer);
+  card.timer = setTimeout(() => showInferenceCard(m), card.id === 'inference' ? 0 : 200);
+});
+$('vlist').addEventListener('mouseleave', () => { if (card.id === 'inference') hideCard(); });
+
 // One button for the life of the page: the header is rebuilt on every event,
 // and a fresh node would lose the hover that opened the card.
 let detailsEl = null;

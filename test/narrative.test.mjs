@@ -397,3 +397,14 @@ test('UsageTracker: a /usage report and model-call quota merge per window', () =
   assert.equal(s.account, 'Using your subscription');
   assert.ok(s.windows[0].pace?.perHour > 0, 'minute-rounded and exact resets count as one window');
 });
+
+test('pricing: labels and an estimate per inference', async () => {
+  const { modelLabel, costOf, priceOf } = await import('../public/pricing.js');
+  assert.equal(modelLabel('claude-opus-5-5'), 'Opus 5.5');
+  assert.equal(modelLabel('claude-haiku-4-5-20251001'), 'Haiku 4.5');
+  assert.equal(priceOf('claude-haiku-4-5-20251001').context, 200_000);
+  assert.equal(costOf('claude-unknown', { input: 1 }), null);
+  const c = costOf('claude-opus-5-5', { input: 1e6, cacheRead: 1e6, cacheWrite: 2e6, cacheWrite1h: 1e6, output: 1e6 });
+  assert.deepEqual([c.input, c.cacheRead, c.cacheWrite, c.output], [4, 0.2, 4 * 1.25 + 4 * 2, 20]);
+  assert.equal(costOf('claude-opus-5-5', { output: 1e6 }, 'fast').output, 40);
+});

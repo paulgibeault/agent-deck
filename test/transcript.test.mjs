@@ -233,3 +233,31 @@ test('SessionIndex: a headless session started by a Bash `claude -p` call nests 
   assert.equal(runsClaude('npx claude-thing'), false);
   assert.equal(runsClaude('/opt/homebrew/bin/claude -p hi'), true);
 });
+
+test('inference: one per API response, on its first event, with switches and cache diagnostics', () => {
+  const s = new SessionState('inf');
+  const rec = (uuid, msgId, model, block, extra = {}, usage = {}) => ({ type: 'assistant', uuid, timestamp: '2026-10-03T10:00:00.000Z', requestId: `req_${msgId}`, effort: 'high', perTurnEffort: 'medium', ...extra,
+    message: { id: msgId, model, role: 'assistant', stop_reason: 'tool_use', content: [block],
+      usage: { input_tokens: 2, cache_read_input_tokens: 1000, cache_creation_input_tokens: 50, cache_creation: { ephemeral_1h_input_tokens: 50 }, output_tokens: 30, output_tokens_details: { thinking_tokens: 10 }, service_tier: 'standard', speed: 'standard', ...usage },
+      ...(extra.message || {}) } });
+  s.ingest(rec('a1', 'm1', 'claude-fable-5-1', { type: 'thinking', thinking: '' }, { thinkingDurationMs: 900 }));
+  s.ingest(rec('a2', 'm1', 'claude-fable-5-1', { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }));
+  s.ingest(rec('a3', 'm2', 'claude-opus-5-5', { type: 'text', text: 'hi' }, { message: { diagnostics: { cache_miss_reason: { type: 'model_changed', cache_missed_input_tokens: 111845 } } } }));
+  const [think, tool, text] = s.events;
+  assert.equal(think.inference.model, 'claude-fable-5-1');
+  assert.equal(think.inference.effort, 'medium');
+  assert.equal(think.inference.sessionEffort, 'high');
+  assert.equal(think.inference.thinkingMs, 900);
+  assert.deepEqual(think.inference.usage, { input: 2, cacheRead: 1000, cacheWrite: 50, cacheWrite1h: 50, output: 30, thinking: 10 });
+  assert.equal(think.inference.speed, undefined, 'standard speed is not worth showing');
+  assert.equal(tool.inference, undefined, 'the rest of the response points back by msgId');
+  assert.equal(tool.usage, undefined, 'usage is not repeated on every block');
+  assert.equal(tool.msgId, 'm1');
+  assert.equal(text.inference.switchedFrom, 'claude-fable-5-1');
+  assert.deepEqual(text.inference.cacheMiss, { reason: 'model_changed', tokens: 111845 });
+  assert.equal(s.meta.usage.messages, 2);
+
+  s.ingest(rec('a4', 'm3', '<synthetic>', { type: 'text', text: 'API Error' }, { isApiErrorMessage: true }));
+  assert.equal(s.events.at(-1).inference.synthetic, true);
+  assert.equal(s.meta.model, 'claude-opus-5-5', 'a synthetic message is not a model switch');
+});

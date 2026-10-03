@@ -446,6 +446,17 @@ svg { flex: none; }
 .row .dur { flex: none; font: 11px var(--mono); color: var(--muted); }
 .row .dur.run { color: var(--ok-fg); }
 .row .dur.bad { color: var(--err-fg); }
+.row .mdl { flex: none; padding: 1px 4px; border-radius: 4px; font-size: 11px; color: var(--muted); opacity: .75; cursor: help; }
+.row .mdl i { font-style: normal; opacity: .7; }
+.row:hover .mdl, .row.selected .mdl { opacity: 1; }
+.row .mdl:hover { background: var(--bg2); color: var(--fg2); }
+.row .mdl.sw { color: var(--info-fg); opacity: 1; }
+.row .mdl.warn { color: var(--turn-fg); opacity: 1; }
+.row .mdl.syn { font-style: italic; }
+.row .mdl.cont { opacity: .45; }
+.row:hover .mdl.cont, .row.selected .mdl.cont { opacity: .8; }
+.inf-bar { display: block; width: 100%; height: 3px; margin-top: 3px; border-radius: 2px; background: var(--line2); overflow: hidden; }
+.inf-bar > span { display: block; height: 100%; background: var(--info); }
 .row .end { flex: none; width: 56px; display: flex; justify-content: flex-end; }
 .row .tok { font: 11px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .row .ask-mini { display: none; }
