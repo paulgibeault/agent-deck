@@ -426,6 +426,30 @@ svg { flex: none; }
 .compose textarea { flex: 1; resize: vertical; padding: 8px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--bg0); min-height: 44px; }
 .compose textarea:disabled { opacity: .6; }
 .compose-actions { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+/* Attachments: a quiet paperclip in the text box's corner, a tray of what is attached above it. */
+.compose-box { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ta-wrap { position: relative; display: flex; }
+.ta-wrap textarea { padding-right: 28px; }
+.ib.clip { position: absolute; top: 5px; right: 5px; min-width: 22px; height: 22px; padding: 0; opacity: .35; transition: opacity .12s; }
+.ta-wrap:hover .clip, .ta-wrap textarea:focus ~ .clip, .ib.clip:focus-visible, .dropping .clip { opacity: .85; }
+.ta-wrap textarea:disabled ~ .clip { display: none; }
+.dropping .ta-wrap textarea { border-color: var(--info); border-style: dashed; background: color-mix(in srgb, var(--info) 6%, var(--bg0)); }
+.att-tray { display: flex; flex-wrap: wrap; gap: 6px; }
+.queue-panel > .att-tray { margin: 0 0 6px; }
+.att-tray[hidden] { display: none; }
+.att { position: relative; display: inline-flex; align-items: center; gap: 5px; height: 36px; border: 1px solid var(--line2); border-radius: 6px; background: var(--bg0); font: 11.5px var(--mono); }
+.att-img { width: 36px; overflow: hidden; }
+.att-img img { width: 100%; height: 100%; object-fit: cover; }
+.att-file, .att-wait { padding: 0 22px 0 8px; max-width: 220px; }
+.att-wait { padding-right: 8px; }
+.att-n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.att-x { position: absolute; top: 2px; right: 2px; display: none; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--bg0) 85%, transparent); color: var(--fg); cursor: pointer; }
+.att:hover .att-x, .att-x:focus-visible { display: inline-flex; }
+.att-file .att-x { display: inline-flex; opacity: .5; top: 10px; }
+.att-file .att-x:hover { opacity: 1; }
+.queue li .q-att { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); flex: none; }
+.prompt-att { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.prompt-att img { max-height: 160px; max-width: 240px; border: 1px solid var(--line); border-radius: 6px; }
 
 /* ---------------------------------------------------------------- events list */
 .vlist { flex: 1; overflow: auto; position: relative; outline: none; font-size: 12.5px; }

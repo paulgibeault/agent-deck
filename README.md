@@ -171,7 +171,13 @@ minute, "crash" exits with an error.
   ahead of the queue. **Stop** (the square, ⌘.) shows while Claude works:
   it ends the turn and holds the queue. The power button ends the process
   (sessions also end when the backend stops). For other sessions the panel
-  is a read-only mirror of the queue.
+  is a read-only mirror of the queue. **Attachments:** paste a file or
+  screenshot into the prompt box, drop files on the panel, or use the
+  paperclip in the box's corner (the New session dialog takes them too).
+  Images go as images (big ones are scaled down to fit the API's 5 MB
+  limit), PDFs as documents, and text files are inlined. They show as a
+  tray above the box, a paperclip count on queued prompts, and thumbnails
+  in the prompt's details.
 - **Permissions.** A deck session's permission prompt shows as a card with
   the command, path or plan: Allow, Allow for session (applies the CLI's
   suggested rule or mode), or Deny with an optional reason for Claude. It
