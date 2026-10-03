@@ -106,6 +106,7 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     const card = h('div', { class: 'turn-card' });
     card.append(tagEl(ev), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
     if (ev.origin && ev.origin !== 'human') card.append(h('span', { class: 'chip' }, ev.origin));
+    if (ev.attachments?.length) card.append(h('span', { class: 'chip', title: ev.attachments.map(attLabel).join('\n') }, svgUse('i-clip', 10), ` ${ev.attachments.length}`));
     card.append(h('span', { class: 'meta' }, turn?.meta || fmtTime(ev.ts)), askMini());
     row.append(card);
     return row;
@@ -483,6 +484,7 @@ export function renderDetails(ev, detail, ctx) {
     body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
   } else if (ev.kind === 'prompt') {
     body.append(section('Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
+    if (ev.attachments?.length) body.append(section('Attachments', {}, renderPromptAttachments(ev)));
   } else if (ev.kind === 'tool') {
     const path = t.input.file_path || t.input.notebook_path || null;
     switch (t.name) {
@@ -552,6 +554,18 @@ export function renderDetails(ev, detail, ctx) {
   root.append(rawPane);
   highlightIn(root);
   return root;
+}
+
+const attLabel = (a) => a.kind === 'image' ? `image (${a.mediaType || '?'})` : a.name;
+function renderPromptAttachments(ev) {
+  const wrap = h('div', { class: 'prompt-att' });
+  for (const a of ev.attachments) {
+    if (a.kind === 'image') {
+      const src = `/api/sessions/${encodeURIComponent(ev.sessionId)}/events/${encodeURIComponent(ev.id)}/image/${a.index}`;
+      wrap.append(h('a', { href: src, target: '_blank' }, h('img', { src, alt: a.mediaType || 'image', title: `${a.mediaType} · ${fmtTokens(a.bytes)} b64 chars` })));
+    } else wrap.append(h('span', { class: 'chip', title: a.kind === 'pdf' ? 'PDF document' : 'inlined as text' }, svgUse('i-clip', 10), ` ${a.name}`));
+  }
+  return wrap;
 }
 
 function renderImages(ev, ctx) {

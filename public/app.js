@@ -2,6 +2,7 @@
 import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
+import { attachable, guardWindowDrops } from './attach.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -1255,6 +1256,7 @@ function renderQueue() {
     const q = d.queue;
     const idle = d.status === 'idle';
     const rows = q.map((item, i) => h('li', { dataset: { qid: item.id } }, h('span', { class: 'muted' }, `${i + 1}.`),
+      item.attachments?.length ? h('span', { class: 'q-att', title: item.attachments.map(a => a.name).join('\n') }, svgUse('i-clip', 11), String(item.attachments.length)) : null,
       h('span', { class: 'q editable', title: 'Click to edit', tabindex: '0', role: 'button', 'aria-label': `Edit queued prompt: ${oneLine(item.text, 80)}`, onclick: (e) => editQueued(item, e.currentTarget), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); editQueued(item, e.currentTarget); } } }, item.text.replace(/\s+/g, ' ')),
       ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || null }),
       ib('i-up', 'Move up', () => queueOp('up', item.id), { size: 12, disabled: i === 0 || null }),
@@ -1353,13 +1355,22 @@ async function answerPerm(requestId, decision, message) {
   catch (e) { toast(`Answer failed: ${e.message}`); }
 }
 
+// Files go with the prompt: the paperclip, a paste or a drop on the panel.
+guardWindowDrops();
+const composeFiles = attachable({ input: $('compose'), tray: $('compose-files'), clip: $('compose-clip'), file: $('compose-file'), drop: $('prompt'), toast });
+
 async function sendPrompt(now = false) {
   const text = $('compose').value;
   if ($('compose').disabled) return;
   const id = state.selected;
-  if (!text.trim()) { $('compose').focus(); return; }
+  if (composeFiles.busy()) { toast('Still reading the attachments…'); return; }
+  const attachments = composeFiles.payload();
+  if (!text.trim() && !attachments.length) { $('compose').focus(); return; }
   $('send').disabled = true; $('send-now').disabled = true;
-  try { await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text }); $('compose').value = ''; setLive(true, true); }
+  try {
+    await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined });
+    $('compose').value = ''; composeFiles.clear(); setLive(true, true);
+  }
   catch (e) { toast(`Send failed: ${e.message}`); }
   finally { if (id === state.selected) renderQueue(); }
 }
@@ -1516,11 +1527,15 @@ $('hist-q').addEventListener('keydown', (e) => {
 $('hist-list').addEventListener('click', (e) => { const li = e.target.closest('.hist-row'); if (li) pickHistory(li.dataset.id); });
 $('history').addEventListener('click', (e) => { if (e.target === $('history')) $('history').close(); });
 $('ns-cancel').onclick = () => $('new-session').close();
+const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), clip: $('ns-clip'), file: $('ns-file'), drop: $('ns-form'), toast });
 $('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
 $('ns-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: $('ns-model').value, permissionMode: $('ns-perm').value, name: $('ns-name').value.trim() };
-  if (!body.prompt.trim()) { $('ns-prompt').focus(); return; }
+  if (launchFiles.busy()) { toast('Still reading the attachments…'); return; }
+  const files = launchFiles.payload();
+  if (files.length) body.attachments = files;
+  if (!body.prompt.trim() && !files.length) { $('ns-prompt').focus(); return; }
   $('ns-go').disabled = true; $('ns-err').hidden = true;
   $('ns-go').textContent = 'Starting…';
   try {
@@ -1530,7 +1545,7 @@ $('ns-form').addEventListener('submit', async (e) => {
     if (!launchCtx?.resumeId) prefs.launchCwd = body.cwd;
     prefs.launchPerm = body.permissionMode; savePrefs();
     state.deck.set(st.id, st);
-    $('ns-prompt').value = '';
+    $('ns-prompt').value = ''; launchFiles.clear();
     $('new-session').close();
     if (state.byId.has(st.id) && state.selected === st.id) { renderHeader(); renderQueue(); focusCompose(); }
     else if (state.byId.has(st.id)) openLaunched(st.id);

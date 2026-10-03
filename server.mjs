@@ -126,6 +126,8 @@ function send(res, code, body, headers = {}) {
   res.writeHead(code, { 'Content-Type': isBuf ? headers['Content-Type'] || 'application/octet-stream' : typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
   res.end(data);
 }
+// Prompts may carry attachments (base64), so they get a larger allowance.
+const PROMPT_BODY_LIMIT = 48 << 20;
 function readBody(req, limit = 1 << 20) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
@@ -207,9 +209,9 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/launch' && req.method === 'POST') {
-    const { cwd, prompt, model, permissionMode, name } = await readBody(req);
+    const { cwd, prompt, attachments, model, permissionMode, name } = await readBody(req, PROMPT_BODY_LIMIT);
     try {
-      const st = await agents.launch({ cwd, prompt, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined });
+      const st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined });
       return send(res, 200, st);
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
@@ -217,11 +219,11 @@ async function route(req, res, url) {
   let m;
   if ((m = /^\/api\/sessions\/([^/]+)\/(send|send-now|queue|interrupt|permission|stop|resume)$/.exec(p)) && req.method === 'POST') {
     const id = decodeURIComponent(m[1]);
-    const body = await readBody(req);
+    const body = await readBody(req, PROMPT_BODY_LIMIT);
     try {
       switch (m[2]) {
-        case 'send': return send(res, 200, { item: agents.send(id, body.text) });
-        case 'send-now': return send(res, 200, { item: agents.sendNow(id, body.text) });
+        case 'send': return send(res, 200, { item: agents.send(id, body.text, body.attachments) });
+        case 'send-now': return send(res, 200, { item: agents.sendNow(id, body.text, body.attachments) });
         case 'queue': agents.queueOp(id, body); break;
         case 'interrupt': return send(res, 200, { interrupted: agents.interrupt(id) });
         case 'permission': agents.answer(id, body.requestId, body.decision, body.message); break;
@@ -230,7 +232,7 @@ async function route(req, res, url) {
           const cwd = index.cwdOf(id);
           if (!cwd) return send(res, 404, { error: 'unknown session' });
           if (index.registry.get(id)?.alive) return send(res, 409, { error: 'session is still running outside the deck' });
-          return send(res, 200, await agents.launch({ cwd, resume: id, prompt: body.prompt, model: body.model || undefined, permissionMode: body.permissionMode || 'default' }));
+          return send(res, 200, await agents.launch({ cwd, resume: id, prompt: body.prompt, attachments: body.attachments, model: body.model || undefined, permissionMode: body.permissionMode || 'default' }));
         }
       }
       return send(res, 200, { ok: true, state: agents.publicState(id) });
