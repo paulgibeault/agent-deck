@@ -384,8 +384,10 @@ clearly marked and show a small warning when they fall back.
 - **Title bar**, next to the model picker:
   - a speaker icon (muted when off, animated while speaking) that opens the
     settings popover
-  - play/pause
-  - ⏭, which skips to the next item
+  - play/pause, always shown. Pausing with nothing playing makes new items
+    wait in the queue until play. A Read aloud button still plays while
+    paused, and the queue stays paused afterwards.
+  - ⏭, which skips to the next item (it stays paused when paused)
 - **Settings popover**:
   - scope (off / this session / all sessions)
   - include subagents

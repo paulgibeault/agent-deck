@@ -750,7 +750,8 @@ select.field { font-family: var(--sans); padding-right: 6px; }
 .ra-btn.speaking { color: var(--info); }
 .ra-btn.speaking .sw1, .ra-now.playing .sw1 { animation: ra-wave 1s ease-in-out infinite; }
 .ra-btn.speaking .sw2, .ra-now.playing .sw2 { animation: ra-wave 1s ease-in-out .25s infinite; }
-.ra-btn.blocked { color: var(--turn); }
+.ra-btn.blocked, .ra-ctl.paused { color: var(--turn); }
+.ra-ctl:disabled { opacity: .35; cursor: default; background: transparent; }
 .ra-n { font-size: 10.5px; font-variant-numeric: tabular-nums; }
 @keyframes ra-wave { 50% { opacity: .15; } }
 

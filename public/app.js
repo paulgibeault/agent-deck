@@ -509,13 +509,19 @@ function renderReadAloud(st) {
   btn.classList.toggle('blocked', st.state === 'blocked');
   btn.querySelector('use').setAttribute('href', st.on ? '#i-speaker' : '#i-speaker-off');
   btn.title = st.state === 'blocked' ? 'Read aloud: click anywhere to let the deck speak' : !st.on ? 'Read aloud: off' : !st.leader ? 'Read aloud: another deck window is speaking' : 'Read aloud';
-  const active = st.state !== 'idle';
-  $('ra-play').hidden = $('ra-next').hidden = !active;
+  // Play/pause is always there: pausing with nothing playing makes new items wait in the queue.
+  const paused = st.state === 'paused' || st.state === 'blocked';
   const playing = st.state === 'playing';
-  $('ra-play').querySelector('use').setAttribute('href', playing ? '#i-pause' : '#i-play');
-  $('ra-play').title = $('ra-play').ariaLabel = playing ? 'Pause (Space)' : st.state === 'held' ? 'Play now; held while you type (Space)' : 'Play (Space)';
-  $('ra-next').querySelector('.ra-n').textContent = st.queued || '';
-  $('ra-next').title = $('ra-next').ariaLabel = st.queued ? `Next (]) · ${st.queued} queued` : 'Skip (])';
+  const pb = $('ra-play');
+  pb.classList.toggle('paused', paused);
+  pb.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+  pb.title = pb.ariaLabel = paused ? `Play${st.queued ? ` · ${st.queued} queued` : ''} (Space)`
+    : st.state === 'held' ? 'Pause · held while you type (Space)'
+    : playing ? 'Pause (Space)' : 'Pause: queue narration until you press play (Space)';
+  const nb = $('ra-next');
+  nb.disabled = !st.item && !st.queued;
+  nb.querySelector('.ra-n').textContent = st.queued || '';
+  nb.title = nb.ariaLabel = st.queued ? `Next (]) · ${st.queued} queued` : 'Next (])';
   const now = $('ra-now');
   now.hidden = !st.item;
   now.classList.toggle('playing', playing);
