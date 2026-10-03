@@ -1222,8 +1222,6 @@ function renderQueue() {
   if (d?.alive) {
     const q = d.queue;
     const idle = d.status === 'idle';
-    $('queue-count').textContent = q.length ? `· ${q.length} queued` : '';
-    $('prompt-note').textContent = d.held ? 'held after interrupt' : q.length ? 'sends when the current turn ends' : idle ? 'idle · a prompt goes out at once' : 'prompts wait for the current turn';
     const rows = q.map((item, i) => h('li', { dataset: { qid: item.id } }, h('span', { class: 'muted' }, `${i + 1}.`),
       h('span', { class: 'q editable', title: 'Click to edit', tabindex: '0', role: 'button', 'aria-label': `Edit queued prompt: ${oneLine(item.text, 80)}`, onclick: (e) => editQueued(item, e.currentTarget), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); editQueued(item, e.currentTarget); } } }, item.text.replace(/\s+/g, ' ')),
       ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || null }),
@@ -1252,27 +1250,13 @@ function renderQueue() {
     return;
   }
   const q = c?.meta?.queue || [];
-  $('queue-count').textContent = q.length ? `· ${q.length} queued` : '';
-  $('prompt-note').textContent = s?.kind === 'agent' ? 'subagents take their prompt from the parent session'
-    : s?.alive ? `observe only · reply in its terminal${q.length ? ' · read-only mirror of its queue' : ''}`
-    : 'ended · resume it in the deck to send prompts';
   $('queue').replaceChildren(...q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
     ib('i-copy', 'Copy', (e) => { navigator.clipboard?.writeText(item.content); flashDone(e.currentTarget); }, { size: 12 }))));
   compose.disabled = true; sendBtn.disabled = true; sendBtn.classList.remove('queues'); nowBtn.hidden = true; stopBtn.hidden = true;
   compose.placeholder = s?.alive ? 'Launched outside the deck, so it is observe-only here.' : 'This session has ended. Resume it in the deck to send prompts.';
   sendBtn.title = s?.alive ? 'This session was launched outside the deck; the deck can only observe it.' : 'Resume the session in the deck first';
 }
-// Collapsing the prompt keeps its header line (with the queue count) in view.
-function showPromptPanel(open) {
-  prefs.promptCollapsed = !open; savePrefs();
-  $('prompt').classList.toggle('collapsed', !open);
-  $('prompt-toggle').setAttribute('aria-expanded', String(open));
-  $('prompt-toggle').title = open ? 'Collapse the prompt' : 'Expand the prompt';
-  if (open && !$('compose').disabled) $('compose').focus({ preventScroll: true });
-}
-$('prompt-toggle').onclick = () => showPromptPanel($('prompt').classList.contains('collapsed'));
-$('prompt').classList.toggle('collapsed', !!prefs.promptCollapsed);
-$('prompt-toggle').setAttribute('aria-expanded', String(!prefs.promptCollapsed));
+function focusCompose() { if (!$('compose').disabled) $('compose').focus({ preventScroll: true }); }
 
 // ------------------------------------------------------------ deck-launched sessions
 const PERM_LABEL = { default: 'asks', acceptEdits: 'accept edits', auto: 'auto', plan: 'plan only' };
@@ -1495,7 +1479,7 @@ $('ns-form').addEventListener('submit', async (e) => {
     state.deck.set(st.id, st);
     $('ns-prompt').value = '';
     $('new-session').close();
-    if (state.byId.has(st.id) && state.selected === st.id) { renderHeader(); renderQueue(); showPromptPanel(true); }
+    if (state.byId.has(st.id) && state.selected === st.id) { renderHeader(); renderQueue(); focusCompose(); }
     else if (state.byId.has(st.id)) openLaunched(st.id);
     else { state.pendingOpen = st.id; toast('Session started. Opening it as soon as it writes its transcript…'); }
   } catch (err) {
@@ -1508,7 +1492,7 @@ $('ns-form').addEventListener('submit', async (e) => {
 });
 function openLaunched(id) {
   state.pendingOpen = null;
-  select(id).then(() => showPromptPanel(true));
+  select(id).then(() => focusCompose());
 }
 
 // ------------------------------------------------------------ events list
