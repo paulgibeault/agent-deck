@@ -1355,6 +1355,11 @@ async function answerPerm(requestId, decision, message) {
   catch (e) { toast(`Answer failed: ${e.message}`); }
 }
 
+// A backend from before attachments drops big requests, which fetch reports only as a network error.
+const sendError = (e, files) => e instanceof TypeError && files
+  ? 'Send failed: the backend dropped the request. If it was started before attachments were supported, restart it.'
+  : `Send failed: ${e.message}`;
+
 // Files go with the prompt: the paperclip, a paste or a drop on the panel.
 guardWindowDrops();
 const composeFiles = attachable({ input: $('compose'), tray: $('compose-files'), clip: $('compose-clip'), file: $('compose-file'), drop: $('prompt'), toast });
@@ -1371,7 +1376,7 @@ async function sendPrompt(now = false) {
     await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined });
     $('compose').value = ''; composeFiles.clear(); setLive(true, true);
   }
-  catch (e) { toast(`Send failed: ${e.message}`); }
+  catch (e) { toast(sendError(e, attachments.length)); }
   finally { if (id === state.selected) renderQueue(); }
 }
 $('send').onclick = () => sendPrompt(false);
@@ -1551,7 +1556,8 @@ $('ns-form').addEventListener('submit', async (e) => {
     else if (state.byId.has(st.id)) openLaunched(st.id);
     else { state.pendingOpen = st.id; toast('Session started. Opening it as soon as it writes its transcript…'); }
   } catch (err) {
-    $('ns-err').textContent = err.message === 'not found'
+    $('ns-err').textContent = err instanceof TypeError && files.length ? sendError(err, files.length).replace('Send', 'Start')
+      : err.message === 'not found'
       ? 'The deck backend is older than this page and cannot launch sessions. Restart it (stop the server and run npm start, or quit and relaunch the app), then try again.'
       : err.message;
     $('ns-err').hidden = false;

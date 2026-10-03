@@ -130,9 +130,12 @@ function send(res, code, body, headers = {}) {
 const PROMPT_BODY_LIMIT = 48 << 20;
 function readBody(req, limit = 1 << 20) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else chunks.push(c); });
-    req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
+    let size = 0; let chunks = [];
+    // Over the limit: keep draining so the client gets a 413 rather than a dropped connection.
+    req.on('data', c => { size += c.length; if (size > limit) chunks = null; else chunks?.push(c); });
+    req.on('end', () => {
+      if (!chunks) return reject(Object.assign(new Error(`request too large (${Math.round(size / 1024 / 1024)} MB; limit ${Math.round(limit / 1024 / 1024)} MB)`), { code: 413 }));
+      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
 }
@@ -355,7 +358,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (!authorized(req, url)) return send(res, 401, { error: 'missing or wrong token' });
   try { await route(req, res, url); }
-  catch (e) { console.error(e); if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
+  catch (e) {
+    if (e.code !== 413) console.error(e);
+    if (!res.headersSent) send(res, e.code === 413 ? 413 : 500, { error: e.message }); else res.end();
+  }
 });
 
 server.listen(PORT, HOST, () => {
