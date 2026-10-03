@@ -55,6 +55,28 @@ test('launch, queue, permission, interrupt, stop', async (t) => {
   await until(agents, id, x => x.status === 'busy');
   s = await until(agents, id, x => x.status === 'idle' && !x.queue.length);
 
+  // A prompt being edited is not sent when the turn ends; saving the edit sends the new text.
+  agents.send(id, 'slow one');
+  const e = agents.send(id, 'old wording');
+  agents.queueOp(id, { op: 'editing', itemId: e.id });
+  assert.equal(agents.publicState(id).editing, e.id);
+  agents.interrupt(id);
+  s = await until(agents, id, x => x.status === 'idle');
+  agents.queueOp(id, { op: 'resume' });
+  await new Promise(r => setTimeout(r, 300));
+  assert.deepEqual(agents.publicState(id).queue.map(x => x.text), ['old wording'], 'held back while editing');
+  agents.queueOp(id, { op: 'edit', itemId: e.id, text: 'new wording' });
+  s = await until(agents, id, x => x.status === 'idle' && !x.queue.length && !x.editing);
+
+  // Send now cuts the running turn short and goes ahead of what is queued.
+  agents.send(id, 'slow one');
+  agents.send(id, 'queued');
+  agents.sendNow(id, 'urgent');
+  s = await until(agents, id, x => x.status === 'busy' && x.queue.length === 1 && !x.interrupting);
+  assert.deepEqual(s.queue.map(x => x.text), ['queued']);
+  assert.equal(s.held, false);
+  s = await until(agents, id, x => x.status === 'idle' && !x.queue.length);
+
   // Permission prompt waits for the pilot.
   agents.send(id, 'needs permission');
   s = await until(agents, id, x => x.permissions.length === 1);
@@ -67,6 +89,8 @@ test('launch, queue, permission, interrupt, stop', async (t) => {
 
   const lines = fs.readFileSync(path.join(claudeDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`), 'utf8');
   assert.match(lines, /will not ask again/);
+  assert.match(lines, /"content":"new wording"/);
+  assert.doesNotMatch(lines, /"content":"old wording"/);
 
   // The index sees it as a live, idle session.
   const index = new SessionIndex({ claudeDir });
