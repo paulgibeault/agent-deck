@@ -19,6 +19,7 @@ import { BriefService } from './lib/briefs.mjs';
 import { ask } from './lib/ask.mjs';
 import { DeckState } from './lib/deckstate.mjs';
 import { AgentManager } from './lib/agent.mjs';
+import { AzureTts } from './lib/tts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -58,6 +59,7 @@ const briefs = new BriefService({ index, narrator, enabled: NARRATOR }).start();
 briefs.isHidden = (id) => deck.hidden.has(id);
 const snapshot = () => index.snapshot(deck.hidden);
 const agents = new AgentManager();
+const tts = new AzureTts({ dir: deck.dir });
 index.external = () => agents.registryEntries();
 index.deckState = (id) => agents.publicState(id);
 
@@ -209,6 +211,22 @@ async function route(req, res, url) {
     if (!NARRATOR) return send(res, 409, { error: 'model calls are off (started with --no-narrator)' });
     try { return send(res, 200, await ask({ index, briefs, narrator, question, scope, sessionId })); }
     catch (e) { return send(res, 502, { error: e.message }); }
+  }
+
+  // Read aloud: Azure neural voices (lib/tts.mjs). The page speaks local voices itself.
+  if (p === '/api/tts/voices' && req.method === 'GET') {
+    try { return send(res, 200, { ...tts.status(), voices: await tts.voices() }); }
+    catch (e) { return send(res, 200, { ...tts.status(), voices: [], error: e.message }); }
+  }
+  if (p === '/api/tts/config' && req.method === 'POST') {
+    const { key, region } = await readBody(req);
+    try { await tts.configure({ key, region }); return send(res, 200, { ...tts.status(), voices: await tts.voices() }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (p === '/api/tts' && req.method === 'POST') {
+    const { text, voice, rate } = await readBody(req);
+    try { return send(res, 200, await tts.synth({ text, voice, rate }), { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' }); }
+    catch (e) { return send(res, e.code || 502, { error: e.message }); }
   }
 
   if (p === '/api/launch' && req.method === 'POST') {
