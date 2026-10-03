@@ -13,7 +13,7 @@ import { SessionIndex } from './lib/sessions.mjs';
 import { ShellRunner } from './lib/shell.mjs';
 import * as gitinfo from './lib/gitinfo.mjs';
 import { Narrator } from './lib/narrator.mjs';
-import { UsageTracker } from './lib/usage.mjs';
+import { UsageTracker, readUsageReport, parseUsageReport } from './lib/usage.mjs';
 import { Attention } from './lib/attention.mjs';
 import { BriefService } from './lib/briefs.mjs';
 import { ask } from './lib/ask.mjs';
@@ -91,21 +91,30 @@ agents.on('change', (st) => {
   scheduleSnapshot();
 });
 agents.on('ratelimit', (info) => usage.update(info, 'a session the deck launched'));
-const usageView = () => ({ limits: usage.snapshot(), narrator: { enabled: NARRATOR, ...narrator.status() } });
+const usageView = () => ({ limits: usage.snapshot(), error: usageError, narrator: { enabled: NARRATOR, ...narrator.status() } });
 usage.on('usage', () => broadcast('usage', usageView()));
-// Quota only arrives with a model call. When nothing has made one for a while
-// and someone is watching, a one-word Haiku call refreshes it.
-const QUOTA_STALE_MS = 30 * 60_000;
-let probing = null;
+// `claude -p /usage` reads the plan quota without a model call, so it is free
+// to ask: on start, every few minutes while someone is watching, and on demand.
+// Model calls (the deck's own, and launched sessions) update it in between.
+const QUOTA_STALE_MS = 3 * 60_000;
+let probing = null, usageError = null;
 function probeQuota() {
-  if (!NARRATOR || probing) return probing;
-  probing = narrator.probe().catch(() => null).finally(() => { probing = null; broadcast('usage', usageView()); });
+  if (probing) return probing;
+  probing = readUsageReport()
+    .then((text) => {
+      const r = parseUsageReport(text);
+      if (!r) throw new Error(`could not read claude /usage: ${text.trim().slice(0, 200) || 'empty reply'}`);
+      usageError = null; usage.report(r);
+    })
+    .catch((e) => { usageError = { message: e.message, at: Date.now() }; })
+    .finally(() => { probing = null; broadcast('usage', usageView()); });
   return probing;
 }
+probeQuota();
 setInterval(() => {
   const snap = usage.snapshot();
-  if (clients.size && !narrator.blocked() && (!snap || snap.ageMs > QUOTA_STALE_MS)) probeQuota();
-}, 60_000).unref();
+  if (clients.size && (!snap?.reportAt || Date.now() - snap.reportAt > QUOTA_STALE_MS)) probeQuota();
+}, 30_000).unref();
 shell.on('output', (d) => broadcast('shell.output', d));
 shell.on('exit', (d) => broadcast('shell.exit', d));
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 15_000).unref();
@@ -172,7 +181,6 @@ async function route(req, res, url) {
   if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
   if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
   if (p === '/api/usage/refresh' && req.method === 'POST') {
-    if (!NARRATOR) return send(res, 409, { error: 'model calls are off (started with --no-narrator)' });
     await probeQuota();
     return send(res, 200, usageView());
   }
