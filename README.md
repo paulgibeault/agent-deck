@@ -89,6 +89,10 @@ minute, "crash" exits with an error.
   for a card with whose move it is, the current tool or question, the brief,
   any Watch item, progress, running subagents, the queue, and errors, turns,
   files, cost and model.
+- **Model picker.** The title bar picks the model new sessions start
+  with (Default shows what your Claude settings use, e.g. `opus[1m]`).
+  The New session and Resume dialogs start on it; a different pick there
+  applies to that launch only.
 - **Plan usage.** A small ring in the top bar shows how full your tightest
   plan window is (green, amber from 75% or when the pace would run out
   before the reset, red when limited). Hover for each window (5-hour,
