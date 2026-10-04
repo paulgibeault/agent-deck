@@ -206,12 +206,21 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     body);
   host.append(pane);
 
+  /** The overlay steps aside while the details pane shows (and lights up) what is being read. */
   function showPane() {
+    if (docked()) { hidePane(true); return; }
     clearTimeout(hideTimer);
     if (!pane.hidden && pane.classList.contains('open')) return;
     pane.hidden = false;
     requestAnimationFrame(() => pane.classList.add('open'));
   }
+  /**
+   * The pilot picked something to look at: the overlay gets out of the way and
+   * reading goes on. The next item slides in as usual.
+   */
+  function dismiss() { if (!pane.hidden) hidePane(true); }
+  /** Bring the overlay back for what is being read (an item with no event to open). */
+  function bringBack() { if (!cur && !lastView) return; pane.hidden = false; showPane(); }
   /** `keep`: a pause; the item stays rendered for when play brings the pane back. */
   function hidePane(keep = false) {
     pane.classList.remove('open');
@@ -243,19 +252,55 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     return { item, skipped, chunks: [{ say: introFor(item, skipped), range: intro }, ...chunks] };
   }
 
+  // ---------------------------------------------------------- mirror
+  // The details pane may show the event being read, rendered from the same
+  // markdown: its sentences light up there too, and the overlay steps aside.
+  // Chunks line up by what is said, so a pane showing something else simply
+  // gets no highlight.
+  let mirror = null;   // { key, root, scroller, view, chunks: Map(pane chunk -> its chunk) }
+  const keyOf = (item) => item?.eventId ? `${item.sessionId}:${item.eventId}` : null;
+  function mirrored(ch) {
+    const view = cur?.view;
+    if (!mirror || !view || !ch?.range || keyOf(view.item) !== mirror.key || !mirror.root.isConnected) return null;
+    if (mirror.view !== view) {
+      const mine = chunksOf(mirror.root);
+      mirror.view = view;
+      mirror.chunks = new Map(view.chunks.slice(1).map((c, i) => [c, mine[i]?.say === c.say ? mine[i] : null]));
+    }
+    return mirror.chunks.get(ch) || null;
+  }
+  function docked() { return !!cur && cur.view.chunks.some(c => mirrored(c)); }
+  // The pane replacing its content (another event, closed) ends the mirror.
+  const watch = new MutationObserver(() => { if (mirror && !mirror.root.isConnected) setMirror(null); });
+  /** `root` shows the event `key` ("sessionId:eventId"); null when the pane moves on. */
+  function setMirror(key, root, scroller) {
+    watch.disconnect();
+    mirror = key && root ? { key, root, scroller, view: null, chunks: null } : null;
+    if (mirror && scroller) watch.observe(scroller, { childList: true });
+    if (!cur) return;
+    mark(cur.view.chunks[cur.i]);
+    if (docked()) hidePane(true);
+  }
+
   // ---------------------------------------------------------- highlight
   const hl = globalThis.CSS?.highlights;
+  function reveal(box, range) {
+    const r = range.getBoundingClientRect(), b = box.getBoundingClientRect();
+    if (r.top < b.top || r.bottom > b.bottom) box.scrollTop += r.top - b.top - b.height / 3;
+  }
   function mark(ch) {
     if (!hl) return;
     hl.delete('narr-word');
     if (!ch?.range) { hl.delete('narr'); return; }
-    hl.set('narr', new Highlight(ch.range));
-    const r = ch.range.getBoundingClientRect(), b = body.getBoundingClientRect();
-    if (body.contains(ch.range.startContainer) && (r.top < b.top || r.bottom > b.bottom)) body.scrollTop += r.top - b.top - b.height / 3;
+    const m = mirrored(ch);
+    hl.set('narr', m ? new Highlight(ch.range, m.range) : new Highlight(ch.range));
+    if (body.contains(ch.range.startContainer)) reveal(body, ch.range);
+    if (m && mirror.scroller) reveal(mirror.scroller, m.range);
   }
   /** Word boundaries come as offsets into the spoken text; find that word in the chunk's own text. */
   function wordMarker(ch) {
     let from = 0;
+    const span = (c, pos, n) => { const r = document.createRange(); r.setStart(...c.at(c.start + pos)); r.setEnd(...c.at(c.start + pos + n)); return r; };
     return (charIndex, len) => {
       if (!hl || !ch.at) return;
       const word = ch.say.slice(charIndex, charIndex + (len || (/\S+/.exec(ch.say.slice(charIndex))?.[0].length ?? 0))).replace(/^\W+|\W+$/g, '');
@@ -263,9 +308,8 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
       const pos = ch.text.indexOf(word, from);
       if (pos < 0) return;
       from = pos + word.length;
-      const r = document.createRange();
-      r.setStart(...ch.at(ch.start + pos)); r.setEnd(...ch.at(ch.start + pos + word.length));
-      hl.set('narr-word', new Highlight(r));
+      const m = mirrored(ch);
+      hl.set('narr-word', new Highlight(span(ch, pos, word.length), ...(m?.at && m.text === ch.text ? [span(m, pos, word.length)] : [])));
     };
   }
 
@@ -328,7 +372,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     const head = queue.items[0];
     if (!head || (held && !head.manual && !head.resume)) {
       changed();
-      if (!head && !pane.hidden) { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (!cur && !queue.length) { mark(null); hidePane(); } }, LINGER_MS); }
+      if (!head) { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (!cur && !queue.length) { mark(null); if (!pane.hidden) hidePane(); } }, LINGER_MS); }
       if (!head) { keepAlive.pause(); media('none'); }
       return;
     }
@@ -522,5 +566,5 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
       h('p', { class: 'ra-keys muted' }, h('kbd', {}, 'Space'), ' play/pause · ', h('kbd', {}, ']'), ' next · ', h('kbd', {}, 'j'), ' open the event · ', h('kbd', {}, 'r'), ' read the selection'));
   }
 
-  return { history, markAllHeard, clearHistory, kindLabel: (k) => KIND_LABEL[k] || k, auto, read, play, pause, toggle, skip, stop, hold, status, renderSettings, reloadVoices: loadVoices, current: () => cur?.item || lastView?.item || null, settings: s };
+  return { history, markAllHeard, clearHistory, kindLabel: (k) => KIND_LABEL[k] || k, auto, read, play, pause, toggle, skip, stop, hold, status, renderSettings, reloadVoices: loadVoices, current: () => cur?.item || lastView?.item || null, mirror: setMirror, dismiss, reveal: bringBack, settings: s };
 }

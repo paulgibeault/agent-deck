@@ -887,6 +887,15 @@ select.field { font-family: var(--sans); padding-right: 6px; }
 .ra-now-t { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ra-now.playing svg { animation: ra-pulse 1.2s ease-in-out infinite; }
 @keyframes ra-pulse { 50% { transform: scale(1.18); } }
+/* What is being read: a speaker on its event row and its session, pulsing while the voice goes. */
+.spk { display: inline-flex; align-items: center; flex: none; color: var(--info); opacity: .55; }
+.spk.on { opacity: 1; animation: spk-pulse 1.2s ease-in-out infinite; }
+@keyframes spk-pulse { 50% { transform: scale(1.2); opacity: .55; } }
+.sess .r .spk { margin-right: 5px; vertical-align: -2px; }
+.bk-t .spk { margin-left: 2px; }
+.mchip .spk { position: absolute; bottom: -5px; left: -5px; width: 15px; height: 15px; justify-content: center; border-radius: 8px; background: var(--bg1); box-shadow: 0 0 0 1.5px var(--line2); }
+.mchip .spk svg { width: 10px; height: 10px; }
+@media (prefers-reduced-motion: reduce) { .spk.on { animation: none; } }
 
 /* The bell: narration history (PLAN.md §7.6) */
 .bell { position: relative; display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 24px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; -webkit-app-region: no-drag; app-region: no-drag; }
