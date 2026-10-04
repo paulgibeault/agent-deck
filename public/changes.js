@@ -61,7 +61,7 @@ export function renderTurnList(root, turns, { selected = null, collapsed = new S
     const shut = collapsed.has(t.n);
     const nFiles = t.files.length;
     out.push(h('div', { class: `ct-turn${shut ? ' shut' : ''}`, role: 'button', tabindex: '-1', dataset: { turn: t.n }, 'aria-expanded': String(!shut), onclick: () => onToggle?.(t.n) },
-      h('span', { class: 'twist' }, svgUse('i-right', 9)),
+      h('span', { class: 'twist' }, svgUse('i-right', 9, shut ? 'Show this turn’s files' : 'Hide this turn’s files')),
       h('span', { class: 'ct-n' }, t.n ? `Turn ${t.n}` : 'Before the first prompt'),
       h('span', { class: 'ct-p', title: t.prompt?.text || '' }, t.prompt ? oneLine(t.prompt.text.replace(/<[^>]+>/g, ' '), 140) : ''),
       h('span', { class: 'ct-m' }, t.live ? h('span', { class: 'ct-live', title: 'this turn is still running' }, 'live') : null,
@@ -84,7 +84,7 @@ export function renderTurnList(root, turns, { selected = null, collapsed = new S
     for (const ev of t.shell) {
       const c = classify(ev);
       out.push(h('div', { class: `ct-file shell${selected === `ev:${ev.id}` ? ' sel' : ''}`, role: 'button', tabindex: '-1', dataset: { key: `ev:${ev.id}` }, title: `${ev.tool.input.command}\n(changed files by command, so no diff was recorded)`, onclick: () => onShell?.(ev) },
-        h('span', { class: `fi f-${c.fam}` }, svgUse(c.icon, 15)), h('span', { class: 'ct-name' }, oneLine(c.text, 120)), h('span', { class: 'fsp' }), h('span', { class: 'ct-x' }, 'no diff')));
+        h('span', { class: `fi f-${c.fam}` }, svgUse(c.icon, 15, c.label)), h('span', { class: 'ct-name' }, oneLine(c.text, 120)), h('span', { class: 'fsp' }), h('span', { class: 'ct-x' }, 'no diff')));
     }
   }
   root.replaceChildren(...out);

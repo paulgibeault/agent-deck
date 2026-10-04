@@ -23,6 +23,7 @@ import { DeckState } from './lib/deckstate.mjs';
 import { AgentManager } from './lib/agent.mjs';
 import { AzureTts } from './lib/tts.mjs';
 import { KokoroTts } from './lib/kokoro.mjs';
+import { ProcessMonitor } from './lib/procs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -76,6 +77,17 @@ const tts = new AzureTts({ dir: deck.dir });
 const kokoro = new KokoroTts({ dir: deck.dir });
 index.external = () => agents.registryEntries();
 index.deckState = (id) => agents.publicState(id);
+// The process view: what the deck, its sessions and their tool calls are running.
+const procs = new ProcessMonitor({
+  known: () => ({
+    sessions: [...index.registry.values()].filter(r => r.alive && r.pid)
+      .map(r => ({ pid: r.pid, sessionId: r.sessionId, title: index.summary(r.sessionId)?.title, deck: agents.running(r.sessionId) })),
+    shell: [...shell.runs.values()].filter(r => r.child?.pid).map(r => ({ pid: r.child.pid, runId: r.id, cmd: r.cmd })),
+    work: (id) => index.workOf(id),
+    allSessions: () => [...index.loaded.keys()],
+    subagents: (id) => (index.summary(id)?.subagents || []).filter(a => a.status === 'running').map(a => ({ id: a.id, title: a.title, agentType: a.agentType })),
+  }),
+});
 
 // ---------------------------------------------------------------- SSE
 const clients = new Set();
@@ -383,6 +395,27 @@ async function route(req, res, url) {
       const binary = buf.subarray(0, Math.min(n, 8000)).includes(0);
       return send(res, 200, { path: file, size: st.size, mtime: st.mtimeMs, truncated: st.size > LIMIT, binary, content: binary ? null : buf.toString('utf8', 0, n) });
     } catch (e) { return send(res, 404, { error: e.message }); }
+  }
+  if (p === '/api/procs' && req.method === 'GET') {
+    try { return send(res, 200, await procs.list(q.get('scope') === 'all' ? 'all' : 'agents')); }
+    catch (e) { return send(res, e.code === 501 ? 501 : 500, { error: e.message }); }
+  }
+  if ((m = /^\/api\/procs\/(\d+)$/.exec(p)) && req.method === 'GET') {
+    const r = await procs.detail(Number(m[1]));
+    return r ? send(res, 200, r) : send(res, 404, { error: 'that process is gone' });
+  }
+  if ((m = /^\/api\/procs\/(\d+)\/signal$/.exec(p)) && req.method === 'POST') {
+    const pid = Number(m[1]);
+    const { signal = 'TERM', tree = false, start = null } = await readBody(req);
+    // A session the deck launched ends through the deck, which keeps its state straight.
+    const launched = [...index.registry.values()].find(r => r.pid === pid && r.alive && agents.running(r.sessionId));
+    if (launched && signal === 'TERM' && !tree) return send(res, 200, { sent: agents.stop(launched.sessionId) ? [pid] : [], failed: [], via: 'deck' });
+    try { return send(res, 200, await procs.signal(pid, { signal, tree: !!tree, start })); }
+    catch (e) { return send(res, [400, 404, 409].includes(e.code) ? e.code : 500, { error: e.message }); }
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/procs$/.exec(p)) && req.method === 'GET') {
+    try { return send(res, 200, await procs.forSession(decodeURIComponent(m[1]))); }
+    catch (e) { return send(res, e.code === 501 ? 501 : 500, { error: e.message }); }
   }
   if (p === '/api/shell/history') return send(res, 200, { runs: shell.history() });
   if (p === '/api/shell/run' && req.method === 'POST') {

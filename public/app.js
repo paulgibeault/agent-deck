@@ -8,6 +8,7 @@ import { turnChanges, renderTurnList, renderTurnFileDiff } from './changes.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
+import { createProcView, pidLinkEl } from './procs.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -347,7 +348,7 @@ function sessRow(s, nested = false) {
     : [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, ...(s.alive && !s.hidden ? [sig === 'input' || sig === 'error' ? st?.head.toLowerCase() : null] : [])].filter(Boolean).join(' · ');
   // The folder leads a session's second line; rows are not grouped by it.
   const sub = isAgent || nested ? (meta ? [meta] : null)
-    : [h('span', { class: 'fld' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
+    : [h('span', { class: 'fld', title: s.cwd ? `Folder: ${tilde(s.cwd)}` : 'Folder' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
   // No native tooltips: the hover card says all of it.
   const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}` },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
@@ -373,7 +374,7 @@ function childBlock(s, kind) {
   const containsSel = kids.some(a => a.id === state.selected);
   const open = state.subsOpen.has(key) ? true : state.subsOpen.has('!' + key) ? false : containsSel;
   const li = h('li', { class: `subs${open ? '' : ' collapsed'}`, dataset: { parent: s.id } });
-  li.append(h('button', { type: 'button', class: 'subs-h', dataset: { subs: key }, 'aria-expanded': String(open) },
+  li.append(h('button', { type: 'button', class: 'subs-h', dataset: { subs: key }, 'aria-expanded': String(open), title: open ? 'Hide them' : 'Show them' },
     svgUse('i-down', 10), h('span', {}, tasks ? 'Sub-tasks' : 'Subagents'), h('span', { class: 'muted' }, run || s.alive ? `${done} of ${kids.length} done${run ? ` · ${run} running` : ''}` : String(kids.length))));
   const bar = h('div', { class: 'bar', 'aria-hidden': 'true' });
   if (done) bar.append(h('span', { class: 'b-done', style: `flex-grow:${done}` }));
@@ -564,7 +565,7 @@ function renderBell() {
     h('button', { type: 'button', 'aria-pressed': String(!bell.unheardOnly), onclick: () => { bell.unheardOnly = false; renderBell(); } }, 'All'),
     h('button', { type: 'button', 'aria-pressed': String(bell.unheardOnly), onclick: () => { bell.unheardOnly = true; renderBell(); } }, 'Unheard'));
   pop.replaceChildren(
-    h('div', { class: 'bell-h' }, h('label', { class: 'search grow' }, svgUse('i-search', 13), input), seg),
+    h('div', { class: 'bell-h' }, h('label', { class: 'search grow' }, svgUse('i-search', 13, 'Search'), input), seg),
     h('ul', { class: 'bell-list', role: 'listbox', 'aria-label': 'Narration history' }),
     h('div', { class: 'bell-f' }, h('span', { class: 'muted bell-count' }), h('span', { class: 'spacer' }),
       h('button', { type: 'button', class: 'linkish', onclick: () => narration.markAllHeard() }, 'Mark all heard'),
@@ -832,7 +833,7 @@ function cardFacts(s) {
     s.pr ? ['Pull request', `#${s.pr.number}${s.pr.title ? ` · ${oneLine(s.pr.title, 60)}` : ''}`] : null,
     ['Model', (g.model || s.model) ? [(g.model || s.model).replace('claude-', ''), g.effort].filter(Boolean).join(' · ') : null],
     isAgent ? null : ['Control', d?.alive ? `launched by the deck · ${PERM_LABEL[d.permissionMode] || d.permissionMode}` : s.alive ? 'observe only (outside the deck)' : 'not running'],
-    s.alive && s.pid ? ['Process', `pid ${s.pid}${s.startedAt ? ` · started ${ago(Date.now() - s.startedAt)} ago` : ''}`] : null,
+    s.alive && s.pid ? ['Process', h('span', {}, pidLinkEl(s.pid, openProcs), s.startedAt ? ` · started ${ago(Date.now() - s.startedAt)} ago` : '')] : null,
     ['Last active', when(s.mtime)],
     g.turnMs != null && sigOf(s) === 'working' ? ['This turn', fmtMs(g.turnMs)] : null,
     ['Turns', g.turns || null],
@@ -858,7 +859,7 @@ function cardBody(s) {
   rows.push(h('div', { class: 'hc-h' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}` }), h('b', {}, s.title || s.id)));
   // Whose move, and why.
   rows.push(h('div', { class: `hc-st sig-${st.sig}${st.quiet ? ' quiet' : ''}` }, h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
-    st.icon ? svgUse(st.icon, 12) : null, h('b', {}, st.head),
+    st.icon ? svgUse(st.icon, 12, st.head) : null, h('b', {}, st.head),
     st.clock != null ? h('span', { class: 'hc-clk' }, fmtClock(st.clock)) : st.right ? h('span', { class: 'hc-clk' }, st.right) : null));
   if (st.text) rows.push(h('div', { class: `hc-t${st.mono ? ' mono' : ''}` }, oneLine(st.text, 220)));
   // What it has done: the generated brief, else the last thing it said.
@@ -871,7 +872,7 @@ function cardBody(s) {
     rows.push(h('div', { class: 'hc-prog' }, h('span', {}, `${p.total} ${p.unit}: ` + p.segments.map(x => `${x.count} ${x.label}`).join(', ')),
       h('div', { class: 'prog-b' }, ...p.segments.map(x => h('span', { class: `tone-${x.tone}`, style: `flex-grow:${x.count}` })))));
   }
-  rows.push(h('table', { class: 'hc-tbl' }, h('tbody', {}, ...cardFacts(s).map(([k, v, cls]) => h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, String(v)))))));
+  rows.push(h('table', { class: 'hc-tbl' }, h('tbody', {}, ...cardFacts(s).map(([k, v, cls]) => h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, v?.nodeType ? v : String(v)))))));
   if (runSubs.length) rows.push(h('div', { class: 'hc-subs' }, h('b', {}, 'Running'),
     h('ul', {}, ...runSubs.slice(0, 4).map(a => h('li', {}, a.title)), runSubs.length > 4 ? h('li', { class: 'muted' }, `+${runSubs.length - 4} more`) : null)));
   if (d?.alive && d.queue[0]) rows.push(h('div', { class: 'hc-q' }, h('b', {}, 'Next up'), h('div', { class: 'mono muted' }, oneLine(d.queue[0].text, 120))));
@@ -894,7 +895,8 @@ function showCard(id, anchor, refresh = false) {
 function hideCard(now = false) {
   clearTimeout(card.timer);
   const go = () => { card.id = null; card.anchor = null; $('hovercard').hidden = true; };
-  if (now) go(); else card.timer = setTimeout(go, 120);
+  // A card with a link in it waits a little longer, so the pointer can get there.
+  if (now) go(); else card.timer = setTimeout(go, $('hovercard').querySelector('.pidlink') ? 350 : 120);
 }
 function hoverCards(root, sel) {
   root.addEventListener('mouseover', (e) => {
@@ -909,6 +911,9 @@ function hoverCards(root, sel) {
   root.addEventListener('focusin', (e) => { const b = e.target.closest(sel); if (b) showCard(b.dataset.id, b); });
   root.addEventListener('focusout', () => hideCard());
 }
+// A card stays while the pointer is on it, so its links (a pid) can be clicked.
+$('hovercard').addEventListener('mouseenter', () => clearTimeout(card.timer));
+$('hovercard').addEventListener('mouseleave', () => hideCard());
 hoverCards($('mini'), '.mchip');
 hoverCards($('tree'), '.sess');
 $('mini').addEventListener('keydown', (e) => {
@@ -993,10 +998,10 @@ function renderOverview() {
       const sig = sigOf(s);
       const st = statusOf(s, null, phaseOf(s));
       sec.append(h('button', { type: 'button', class: `need sig-${sig}`, dataset: { open: s.id, ...(sig === 'error' && st.seq ? { seq: String(st.seq) } : {}) } },
-        h('span', { class: `pill sig-${sig}` }, st.icon ? svgUse(st.icon, 12) : h('span', { class: 'pd' }), st.head),
+        h('span', { class: `pill sig-${sig}` }, st.icon ? svgUse(st.icon, 12, st.head) : h('span', { class: 'pd' }), st.head),
         h('span', { class: 'nt' }, h('b', {}, s.title, h('span', {}, ` · ${s.project}${s.gitBranch ? ' · ' + s.gitBranch : ''}`)), h('span', { class: 'nl' }, st.text || briefLine(s.id) || s.glance?.lastText || '')),
         h('span', { class: 'age' }, st.right || ''),
-        h('span', { class: 'go' }, svgUse('i-right', 13))));
+        h('span', { class: 'go' }, svgUse('i-right', 13, 'Open the session'))));
     }
     out.push(sec);
   }
@@ -1128,6 +1133,7 @@ function detailsCardBody(s, b) {
   const rows = [];
   const row = (k, v, cls) => v ? rows.push(h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, v))) : null;
   row('Folder', s.cwd ? tilde(s.cwd) : null, 'mono');
+  row('Process', s.alive && s.pid ? h('span', {}, pidLinkEl(s.pid, openProcs), s.startedAt ? ` · up ${ago(Date.now() - s.startedAt)}` : '') : null);
   row('Branch', [b?.branch || s.gitBranch, b?.pr ? `PR #${b.pr.number}` : null].filter(Boolean).join(' · '));
   row('Model', [b?.model?.replace('claude-', ''), b?.effort, b?.mode].filter(Boolean).join(' · '));
   const t = b?.turnUsage;
@@ -1241,7 +1247,7 @@ function statusOf(s, b, phase) {
 function renderNow(st) {
   const box = h('div', { class: `nowline sig-${st.sig}${st.quiet ? ' quiet' : ''}`, role: 'status' },
     h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
-    st.icon ? svgUse(st.icon, 14) : null,
+    st.icon ? svgUse(st.icon, 14, st.head) : null,
     h('b', { class: 'nl-h' }, st.head),
     h('span', { class: `nl-t${st.mono ? ' mono' : ''}`, title: st.title || st.text }, st.text));
   if (st.clock != null) box.append(h('span', { class: 'nl-e', title: 'elapsed', dataset: { started: String(Date.now() - st.clock) } }, fmtClock(st.clock)));
@@ -1403,12 +1409,22 @@ function renderBackground() {
   $('bg-count').classList.toggle('live', running > 0);
   if (state.tab === 'bg') {
     const sel = state.detailsKey?.startsWith(`task:${id}:`) ? state.detailsKey.slice(`task:${id}:`.length) : null;
-    $('bg-list').replaceChildren(renderTable(tasks, alive, { filter: bg.filter, q: bg.q, selected: sel, open: (tid) => showTaskDetails(id, tid) }));
+    $('bg-list').replaceChildren(renderTable(tasks, alive, { filter: bg.filter, q: bg.q, selected: sel, open: (tid) => showTaskDetails(id, tid), pidOf: (t) => taskPid(id, t, renderBackground) }));
   }
 }
 function taskCtx(id) {
   return {
     alive: aliveOf(id), api,
+    pidOf: (t) => taskPid(id, t, () => showTaskDetails(id, t.id, true)),
+    killTask: (t) => {
+      const ref = sp.data.get(id)?.tasks[t.id];
+      if (!ref || t.kind === 'agent') return null;
+      return async () => {
+        if (!await confirmDialog('Stop this background task?', `SIGTERM goes to pid ${ref.pid} (${oneLine(taskTitle(t), 60)}) and everything it started. Claude sees the task end.`, 'Stop it')) return;
+        try { const r = await api.post(`/api/procs/${ref.pid}/signal`, { signal: 'TERM', tree: true, start: ref.start }); toast(r.failed?.length ? `Stopped ${r.sent.length}; ${r.failed.length} refused` : 'Stopped'); }
+        catch (e) { toast(`Stop failed: ${e.message}`); }
+      };
+    },
     openCall: (toolUseId) => { const ev = findEvent(id, toolUseId); if (ev) jumpToSeq(ev.seq); else toast('That call is not loaded'); },
     openAgent: (agentId) => select(agentId),
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
@@ -1460,6 +1476,46 @@ async function pollTaskOutput() {
 }
 $('bg-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; bg.filter = b.dataset.f; for (const x of $('bg-seg').querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b)); renderBackground(); };
 $('bg-filter').oninput = (e) => { bg.q = e.target.value; renderBackground(); };
+
+// ------------------------------------------------------------ processes
+// The process view (procs.js) is a dialog over everything; pids elsewhere in
+// the deck link into it. Which process runs a background task or a Bash call
+// comes from /api/sessions/:id/procs, fetched only while one is on screen.
+const procView = createProcView({
+  api, toast, confirm: confirmDialog,
+  titleOf: (id) => state.byId.get(id)?.title || null,
+  openSession: (id) => select(id),
+  openTask: async (id, taskId) => { await select(id); setTab('bg'); showTaskDetails(id, taskId); },
+  openCall: async (id, toolUseId) => { await select(id); const ev = findEvent(id, toolUseId); if (ev) jumpToSeq(ev.seq); else toast('That call is not loaded'); },
+  runInShell: (cmd, cwd) => { if (!state.selected) { toast('Open a session to use its Shell tab'); return; } setTab('shell'); if (cwd) $('sh-cwd').value = cwd; $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
+  openEditor: (p) => api.openEditor(p),
+  restart: () => $('conn').click(),
+});
+function openProcs(opts) { hideCard(true); procView.open(opts); }
+$('procs-btn').onclick = () => openProcs();
+const sp = { data: new Map(), inflight: new Set() };
+/** The session's process map ({ pid, tasks, calls }), refreshed at most every few seconds; `then` re-renders on arrival. */
+function sessProcs(id, then) {
+  if (!id || !aliveOf(id)) return null;
+  const c = sp.data.get(id);
+  if ((!c || Date.now() - c.at > 4000) && !sp.inflight.has(id)) {
+    sp.inflight.add(id);
+    api.get(`/api/sessions/${sid(id)}/procs`)
+      .then(r => { const was = JSON.stringify(c?.tasks) + JSON.stringify(c?.calls); sp.data.set(id, { ...r, at: Date.now() }); if (was !== JSON.stringify(r.tasks) + JSON.stringify(r.calls)) then?.(); })
+      .catch(() => {}).finally(() => sp.inflight.delete(id));
+  }
+  return c || null;
+}
+function taskPid(id, t, then) {
+  if (taskState(t, aliveOf(id)) !== 'running' || t.kind === 'agent') return null;
+  const ref = sessProcs(id, then)?.tasks[t.id];
+  return ref ? pidLinkEl(ref.pid, openProcs, { start: ref.start }) : null;
+}
+function callPid(ev, then) {
+  if (ev?.kind !== 'tool' || ev.tool.name !== 'Bash' || !ev.tool.pending) return null;
+  const ref = sessProcs(ev.sessionId, then)?.calls[ev.id];
+  return ref ? pidLinkEl(ref.pid, openProcs, { start: ref.start }) : null;
+}
 
 // ------------------------------------------------------------ close / delete
 async function closeSession() {
@@ -1552,11 +1608,11 @@ function renderQueue() {
 function roWhy(s) {
   if (s.kind === 'agent') {
     const parent = state.byId.get(s.parentId);
-    return [svgUse('i-info', 13), h('span', {}, 'Subagents take their instructions from the session that started them, so there is no prompt box here.'),
+    return [svgUse('i-info', 13, 'Why there is no prompt box'), h('span', {}, 'Subagents take their instructions from the session that started them, so there is no prompt box here.'),
       parent ? h('button', { type: 'button', class: 'linkish', onclick: () => select(s.parentId) }, `Open ${parent.title || 'the parent session'}`) : null];
   }
   const where = s.entrypoint === 'claude-desktop' ? 'the Claude desktop app' : /vscode|jetbrains|ide/i.test(s.entrypoint || '') ? 'an editor' : 'a terminal';
-  return [svgUse('i-eye', 13), h('span', {}, `Running in ${where}, so the deck can only watch. Send prompts there; once it ends you can continue it here.`)];
+  return [svgUse('i-eye', 13, 'Observe only'), h('span', {}, `Running in ${where}, so the deck can only watch. Send prompts there; once it ends you can continue it here.`)];
 }
 function focusCompose() { if (!$('compose').disabled) $('compose').focus({ preventScroll: true }); }
 
@@ -2048,7 +2104,7 @@ function pickKind(k) {
   const ks = new Set(state.kinds); ks.has(k) ? ks.delete(k) : ks.add(k);
   setKinds([...ks]);
 }
-const glyph = (f) => h('span', { class: `tic f-${f.fam}` }, svgUse(f.icon, 15));
+const glyph = (f) => h('span', { class: `tic f-${f.fam}` }, svgUse(f.icon, 15, f.label));
 function paintKind() {
   const on = FILTERS.filter(f => state.kinds.has(f.k));
   const all = allKinds();
@@ -2137,6 +2193,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
   if (e.key === 'h') { e.preventDefault(); openHistory(); return; }
+  if (e.key === 'p') { e.preventDefault(); openProcs(); return; }
   if (e.key === '[') { e.preventDefault(); setRailMin(!prefs.railMin); return; }
   if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
   if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
@@ -2170,6 +2227,7 @@ const detailCtx = (ev) => {
     agentStatus: (id) => state.byId.get(id)?.status || null,
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
     readAloud: readEvent,
+    pidOf: (e) => callPid(e, () => { if (state.detailsKey === `${e.sessionId}:${e.id}`) showEventDetails(e, true); }),
     openTask: (taskId) => { const tk = ev && taskOf(ev.sessionId, taskId); return tk ? { task: tk, state: taskState(tk, aliveOf(ev.sessionId)), open: () => showTaskDetails(ev.sessionId, taskId) } : null; },
   };
 };
@@ -2291,11 +2349,11 @@ function renderAsk() {
     else thread.append(h('div', { class: 'qa-a' }, h('div', { class: 'md', html: markdown(m.a) }), h('div', { class: 'qa-meta' }, [fmtMs(m.ms), m.cost ? fmtUsd(m.cost) : null].filter(Boolean).join(' · '), ib('i-speaker', 'Read this answer aloud', () => narration.read({ sessionId: a.sessionId, kind: 'said', markdown: m.a }), { size: 12 }))));
   }
   const input = h('input', { type: 'text', placeholder: `Ask anything about ${a.spec.what || 'this'}…`, 'aria-label': 'Your question' });
-  const send = h('button', { type: 'submit', 'aria-label': 'Send question' }, svgUse('i-send', 12));
+  const send = h('button', { type: 'submit', 'aria-label': 'Send question', title: 'Send question (Enter)' }, svgUse('i-send', 12));
   const form = h('form', { class: 'ask-in', onsubmit: (e) => { e.preventDefault(); sendAsk(input.value); } }, input, send);
   const parts = [
     h('div', { class: 'ask-h' }, starIcon(13), h('h3', { id: 'ask-h' }, `Ask about ${a.spec.what || 'this'}`), h('span', { class: 'spacer' }),
-      h('button', { type: 'button', class: 'icon-btn sm ghost', 'aria-label': 'Close Ask', onclick: closeAsk }, svgUse('i-x', 12))),
+      h('button', { type: 'button', class: 'icon-btn sm ghost', 'aria-label': 'Close Ask', title: 'Close Ask (Esc)', onclick: closeAsk }, svgUse('i-x', 12))),
     chips, thread,
   ];
   if (!a.thread.length) parts.push(h('div', { class: 'ask-sugg' }, ...suggestionsFor(a.spec).map(q => h('button', { type: 'button', onclick: () => sendAsk(q) }, q))));
