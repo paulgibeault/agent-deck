@@ -168,8 +168,9 @@ minute, "crash" exits with an error.
   sent next or removed. Click a queued prompt to reword it in place: ⌘↩ or
   clicking away saves, Esc cancels, and the deck holds that prompt back
   while you type so a turn ending mid-edit does not send the old wording.
-  **Send now** (the bolt, ⇧⌘↩) stops the current turn and sends the prompt
-  ahead of the queue. **Stop** (the square, ⌘.) shows while Claude works:
+  **Send now** (the bolt, ⇧⌘↩) stops the current turn and sends everything
+  queued, plus whatever is typed, as one message (with nothing typed it just
+  flushes the queue). **Stop** (the square, ⌘.) shows while Claude works:
   it ends the turn and holds the queue. The power button ends the process
   (sessions also end when the backend stops). For other sessions the panel
   is a read-only mirror of the queue. **Attachments:** paste a file or
