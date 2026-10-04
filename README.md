@@ -185,9 +185,11 @@ minute, "crash" exits with an error.
   screenshot into the prompt box, drop files on the panel, or use the
   paperclip in the box's corner (the New session dialog takes them too).
   Images go as images (big ones are scaled down to fit the API's 5 MB
-  limit), PDFs as documents, and text files are inlined. They show as a
-  tray above the box, a paperclip count on queued prompts, and thumbnails
-  in the prompt's details.
+  limit), PDFs as documents, and text files are inlined. They show as small
+  thumbnails pinned in the box's bottom-right corner (the box never moves;
+  they fade while text runs under them; click an image to enlarge, "+n"
+  lists the rest), a paperclip count on queued prompts, and thumbnails in
+  the prompt's details.
 - **Permissions.** A deck session's permission prompt shows as a card with
   the command, path or plan: Allow, Allow for session (applies the CLI's
   suggested rule or mode), or Deny with an optional reason for Claude. It
@@ -197,12 +199,37 @@ minute, "crash" exits with an error.
   dot) keeps the list and the details pane on the newest event; picking an
   event, scrolling away or opening a file greys it out, and clicking either
   Live button (list or details) brings both back to the newest event. `tool_use` and its result fold into
-  one row with a tool-specific one-liner, duration, error chip, token cost.
-  Thinking collapses to a faint row. Agent rows can be opened as a session or
-  expanded inline. Prompts and turn ends are visual separators. Filter box,
-  All / Tools / Messages / Errors, thinking toggle, Live. Keys:
+  one row. Each row leads with a bare glyph: its color is the family (git,
+  run, change, inspect, delegate, external, talk, system) and its shape the
+  kind, classified by what happened (`public/classify.js`; a Bash command by
+  what it does). Claude's description leads, the command dims after it;
+  results add small facts (commit, PR, test counts); a faint duration sits
+  flush right, with model, tokens and Ask on hover. The turn's last message
+  is marked as its answer. Agent rows can be opened as a session or expanded
+  inline. Filter box, a multi-select glyph filter (All, conversation,
+  thinking, each family, errors; from All a pick isolates one kind), Live. Keys:
   ↓/↑ move, `Enter` details, `a` ask, `l` live / pause, `/` filter,
   `1`–`4` tabs, `Esc` overview, `?` help.
+- **Files.** A tree of the session's folder, loaded a level at a time and
+  git-aware: ignored entries hidden (or shown dim), status marks on files
+  and rolled up to folders, and a dot on each file this session read (blue)
+  or wrote (amber). Find-as-you-type across every file, a breadcrumb, and a
+  "touched only" view of just what the session read or wrote. Keys: ↑/↓
+  move (and preview), →/← open/close or go to parent, `Enter`, `e` editor.
+  Picking a file renders it in Details: images on a checkerboard (click for
+  actual size), SVG, PDF, audio/video, markdown rendered with its images and
+  relative links working, JSON formatted, `.env` values masked, CSV as a
+  table, code and config highlighted. Folders open and close in place.
+- **Changes.** By turn (default): every turn that changed files, newest
+  first, each file with its +/− and a small diffstat. At each turn start and
+  end seen live, the deck snapshots the working tree into a git tree object
+  through a private index (your index, branch and stash are untouched), so a
+  turn's changes are exactly what changed, whether by tools, shell scripts or
+  subagents. Turns from before the deck was watching fall back to the
+  Edit/Write tool calls, with file-editing commands listed without a diff.
+  Clicking a file opens a rich diff in Details: split or unified, syntax
+  highlighted, with the changed words marked. The other view is the working
+  tree vs HEAD, with recent commits.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +
   stdout/stderr for Bash; decoded images; subagent card for Agent; JSON for

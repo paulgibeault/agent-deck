@@ -1,6 +1,7 @@
 // public/events.js — normalized-event renderers: Events rows + Details pane,
 // plus the small markdown / diff / highlight helpers they share.
 import { modelLabel, priceOf, costOf } from './pricing.js';
+import { classify } from './classify.js';
 
 // ------------------------------------------------------------ formatting
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -39,34 +40,19 @@ export const h = (tag, attrs = {}, ...children) => {
 };
 
 // ------------------------------------------------------------ tags
-// Text tags instead of glyphs: scannable in a dense list, no legend needed.
-const FAMILY = {
-  Bash: 'bash', Read: 'read', Glob: 'read', Grep: 'read', ToolSearch: 'read', LS: 'read',
-  Write: 'edit', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', TodoWrite: 'edit',
-  Agent: 'agent', Task: 'agent', Skill: 'agent', SendMessage: 'agent',
-  WebFetch: 'web', WebSearch: 'web',
-};
+// A bare glyph per kind (see classify.js), tinted by family: the eye finds
+// "a push" or "a test run" by shape and color, the tooltip names it.
 export function tagFor(ev) {
-  switch (ev.kind) {
-    case 'tool': {
-      const n = ev.tool.name;
-      if (n.startsWith('mcp__')) {
-        const short = n.split('__').pop();
-        return { label: short.length > 7 ? short.slice(0, 6) + '…' : short, fam: 'web', title: ev.tool.display };
-      }
-      return { label: n.length > 7 ? n.slice(0, 6) + '…' : n, fam: ev.tool.isError ? 'err' : FAMILY[n] || 'said', title: n };
-    }
-    case 'text': return { label: 'Said', fam: 'said' };
-    case 'thinking': return { label: 'Think', fam: 'muted' };
-    case 'prompt': return { label: 'You', fam: 'you' };
-    case 'queue': return { label: 'Queue', fam: 'muted' };
-    case 'system': return ev.error ? { label: 'Error', fam: 'err' } : ev.subtype === 'task' ? { label: 'Bg', fam: ev.status === 'failed' ? 'err' : 'muted', title: 'Background task' } : { label: 'Note', fam: 'muted' };
-    default: return { label: 'Raw', fam: 'muted' };
-  }
+  const c = classify(ev);
+  return { label: c.label, fam: c.fam, icon: c.icon, title: c.label };
 }
-export function tagEl(ev) {
-  const t = tagFor(ev);
-  return h('span', { class: `tag f-${t.fam}`, title: t.title || null }, t.label);
+const isErrEv = (ev) => (ev.kind === 'tool' && (ev.tool.isError || ev.tool.meta?.interrupted)) || !!ev.error;
+/** The glyph for an event; `label` adds its name beside it (Details header). */
+export function tagEl(ev, { label = false, c = classify(ev) } = {}) {
+  const bad = isErrEv(ev) && c.fam !== 'err';
+  const name = c.label + (bad ? (ev.tool?.meta?.interrupted && !ev.tool.isError ? ' · interrupted' : ' · failed') : '') + (ev.ts ? ' · ' + fmtTime(ev.ts) : '');
+  return h('span', { class: `tic f-${c.fam}${bad ? ' bad' : ''}${label ? ' lab' : ''}`, role: 'img', 'aria-label': name, title: name },
+    svgUse(c.icon, 15), label ? h('span', {}, c.label) : null);
 }
 export const askMini = () => h('button', { class: 'ask-ico ask-mini', type: 'button', dataset: { askRow: '1' }, 'aria-label': 'Ask about this', title: 'Ask about this' }, starIcon(11));
 /** Icon-only button: no box, no label; the label is its tooltip and accessible name. */
@@ -98,14 +84,16 @@ export const rowHeight = (ev) => ROW_HEIGHTS[ev.kind] || ROW_HEIGHTS.default;
  */
 export function renderRow(ev, { depth = 0, selected = false, agentStatus = null, expanded = false, turn = null } = {}) {
   const isErr = (ev.kind === 'tool' && ev.tool.isError) || ev.error;
-  const row = h('div', { class: `row k-${ev.kind}${selected ? ' selected' : ''}${isErr ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
+  const c = classify(ev);
+  const row = h('div', { class: `row k-${ev.kind} f-${c.fam}${ev.answer ? ' answer' : ''}${selected ? ' selected' : ''}${isErr ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
   row.style.setProperty('--depth', depth);
   row.style.height = rowHeight(ev) + 'px';
 
   if (ev.kind === 'prompt') {
     const card = h('div', { class: 'turn-card' });
-    card.append(tagEl(ev), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
-    if (ev.origin && ev.origin !== 'human') card.append(h('span', { class: 'chip' }, ev.origin));
+    card.append(tagEl(ev, { c }), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
+    if (ev.origin && ev.origin !== 'human' && ev.origin !== 'sdk') card.append(h('span', { class: 'chip' }, ev.origin));
+    if (turn?.queuedMs >= 1000) card.append(h('span', { class: 'chip', title: 'Sent while the agent was busy; waited in the queue' }, svgUse('i-history', 10), ` ${fmtMs(turn.queuedMs)}`));
     if (ev.attachments?.length) card.append(h('span', { class: 'chip', title: ev.attachments.map(attLabel).join('\n') }, svgUse('i-clip', 10), ` ${ev.attachments.length}`));
     card.append(h('span', { class: 'meta' }, turn?.meta || fmtTime(ev.ts)), askMini());
     row.append(card);
@@ -116,71 +104,67 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     return row;
   }
 
-  row.append(h('span', { class: 'ts' }, fmtTime(ev.ts)));
-  row.append(h('span', { class: 'tg' }, tagEl(ev)));
-  const body = h('span', { class: 'body' });
+  row.append(h('span', { class: 'tg' }, tagEl(ev, { c })));
+  const body = h('span', { class: 'body' + (c.sans ? ' sans' : '') });
   row.append(body);
   const chips = h('span', { class: 'chips' });
   let dur = null;
+  // An MCP call names its server: the one place a word beats a glyph.
+  if (c.server) body.append(h('b', { class: 'srv' }, c.server));
+  body.append(oneLine(c.text, 260));
+  if (c.sub) body.append(h('span', { class: 'sub' }, c.sub));
+  body.title = [c.text, c.sub].filter(Boolean).join('\n');
 
   switch (ev.kind) {
     case 'tool': {
       const t = ev.tool;
-      const desc = t.name === 'Bash' ? (t.input.description || t.input.command || '') : t.summary;
-      body.title = desc;
-      body.append(t.summary || t.display);
       if (t.name === 'Agent' && t.agentId) {
         chips.append(h('button', { class: 'mini agent-open', dataset: { agent: t.agentId }, title: 'open as session' }, 'open'));
         chips.append(h('button', { class: 'mini agent-toggle', dataset: { agent: t.agentId }, title: 'show subagent events inline' }, expanded ? 'hide inline' : 'inline'));
         if (agentStatus) chips.append(h('span', { class: `chip st-${agentStatus}` }, agentStatus));
       }
       if (t.taskId) chips.append(h('button', { class: 'mini task-open', dataset: { task: t.taskId }, title: 'Open the background task' }, 'background'));
+      const f = c.facts;
+      if (f?.badge) chips.append(h('span', { class: `chip f-${c.fam}`, title: f.title || null }, f.badge));
+      if (f && f.pass != null) {
+        if (f.fail) chips.append(h('span', { class: 'chip err', title: `${f.fail} failed, ${f.pass} passed` }, `${f.fail} failed`));
+        else chips.append(h('span', { class: 'chip ok', title: `${f.pass} passed` }, svgUse('i-check', 10), ` ${f.pass}`));
+      }
       if (t.pending) dur = h('span', { class: 'dur run' }, 'running');
       else {
-        if (t.isError) chips.append(h('span', { class: 'chip err' }, 'error'));
-        else if (t.meta?.interrupted) chips.append(h('span', { class: 'chip err' }, 'interrupted'));
         if (t.result?.images?.length) chips.append(h('span', { class: 'chip' }, `${t.result.images.length} img`));
         if (t.durationMs != null) dur = h('span', { class: 'dur' + (t.isError ? ' bad' : '') }, fmtMs(t.durationMs));
       }
       break;
     }
-    case 'text':
-      body.classList.add('sans');
-      body.append(oneLine(ev.text, 260));
-      break;
-    case 'thinking':
-      body.append(ev.redacted ? 'thinking (redacted)' : !ev.text ? 'thinking (not recorded)' : `thinking · ${fmtTokens(ev.text.length)} chars`);
-      break;
     case 'queue':
-      body.append(`${ev.op}${ev.text ? ': ' + oneLine(ev.text, 160) : ''}`);
-      if (ev.queueDepth != null) chips.append(h('span', { class: 'chip' }, `q${ev.queueDepth}`));
+      if (ev.queueDepth > 1) chips.append(h('span', { class: 'chip', title: 'Messages waiting' }, `${ev.queueDepth} waiting`));
       break;
     case 'system':
-      if (ev.subtype === 'task') {
-        body.append(oneLine(ev.text, 220));
-        if (ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
-        break;
-      }
-      body.append(`${ev.subtype || 'system'} · ${oneLine(ev.text, 200)}`);
+      if (ev.subtype === 'task' && ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
       break;
-    default:
-      body.append(`${ev.subtype || 'raw'} · ${oneLine(ev.text, 200)}`);
   }
   if (chips.childNodes.length) row.append(chips);
-  if (dur) row.append(dur);
   // The model that produced this. The first event of an API response carries
   // its inference details; the rest of that response show the name dimmer.
-  // Hovering either opens the inference card (inferenceCard below).
+  // Hovering either opens the inference card (inferenceCard below). Model,
+  // tokens and Ask float in on hover; a model that's news (switched, cut off)
+  // stays in the row.
+  const hov = h('span', { class: 'hov' });
   const inf = ev.inference;
+  let mdl = null;
   if (inf) {
     const flag = inf.synthetic ? ' syn' : inf.stopReason === 'max_tokens' || inf.stopReason === 'refusal' ? ' warn' : inf.switchedFrom ? ' sw' : '';
-    row.append(h('span', { class: `mdl${flag}`, 'aria-describedby': 'hovercard' },
-      inf.switchedFrom ? '↻ ' : '', modelLabel(inf.model), inf.effort ? h('i', {}, ` ${inf.effort}`) : null));
-  } else if (ev.msgId && ev.model) row.append(h('span', { class: 'mdl cont', 'aria-describedby': 'hovercard' }, modelLabel(ev.model)));
-  const end = h('span', { class: 'end' });
-  if (ev.usage?.output_tokens) end.append(h('span', { class: 'tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, fmtTokens(ev.usage.output_tokens)));
-  end.append(askMini());
-  row.append(end);
+    mdl = h('span', { class: `mdl${flag}`, 'aria-describedby': 'hovercard' },
+      inf.switchedFrom ? '↻ ' : '', modelLabel(inf.model), inf.effort ? h('i', {}, ` ${inf.effort}`) : null);
+    if (flag === ' sw' || flag === ' warn') { row.append(mdl); mdl = null; }
+  } else if (ev.msgId && ev.model) mdl = h('span', { class: 'mdl cont', 'aria-describedby': 'hovercard' }, modelLabel(ev.model));
+  hov.append(askMini());
+  if (ev.usage?.output_tokens) hov.append(h('span', { class: 'tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, fmtTokens(ev.usage.output_tokens) + ' tok'));
+  if (mdl) hov.append(mdl);
+  row.append(hov);
+  // Duration: faint, flush right, right of the model.
+  row.append(dur || h('span', { class: 'dur' }));
   return row;
 }
 
@@ -237,55 +221,142 @@ export function inferenceCard(ev) {
 const fmtUsd4 = (n) => n >= 0.1 ? `$${n.toFixed(2)}` : n >= 0.001 ? `$${n.toFixed(3)}` : '<$0.001';
 
 // ------------------------------------------------------------ markdown
-export function markdown(src) {
+/**
+ * Markdown to HTML. Chat text calls it bare. Files pass options:
+ * `soft` joins wrapped lines and keeps real heading levels (with ids);
+ * `img(src)` maps an image path to a URL; `link(href)` maps a relative link
+ * to an absolute path (rendered as data-abs) or null; `html` lets a small,
+ * attribute-stripped subset of inline HTML through (img, kbd, details…).
+ */
+const CALLOUT = { note: 'Note', tip: 'Tip', important: 'Important', warning: 'Warning', caution: 'Caution' };
+export const slug = (t) => String(t).toLowerCase().replace(/<[^>]+>/g, '').replace(/&\w+;/g, '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
+export function markdown(src, opts = {}) {
   const lines = String(src ?? '').replace(/\r\n?/g, '\n').split('\n');
   const out = []; let i = 0;
-  const inline = (s) => esc(s)
-    .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|\s)(https?:\/\/[^\s<]+[^\s<.,;:)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  const unesc = (s) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+  const imgUrl = (u) => /^(https?:|data:image\/)/.test(u) ? u : opts.img ? opts.img(u) : null;
+  const inline = (s) => {
+    // Code spans first, parked so nothing below rewrites their insides.
+    const parked = [];
+    let t = esc(s).replace(/(`+)([\s\S]+?)\1/g, (_, __, c) => { parked.push(`<code>${c.trim()}</code>`); return `\u0000${parked.length - 1}\u0000`; });
+    if (opts.html) {
+      t = t.replace(/&lt;!--[\s\S]*?--&gt;/g, '')
+        .replace(/&lt;img\b([\s\S]*?)\/?&gt;/gi, (_, attrs) => {
+          const get = (n) => new RegExp(`\\b${n}=&quot;([^&]*(?:&amp;[^&]*)*)&quot;`, 'i').exec(attrs)?.[1];
+          const url = get('src') && imgUrl(unesc(get('src'))); if (!url) return '';
+          const w = /^\d+%?$/.test(get('width') || '') ? ` width="${get('width')}"` : '';
+          return `<img src="${esc(url)}" alt="${get('alt') || ''}"${w} loading="lazy">`;
+        })
+        .replace(/&lt;a\s[^&]*?href=&quot;(https?:[^&]*)&quot;[\s\S]*?&gt;([\s\S]*?)&lt;\/a&gt;/gi, '<a href="$1" target="_blank" rel="noopener">$2</a>')
+        .replace(/&lt;(\/?)(br|kbd|sub|sup|b|i|u|em|strong|details|summary|p|div|span|center|small|mark|ins|picture|source|h[1-6])\b((?:[^&]|&quot;|&amp;|&#39;)*?)\/?&gt;/gi, (_, c, tag, attrs) => {
+          // Attributes are dropped, except a plain alignment.
+          tag = tag.toLowerCase(); if (tag === 'source') return '';
+          const al = !c && /\balign=&quot;(left|center|right)&quot;/i.exec(attrs)?.[1];
+          return `<${c}${tag}${al ? ` align="${al.toLowerCase()}"` : ''}>`;
+        });
+    }
+    t = t
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, alt, u) => { const url = imgUrl(unesc(u)); return url ? `<img src="${esc(url)}" alt="${alt}" loading="lazy">` : alt; })
+      .replace(/\[([^\]]+)\]\(#([^)\s]+)\)/g, (_, txt, a) => opts.soft ? `<a href="#" data-anchor="${esc(slug(unesc(a)))}">${txt}</a>` : txt)
+      .replace(/\[([^\]]+)\]\((?!https?:)([^)\s]+)\)/g, (m, txt, u) => { const abs = opts.link ? opts.link(unesc(u)) : null; return abs ? `<a href="#" data-abs="${esc(abs)}" title="${esc(unesc(u))}">${txt}</a>` : txt; })
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, '$1<strong>$2</strong>')
+      .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
+      .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/(^|\s)(https?:\/\/[^\s<]+[^\s<.,;:)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+    return t.replace(/\u0000(\d+)\u0000/g, (_, n) => parked[+n]);
+  };
+  const LI = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const indent = (l) => /^\s*/.exec(l)[0].replace(/\t/g, '    ').length;
+  const li = (t, sub) => {
+    const tm = /^\[([ xX])\]\s+(.*)$/.exec(t);
+    return tm ? `<li class="task"><input type="checkbox" disabled${tm[1] !== ' ' ? ' checked' : ''}> ${inline(tm[2])}${sub}</li>` : `<li>${inline(t)}${sub}</li>`;
+  };
+  // A list and anything nested under it, by indentation.
+  const list = (start) => {
+    const m0 = LI.exec(lines[start]); const ind = indent(lines[start]);
+    const ordered = /\d/.test(m0[2]); const first = ordered ? parseInt(m0[2], 10) : 1;
+    const items = []; let j = start;
+    while (j < lines.length) {
+      const m = LI.exec(lines[j]); const d = indent(lines[j]);
+      if (m && d === ind) { items.push({ text: m[3], sub: '' }); j++; continue; }
+      if (m && d > ind && items.length) { const r = list(j); items[items.length - 1].sub += r.html; j = r.next; continue; }
+      if (!m && d > ind && items.length && /^\s*(```|~~~)/.test(lines[j])) {
+        // A fenced block inside an item.
+        const fm = /^\s*(```+|~~~+)\s*([\w+#.-]+)?/.exec(lines[j]); const buf = []; j++;
+        while (j < lines.length && !lines[j].trim().startsWith(fm[1])) buf.push(lines[j++].slice(Math.min(d, indent(lines[j - 1]))));
+        j++;
+        items[items.length - 1].sub += `<pre><code class="hl${fm[2] ? ' language-' + esc(fm[2].toLowerCase()) : ''}">${esc(buf.join('\n'))}</code></pre>`;
+        continue;
+      }
+      if (!m && lines[j].trim() && d > ind && items.length) { items[items.length - 1].text += ' ' + lines[j].trim(); j++; continue; }
+      if (!lines[j].trim()) {
+        let k = j; while (k < lines.length && !lines[k].trim()) k++;
+        if (k < lines.length && LI.test(lines[k]) && indent(lines[k]) >= ind) { j = k; continue; }
+      }
+      break;
+    }
+    const tag = ordered ? 'ol' : 'ul';
+    return { html: `<${tag}${ordered && first !== 1 ? ` start="${first}"` : ''}>${items.map(it => li(it.text, it.sub)).join('')}</${tag}>`, next: j };
+  };
   while (i < lines.length) {
     const l = lines[i];
-    const fence = /^\s*```\s*(\w+)?/.exec(l);
+    const fence = /^\s*(```+|~~~+)\s*([\w+#.-]+)?/.exec(l);
     if (fence) {
-      const lang = fence[1] || ''; const buf = []; i++;
-      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+      const lang = fence[2] || ''; const buf = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) buf.push(lines[i++]);
       i++;
-      out.push(`<pre><code class="hl${lang ? ' language-' + esc(lang) : ''}">${esc(buf.join('\n'))}</code></pre>`);
+      out.push(`<pre><code class="hl${lang ? ' language-' + esc(lang.toLowerCase()) : ''}">${esc(buf.join('\n'))}</code></pre>`);
       continue;
     }
-    const hm = /^(#{1,6})\s+(.*)$/.exec(l);
-    if (hm) { out.push(`<h${hm[1].length + 1}>${inline(hm[2])}</h${hm[1].length + 1}>`); i++; continue; }
-    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
+    const hm = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l);
+    if (hm) {
+      const n = opts.soft ? hm[1].length : Math.min(6, hm[1].length + 1); const body = inline(hm[2]);
+      out.push(opts.soft ? `<h${n} id="${esc(slug(hm[2]))}">${body}</h${n}>` : `<h${n}>${body}</h${n}>`); i++; continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
     if (/^\s*>/.test(l)) {
       const buf = []; while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
-      out.push(`<blockquote>${markdown(buf.join('\n'))}</blockquote>`); continue;
-    }
-    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '')) {
-      const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
-      const head = cells(l); i += 2; const rows = [];
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
-      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+      const cm = /^\[!(\w+)\]\s*$/.exec(buf[0] || '');
+      if (cm && CALLOUT[cm[1].toLowerCase()]) {
+        const k = cm[1].toLowerCase();
+        out.push(`<div class="callout c-${k}"><div class="callout-t">${CALLOUT[k]}</div>${markdown(buf.slice(1).join('\n'), opts)}</div>`);
+      } else out.push(`<blockquote>${markdown(buf.join('\n'), opts)}</blockquote>`);
       continue;
     }
-    const lm = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(l);
-    if (lm) {
-      const ordered = /\d/.test(lm[2]); const items = [];
-      while (i < lines.length) {
-        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
-        if (!m) { if (items.length && /^\s{2,}\S/.test(lines[i])) { items[items.length - 1] += ' ' + lines[i].trim(); i++; continue; } break; }
-        items.push(m[3]); i++;
-      }
-      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map(t => `<li>${inline(t)}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
+    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?\s*:?-+:?\s*(\||$)/.test(lines[i + 1] || '')) {
+      // Cells split on |, but not on \| or a | inside `code`.
+      const split = (r) => {
+        const cells = []; let cur = '', tick = false; const t = r.trim().replace(/^\|/, '').replace(/\|$/, '');
+        for (let k = 0; k < t.length; k++) {
+          const ch = t[k];
+          if (ch === '\\' && t[k + 1] === '|') { cur += '|'; k++; continue; }
+          if (ch === '`') tick = !tick;
+          if (ch === '|' && !tick) { cells.push(cur.trim()); cur = ''; continue; }
+          cur += ch;
+        }
+        cells.push(cur.trim());
+        return cells;
+      };
+      const align = split(lines[i + 1]).map(c => /^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : null);
+      const cell = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ''}>${inline(c)}</${tag}>`;
+      const head = split(l); i += 2; const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(split(lines[i++]));
+      out.push(`<div class="tbl"><table><thead><tr>${head.map((c, k) => cell('th', c, k)).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, k) => cell('td', c, k)).join('')}</tr>`).join('')}</tbody></table></div>`);
       continue;
     }
+    if (LI.test(l)) { const r = list(i); out.push(r.html); i = r.next; continue; }
     if (!l.trim()) { i++; continue; }
     const buf = [];
-    while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,6}\s|>|[-*+]\s|\d+[.)]\s|\|)/.test(lines[i])) buf.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>|[-*+]\s|\d+[.)]\s|\|)/.test(lines[i])) buf.push(lines[i++]);
     if (!buf.length) { buf.push(lines[i++]); }
-    out.push(`<p>${inline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
+    // Files wrap prose at a column (soft breaks); chat text means its newlines.
+    // A paragraph that is itself an HTML block (<p align>, <div>…) isn't wrapped again.
+    if (opts.html && /^\s*<(p|div|center|details|picture|h[1-6])\b/i.test(buf[0])) { out.push(inline(buf.join(' '))); continue; }
+    out.push(`<p>${opts.soft ? inline(buf.join(' ')) : inline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
   }
   return out.join('\n');
 }
@@ -360,36 +431,96 @@ export function parseUnified(text) {
   return ops;
 }
 
-/** Side-by-side table from ops. Pairs runs of del/add. */
-export function renderSideBySide(ops, { lang = null, startA = 1, startB = 1 } = {}) {
-  const table = h('table', { class: 'sbs' });
+// Word-level changes within a paired removed/added line: char ranges on each
+// side, or null when the line changed wholesale (then marks add nothing).
+const TOK = /\w+|\s+|[^\w\s]/g;
+export function wordRanges(a, b) {
+  const ta = a.match(TOK) || [], tb = b.match(TOK) || [];
+  const n = ta.length, m = tb.length;
+  if (!n || !m || n * m > 120_000) return null;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = ta[i] === tb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ra = [], rb = []; let i = 0, j = 0, pa = 0, pb = 0;
+  const push = (arr, s, e) => { const last = arr[arr.length - 1]; if (last && last[1] === s) last[1] = e; else arr.push([s, e]); };
+  while (i < n || j < m) {
+    if (i < n && j < m && ta[i] === tb[j]) { pa += ta[i++].length; pb += tb[j++].length; }
+    else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) { push(rb, pb, pb + tb[j].length); pb += tb[j++].length; }
+    else { push(ra, pa, pa + ta[i].length); pa += ta[i++].length; }
+  }
+  const changed = (rs, len) => rs.reduce((t, [x, y]) => t + y - x, 0) / Math.max(1, len);
+  if (changed(ra, a.length) > 0.7 && changed(rb, b.length) > 0.7) return null;
+  return [ra, rb];
+}
+/** Wrap char ranges of an element's text in <mark>, across highlight spans. */
+function markRanges(el, ranges) {
+  if (!ranges?.length) return;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  let off = 0;
+  for (const node of nodes) {
+    const t = node.nodeValue, start = off, end = off + t.length; off = end;
+    const cuts = ranges.filter(([x, y]) => y > start && x < end).map(([x, y]) => [Math.max(x, start) - start, Math.min(y, end) - start]);
+    if (!cuts.length) continue;
+    const frag = document.createDocumentFragment(); let p = 0;
+    for (const [x, y] of cuts) { if (x > p) frag.append(t.slice(p, x)); frag.append(h('mark', { class: 'wd' }, t.slice(x, y))); p = y; }
+    if (p < t.length) frag.append(t.slice(p));
+    node.replaceWith(frag);
+  }
+}
+function diffLine(text, lang, ranges) {
+  const el = h('span', { class: 'lt' });
+  if (lang && window.hljs?.getLanguage?.(lang) && text.length < 2000) {
+    try { el.innerHTML = window.hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch { el.textContent = text; }
+  } else el.textContent = text;
+  markRanges(el, ranges);
+  return el;
+}
+
+/**
+ * A rich diff from ops: `split` (side by side) or `unified`, syntax
+ * highlighted, with the changed words marked inside each changed line.
+ */
+export function renderDiff(ops, { lang = null, mode = 'split', startA = 1, startB = 1 } = {}) {
+  const uni = mode === 'unified';
+  const table = h('table', { class: uni ? 'udiff' : 'sbs' });
   let an = startA, bn = startB;
-  const cell = (cls, num, text) => h('td', { class: cls }, num != null ? h('span', { class: 'ln' }, String(num)) : null, h('span', { class: 'lt' }, text ?? ''));
+  const num = (n) => h('span', { class: 'ln' }, n == null ? '' : String(n));
+  const sbsCell = (cls, n, text, r) => h('td', { class: cls }, num(n), cls === 'empty' ? null : diffLine(text ?? '', lang, r));
+  const uniRow = (cls, a, b, text, r) => h('tr', { class: cls }, h('td', { class: 'ln' }, a ?? ''), h('td', { class: 'ln' }, b ?? ''),
+    h('td', { class: 'sg' }, cls === 'add' ? '+' : cls === 'del' ? '−' : ''), h('td', { class: 'tx' }, diffLine(text ?? '', lang, r)));
   let k = 0;
   while (k < ops.length) {
     const op = ops[k];
-    if (op.t === 'hunk') { table.append(h('tr', { class: 'hunk' }, h('td', { colspan: 2 }, op.text))); an = op.an ?? an; bn = op.bn ?? bn; k++; continue; }
+    if (op.t === 'hunk') {
+      const hm = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@\s*(.*)$/.exec(op.text);
+      const label = hm ? `Line ${hm[3]}${hm[5] ? ' · ' + hm[5] : ''}` : op.text;
+      table.append(h('tr', { class: 'hunk' }, h('td', { colspan: uni ? 4 : 2 }, label))); k++; continue;
+    }
     if (op.t === 'eq') {
-      const a = op.an ?? an++, b = op.bn ?? bn++; if (op.an != null) { an = op.an + 1; bn = op.bn + 1; }
-      table.append(h('tr', {}, cell('eq', a, op.a), cell('eq', b, op.b))); k++; continue;
+      const a = op.an ?? an, b = op.bn ?? bn; an = a + 1; bn = b + 1;
+      table.append(uni ? uniRow('eq', a, b, op.a) : h('tr', {}, sbsCell('eq', a, op.a), sbsCell('eq', b, op.b))); k++; continue;
     }
     const dels = [], adds = [];
     while (k < ops.length && ops[k].t === 'del') dels.push(ops[k++]);
     while (k < ops.length && ops[k].t === 'add') adds.push(ops[k++]);
-    const n = Math.max(dels.length, adds.length);
-    for (let x = 0; x < n; x++) {
-      const d = dels[x], a = adds[x];
-      let dn = null, bnn = null;
-      if (d) { dn = d.an ?? an++; if (d.an != null) an = d.an + 1; }
-      if (a) { bnn = a.bn ?? bn++; if (a.bn != null) bn = a.bn + 1; }
-      table.append(h('tr', {}, d ? cell('del', dn, d.a) : cell('empty'), a ? cell('add', bnn, a.b) : cell('empty')));
+    const pairs = Math.min(dels.length, adds.length);
+    const wr = []; for (let x = 0; x < pairs; x++) wr.push(wordRanges(dels[x].a, adds[x].b));
+    const dn = dels.map(d => { const v = d.an ?? an; an = v + 1; return v; });
+    const bnn = adds.map(a => { const v = a.bn ?? bn; bn = v + 1; return v; });
+    if (uni) {
+      dels.forEach((d, x) => table.append(uniRow('del', dn[x], null, d.a, wr[x]?.[0])));
+      adds.forEach((a, x) => table.append(uniRow('add', null, bnn[x], a.b, wr[x]?.[1])));
+    } else {
+      for (let x = 0; x < Math.max(dels.length, adds.length); x++) {
+        const d = dels[x], a = adds[x];
+        table.append(h('tr', {}, d ? sbsCell('del', dn[x], d.a, wr[x]?.[0]) : sbsCell('empty'), a ? sbsCell('add', bnn[x], a.b, wr[x]?.[1]) : sbsCell('empty')));
+      }
     }
-  }
-  if (lang && window.hljs) {
-    table.querySelectorAll('td .lt').forEach(el => { try { if (el.textContent.length < 2000) el.innerHTML = window.hljs.highlight(el.textContent, { language: lang }).value; } catch { /* ignore */ } });
   }
   return h('div', { class: 'sbs-wrap' }, table);
 }
+/** Side-by-side table from ops (kept for existing callers). */
+export const renderSideBySide = (ops, opts = {}) => renderDiff(ops, { ...opts, mode: 'split' });
 
 // ------------------------------------------------------------ details
 export const copyBtn = (text, label = 'Copy') => ib('i-copy', label, (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); flashDone(e.currentTarget); }, { size: 13 });
@@ -474,7 +605,7 @@ export function renderDetails(ev, detail, ctx) {
   const rawToggle = ib('i-code', 'Raw record', () => root.classList.toggle('show-raw'));
   const tokens = ev.usage?.output_tokens ? `${fmtTokens(ev.usage.output_tokens)} tokens` : null;
   root.append(headerFor({
-    tag: tagEl(ev), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
+    tag: tagEl(ev, { label: true }), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
     meta: [when, ev.kind === 'tool' && t.durationMs != null ? fmtMs(t.durationMs) : null, tokens, ev.model ? ev.model.replace('claude-', '') : null, ctx.position],
   }));
 
@@ -584,21 +715,6 @@ function renderImages(ev, ctx) {
     wrap.append(h('a', { href: src, target: '_blank' }, h('img', { src, alt: im.mediaType, title: `${im.mediaType} · ${fmtTokens(im.bytes)} b64 chars` })));
   }
   return wrap;
-}
-
-/** Details content for a file from the Files tab. */
-export function renderFileDetails(file, ctx, highlightLine = null) {
-  const root = h('div', { class: 'details' });
-  const name = relPath(file.path, ctx.cwd);
-  root.append(headerFor({ tag: h('span', { class: 'tag f-read' }, 'File'), title: name, nav: false,
-    actions: [file.error ? null : editorBtn(file.path, highlightLine || 1, ctx.api)],
-    meta: [file.size != null ? `${fmtTokens(file.size)} bytes` : null, file.truncated ? 'truncated' : null] }));
-  const body = h('div', { class: 'dbody' });
-  body.append(section('Contents', { actions: [copyBtn(file.content ?? '')], ask: file.content ? { kind: 'text', label: `File ${name}`, fromSection: true, what: 'this file' } : null },
-    file.binary ? h('div', { class: 'note' }, 'binary file') : file.error ? h('div', { class: 'note err' }, file.error) : codeBlock(file.content ?? '', langFor(file.path))));
-  root.append(body);
-  highlightIn(root);
-  return root;
 }
 
 /** Details content for a git diff from the Changes tab. */
