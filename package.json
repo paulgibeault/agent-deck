@@ -9,6 +9,7 @@
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
     "install-app": "sh scripts/install-app.sh",
-    "uninstall-app": "sh scripts/install-app.sh --uninstall"
+    "uninstall-app": "sh scripts/install-app.sh --uninstall",
+    "setup-voices": "sh scripts/setup-voices.sh"
   }
 }
