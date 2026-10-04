@@ -150,6 +150,27 @@ Send is disabled with a tooltip explaining why.
 - Follow-tail toggle; keyboard: ↓/↑ move, `Enter` opens details,
   `l` toggles follow.
 
+### 4.3a Background tab
+
+Background tasks come from the transcript (lib/transcript.mjs, `meta.tasks`).
+
+- **Start:** a Bash call with `backgroundTaskId` in its result (run in the
+  background, or moved there after `timedOutAfterMs`), a Monitor (`taskId`,
+  `timeoutMs`), or a background Agent (`isAsync`, `agentId`, `outputFile`).
+- **Reports:** `<task-notification>` blocks carry Monitor `<event>`s and a
+  final `<status>` with a summary that holds the exit code. They arrive by
+  queue-operation, by queued-command attachment and as the delivered user
+  message (`origin.kind: task-notification`); each is counted once and is
+  never treated as the pilot's prompt.
+- **Stops:** `TaskStop` marks a task stopped.
+
+The session view shows a strip of running tasks, and the Background tab
+lists them all. A task's details tail its output file, read through
+`/api/sessions/:id/tasks/:taskId/output`. That endpoint serves only the path
+the transcript recorded for that task, and only under `tasks/`. A task the
+transcript calls running in a session whose process is gone is shown as
+ended with it.
+
 ### 4.4 Files tab
 
 Union of Read/Edit/Write/Glob paths plus `file-history-snapshot`: counts, last

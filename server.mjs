@@ -304,6 +304,10 @@ async function route(req, res, url) {
     const img = index.image(decodeURIComponent(m[1]), decodeURIComponent(m[2]), Number(m[3]));
     return img ? send(res, 200, img.data, { 'Content-Type': img.mediaType || 'image/png' }) : send(res, 404, 'no image');
   }
+  if ((m = /^\/api\/sessions\/([^/]+)\/tasks\/([^/]+)\/output$/.exec(p))) {
+    const r = index.taskOutput(decodeURIComponent(m[1]), decodeURIComponent(m[2]), q.get('tail'));
+    return r ? send(res, 200, r) : send(res, 404, { error: 'unknown task' });
+  }
   if ((m = /^\/api\/sessions\/([^/]+)\/files$/.exec(p))) {
     const r = index.filesOf(decodeURIComponent(m[1]));
     return r ? send(res, 200, { files: r }) : send(res, 404, { error: 'unknown session' });

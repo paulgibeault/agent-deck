@@ -4,6 +4,7 @@ import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferen
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
+import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -267,7 +268,8 @@ function onSession({ id, meta, brief, summary }) {
     for (const b of ['active', 'recent', 'closed']) { const i = state.snapshot[b].findIndex(x => x.id === id); if (i >= 0) state.snapshot[b][i] = summary; }
     scheduleTree();
   }
-  if (id === state.selected) { renderHeader(); renderQueue(); }
+  if (id === state.selected) { renderHeader(); renderQueue(); renderBackground(); }
+  if (state.detailsKey?.startsWith(`task:${id}:`)) showTaskDetails(id, state.detailsKey.slice(`task:${id}:`.length), true);
   if (summary?.subagents?.some(a => state.expanded.has(a.id)) && state.selected === id) scheduleRows();
 }
 
@@ -347,7 +349,7 @@ function sessRow(s, nested = false) {
   const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}` },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
     h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), sub ? h('span', { class: 'sub' }, ...sub) : null),
-    h('span', { class: 'r' }, ago(Date.now() - (s.mtime || 0))));
+    h('span', { class: 'r' }, s.background ? h('span', { class: 'bgc', title: `${s.background} running in the background` }, svgUse('i-bg', 10), String(s.background)) : null, ago(Date.now() - (s.mtime || 0))));
   return h('li', {}, btn);
 }
 
@@ -474,7 +476,10 @@ const narration = createNarration({
 });
 /** Live events only: catch-up and session loads go through onEvents, never here. */
 function narrateEvents(sessionId, events) {
-  for (const ev of events) if (ev.kind === 'text' && ev.text?.trim()) narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'said', markdown: ev.text });
+  for (const ev of events) {
+    if (ev.kind === 'text' && ev.text?.trim()) narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'said', markdown: ev.text });
+    else if (ev.kind === 'system' && ev.subtype === 'task' && ev.status && ev.status !== 'running') narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'background', markdown: ev.text });
+  }
 }
 function narrateBrief(b) {
   const prev = state.briefs.get(b.id);
@@ -966,13 +971,14 @@ function renderOverview() {
   const needs = act.filter(needsYou).sort((a, b) => (sigOf(a) === 'input' ? 0 : 1) - (sigOf(b) === 'input' ? 0 : 1));
   const ready = act.filter(s => sigOf(s) === 'done');
   const runningSubs = act.reduce((n, s) => n + (s.running || 0), 0);
+  const runningBg = act.reduce((n, s) => n + (s.background || 0), 0);
   const spent = act.reduce((n, s) => n + (s.glance?.cost || 0), 0);
   const repos = new Set(act.map(s => s.cwd)).size;
   const askBtn = (key, what) => h('button', { type: 'button', class: 'ask-ico', dataset: { askList: key }, 'aria-label': `Ask about ${what}`, title: `Ask about ${what}` }, starIcon(11));
 
   const head = h('header', { class: 'ov-h' },
     h('h1', {}, act.length ? (needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you, ${working.length} working` : `${working.length} agent${working.length === 1 ? '' : 's'} working, nothing needs you`) : 'No agents running'),
-    h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
+    h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, runningBg ? `${runningBg} in the background` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
       : 'Start one with New session, or run claude in a terminal or the desktop app and it shows up here.'));
   head.append(ib('i-plus', 'New session (n)', () => openLaunch(), { cls: 'ov-new', size: 18 }));
   const out = [head];
@@ -1004,7 +1010,7 @@ function renderOverview() {
         h('span', { class: 'nowbox' }, nt.tag ? h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: nt.tag, isError: false, display: nt.tag } }).fam}` }, nt.tag) : null, h('span', { class: 'nb' }, nt.text)),
         h('span', { class: 'fresh' }, h('span', { class: `fdot2${f.live ? ' live' : ''}` }), `Brief · ${f.text}`),
         h('span', { class: 'cs' }, briefLine(s.id) || g.lastText || ''),
-        h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
+        h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), s.background ? h('span', {}, `${s.background} in background`) : null, h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
     }
     out.push(h('section', { class: 'ov-sec', dataset: { ov: 'working' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Working'), askBtn('ov-working', 'the working sessions')), cards));
   }
@@ -1058,7 +1064,7 @@ async function select(id) {
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
-  renderHeader(); renderQueue(); renderPerms(); scheduleRows(true);
+  renderHeader(); renderQueue(); renderPerms(); renderBackground(); scheduleRows(true);
   if (changed) {
     state.files = null; state.changes = null;
     $('files-count').textContent = ''; $('changes-count').textContent = '';
@@ -1375,6 +1381,82 @@ function refreshBriefViews(id) {
   if (state.selected && (!id || id === state.selected)) renderHeader();
   if (!state.selected) scheduleOverview();
 }
+
+// ------------------------------------------------------------ background tasks
+// Commands Claude runs (or moves) into the background, Monitors, background
+// agents (lib/transcript.mjs meta.tasks). A strip under the status line shows
+// what is running, the Background tab lists them all, and a task's details
+// show its command, Monitor events and the live end of its output file.
+const bg = { filter: 'all', q: '', timer: null, out: null, key: null };
+const tasksOf = (id) => state.cache.get(id)?.meta?.tasks || [];
+const taskOf = (id, taskId) => tasksOf(id).find(t => t.id === taskId) || null;
+const aliveOf = (id) => !!state.byId.get(id)?.alive;
+function renderBackground() {
+  const id = state.selected;
+  const tasks = tasksOf(id), alive = aliveOf(id);
+  $('bgslot').replaceChildren(...(id ? renderStrip(tasks, alive, { open: (tid) => showTaskDetails(id, tid), openTab: () => setTab('bg') }) : []));
+  const running = tasks.filter(t => taskState(t, alive) === 'running').length;
+  $('bg-count').textContent = tasks.length ? (running ? `${running} running` : String(tasks.length)) : '';
+  $('bg-count').classList.toggle('live', running > 0);
+  if (state.tab === 'bg') {
+    const sel = state.detailsKey?.startsWith(`task:${id}:`) ? state.detailsKey.slice(`task:${id}:`.length) : null;
+    $('bg-list').replaceChildren(renderTable(tasks, alive, { filter: bg.filter, q: bg.q, selected: sel, open: (tid) => showTaskDetails(id, tid) }));
+  }
+}
+function taskCtx(id) {
+  return {
+    alive: aliveOf(id), api,
+    openCall: (toolUseId) => { const ev = findEvent(id, toolUseId); if (ev) jumpToSeq(ev.seq); else toast('That call is not loaded'); },
+    openAgent: (agentId) => select(agentId),
+    runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
+    // Only a session the deck can drive takes the prompt.
+    askStop: deckOf(id)?.alive ? (t) => api.post(`/api/sessions/${sid(id)}/send`, { text: `Please stop the background task ${t.id} (${taskTitle(t)}).`, model: prefs.launchModel || undefined }).then(() => toast('Asked Claude to stop it')).catch(e => toast(e.message)) : null,
+  };
+}
+function showTaskDetails(id, taskId, refresh = false) {
+  const t = taskOf(id, taskId);
+  if (!t) { if (!refresh) toast('That task is not loaded yet'); return; }
+  const key = `task:${id}:${taskId}`;
+  if (!refresh) { pickEvent(); if (bg.key !== key) bg.out = null; }
+  else if (state.detailsKey !== key) return;
+  state.detailsKey = key; bg.key = key; syncDetailsPane();
+  const body = $('details-body');
+  const pre = body.querySelector('.bg-out');
+  const stick = !pre || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+  const keep = refresh ? body.scrollTop : 0;
+  body.replaceChildren(renderTaskDetails(t, bg.out, taskCtx(id)));
+  body.scrollTop = keep;
+  const np = body.querySelector('.bg-out'); if (np && stick) np.scrollTop = np.scrollHeight;
+  if (state.tab === 'bg') renderBackground();
+  if (!refresh) pollTaskOutput();
+}
+/** Read the output tail now, and every 2s while the task runs and its details are open. */
+async function pollTaskOutput() {
+  clearTimeout(bg.timer);
+  const key = bg.key;
+  if (!key || state.detailsKey !== key) return;
+  const [, id, ...rest] = key.split(':'); const taskId = rest.join(':');
+  if (document.visibilityState === 'visible') {
+    try {
+      const r = await api.get(`/api/sessions/${sid(id)}/tasks/${sid(taskId)}/output?tail=65536`);
+      if (state.detailsKey !== key) return;
+      bg.out = r;
+      const t = taskOf(id, taskId);
+      const old = $('details-body').querySelector('.bg-out')?.closest('.dsec');
+      if (t && old) {
+        const pre = old.querySelector('.bg-out');
+        const stick = !pre || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+        const sec = renderOutput(r, t, aliveOf(id), taskCtx(id));
+        old.replaceWith(sec);
+        const np = sec.querySelector('.bg-out'); if (np && stick) np.scrollTop = np.scrollHeight;
+      }
+    } catch { /* the next tick tries again */ }
+  }
+  const t = taskOf(id, taskId);
+  if (t && taskState(t, aliveOf(id)) === 'running') bg.timer = setTimeout(pollTaskOutput, 2000);
+}
+$('bg-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; bg.filter = b.dataset.f; for (const x of $('bg-seg').querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b)); renderBackground(); };
+$('bg-filter').oninput = (e) => { bg.q = e.target.value; renderBackground(); };
 
 // ------------------------------------------------------------ close / delete
 async function closeSession() {
@@ -1863,9 +1945,11 @@ vlist.addEventListener('click', async (e) => {
     else { state.expanded.add(id); loadSession(id).then(() => scheduleRows()).catch(err => toast(err.message)); }
     scheduleRows(); return;
   }
+  if (btn?.classList.contains('task-open')) { e.stopPropagation(); showTaskDetails(row.dataset.sid, btn.dataset.task); return; }
   if (!row || row.classList.contains('k-turn_end')) return;
   const ev = findEvent(row.dataset.sid, row.dataset.id);
   if (!ev) return;
+  if (ev.kind === 'system' && ev.subtype === 'task' && taskOf(ev.sessionId, ev.taskId)) { setCursor(ev.id); showTaskDetails(ev.sessionId, ev.taskId); return; }
   pickEvent(); setCursor(ev.id); showEventDetails(ev);
   if (btn?.dataset.askRow) askEvent(ev);
 });
@@ -1948,7 +2032,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
   else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }
   else if (e.key === '?') $('keys').showModal();
-  else if (['1', '2', '3', '4'].includes(e.key)) setTab(['events', 'files', 'changes', 'shell'][+e.key - 1]);
+  else if (['1', '2', '3', '4', '5'].includes(e.key)) setTab(['events', 'files', 'changes', 'shell', 'bg'][+e.key - 1]);
 });
 $('keys-btn').onclick = () => $('keys').showModal();
 
@@ -1971,6 +2055,7 @@ const detailCtx = (ev) => {
     agentStatus: (id) => state.byId.get(id)?.status || null,
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
     readAloud: readEvent,
+    openTask: (taskId) => { const tk = ev && taskOf(ev.sessionId, taskId); return tk ? { task: tk, state: taskState(tk, aliveOf(ev.sessionId)), open: () => showTaskDetails(ev.sessionId, taskId) } : null; },
   };
 };
 function syncDetailsPane() { $('deck').classList.toggle('no-details', !state.detailsKey && !state.ask); }
@@ -2174,6 +2259,7 @@ function setTab(name) {
   if (name === 'files' && state.selected) loadFiles();
   if (name === 'changes' && state.selected) loadChanges();
   if (name === 'shell') $('sh-cmd').focus();
+  if (name === 'bg') renderBackground();
 }
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab-b'); if (b) setTab(b.dataset.tab); });
 
