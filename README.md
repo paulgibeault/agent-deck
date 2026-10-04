@@ -89,6 +89,10 @@ minute, "crash" exits with an error.
   for a card with whose move it is, the current tool or question, the brief,
   any Watch item, progress, running subagents, the queue, and errors, turns,
   files, cost and model.
+- **Model picker.** The title bar picks the model new sessions start
+  with (Default shows what your Claude settings use, e.g. `opus[1m]`).
+  The New session and Resume dialogs start on it; a different pick there
+  applies to that launch only.
 - **Plan usage.** A small ring in the top bar shows how full your tightest
   plan window is (green, amber from 75% or when the pace would run out
   before the reset, red when limited). Hover for each window (5-hour,
@@ -110,14 +114,32 @@ minute, "crash" exits with an error.
   `attention` SSE events (and `GET /api/attention`); the page reads them
   out through a polite live region for screen readers, and spoken
   narration will consume the same entries.
+- **Which model, and how.** Every event a model produced carries a quiet
+  model label (with the effort on the first event of each API response; ↻
+  marks a model switch, amber a reply cut off at the output limit or
+  refused). Hover it for that response: model, effort, why it stopped,
+  context used of the window, cached / written / new input, output and
+  thinking tokens, cache hit or the reason for a miss (model changed,
+  history changed) with the tokens re-read, dropped thinking blocks, an
+  estimate of the cost at API list prices (`public/pricing.js`), and the
+  request id.
 - **Brief.** A model-written summary of the session to date: what it has
-  done, a progress bar when the work has countable units, done / now / next,
-  and a Watch line for risks that links to the event. Refreshed
-  incrementally (previous brief + new events only): every 45s while you
-  look at a working session, once per new activity when it is idle, every
-  2m in the background for live sessions, paused otherwise. The heuristic
-  NOW line (current tool and how long it has run) and token, cost and error
-  figures stay instant and free.
+  done, a progress bar when the work has countable units, done / next, and
+  a Watch line for risks that links to the event. It refreshes on events
+  that change the story, not on a clock: when the agent hands back (turn
+  end, a question), when a subagent finishes, on a commit, push or PR, and
+  mid-turn once enough work piles up (edits and commands count, reads
+  barely do; at most every 3m, at least every 10m while it keeps working).
+  Permission prompts and reads alone never refresh it. In the background,
+  live sessions refresh only on handoffs, finished subagents and every 10m
+  of solid work; everything else waits until opened. Each refresh is
+  incremental (previous brief + new events only). The footer says how old
+  the brief is and why it ran, tallies what has happened since (counted
+  from the event stream, free), and shows what refreshes it next, with a
+  small meter filling toward the mid-turn refresh. The live status line
+  under it says what the agent is doing right now, so the brief does not.
+  Folder, model, tokens, cost and what the brief itself has cost sit
+  behind the ⓘ in the session's title row.
 - **Ask about this.** On every list, message, command, output, file, diff,
   shell run and the brief (or press `a`). Context starts as just that item;
   chips add its turn or the session brief. Answers come from a separate
@@ -149,7 +171,13 @@ minute, "crash" exits with an error.
   ahead of the queue. **Stop** (the square, ⌘.) shows while Claude works:
   it ends the turn and holds the queue. The power button ends the process
   (sessions also end when the backend stops). For other sessions the panel
-  is a read-only mirror of the queue.
+  is a read-only mirror of the queue. **Attachments:** paste a file or
+  screenshot into the prompt box, drop files on the panel, or use the
+  paperclip in the box's corner (the New session dialog takes them too).
+  Images go as images (big ones are scaled down to fit the API's 5 MB
+  limit), PDFs as documents, and text files are inlined. They show as a
+  tray above the box, a paperclip count on queued prompts, and thumbnails
+  in the prompt's details.
 - **Permissions.** A deck session's permission prompt shows as a card with
   the command, path or plan: Allow, Allow for session (applies the CLI's
   suggested rule or mode), or Deny with an optional reason for Claude. It

@@ -13,6 +13,7 @@ import { resolveScope, ask } from '../lib/ask.mjs';
 import { DeckState } from '../lib/deckstate.mjs';
 import { UsageTracker, parseUsageReport, parseReset } from '../lib/usage.mjs';
 import { Attention, sayFor } from '../lib/attention.mjs';
+import { activitySince, milestoneOf, CADENCE } from '../public/activity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'session.jsonl');
@@ -33,6 +34,9 @@ function tempIndex() {
   idx.scanProjects(); idx.refreshRegistry();
   return { idx, dir, proj };
 }
+
+/** Pretend the last brief landed `ms` ago, past the scheduler's spacing rules. */
+function age(briefs, id, ms) { briefs.st.get(id).updatedAt -= ms; }
 
 /** A Narrator stand-in: records prompts, replies with `reply(prompt)`. */
 function stubNarrator(reply) {
@@ -99,6 +103,7 @@ test('BriefService: shown session gets a brief once, then only on new records', 
   assert.equal(n.calls.length, 1, 'nothing new: no call');
 
   // New activity: the next refresh is incremental.
+  age(briefs, 'sess-1', CADENCE.minGapMs);
   idx.loaded.get('sess-1').state.ingest({ type: 'user', message: { role: 'user', content: 'and now the docs' }, uuid: 'new-1', timestamp: '2026-09-29T06:00:00.000Z' });
   briefs.tick();
   await new Promise(r => setTimeout(r, 10));
@@ -131,10 +136,102 @@ test('BriefService: briefs run without thinking, skip invisible changes and keep
   st.ingest({ type: 'user', message: { role: 'user', content: 'next thing' }, uuid: 'new-2', timestamp: '2026-09-29T06:00:00.000Z' });
   briefs.tick();
   await new Promise(r => setTimeout(r, 10));
+  assert.equal(n.calls.length, 1, 'too soon after the last brief');
+  age(briefs, 'sess-1', CADENCE.minGapMs);
+  briefs.tick();
+  await new Promise(r => setTimeout(r, 10));
   assert.equal(n.calls.length, 2);
   const b = briefs.publicBrief('sess-1');
   assert.equal(b.brief.summary, 'Brief 2.');
   assert.deepEqual(b.history.map(x => x.brief.summary), ['Brief 1.']);
+});
+
+// --- the refresh policy: events that change the story, not a clock
+
+let toolN = 0;
+const toolUse = (name, input) => ({ type: 'assistant', uuid: `a${++toolN}`, timestamp: '2026-09-29T06:00:00.000Z',
+  message: { id: `m${toolN}`, role: 'assistant', content: [{ type: 'tool_use', id: `tu${toolN}`, name, input }] } });
+const toolResult = (n) => ({ type: 'user', uuid: `r${n}`, timestamp: '2026-09-29T06:00:01.000Z',
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tu${n}`, content: 'ok' }] } });
+function work(st, name, input) { st.ingest(toolUse(name, input)); st.ingest(toolResult(toolN)); }
+
+/** A shown session with one brief written, whose phase the test controls. */
+async function briefed(phase = 'working', state = 'running') {
+  const { idx } = tempIndex();
+  idx.load('sess-1');
+  const brief = idx.brief.bind(idx);
+  const ctl = { phase, state };
+  idx.brief = (id) => ({ ...brief(id), phase: ctl.phase, state: ctl.state });
+  let k = 0;
+  const n = stubNarrator(() => JSON.stringify({ summary: `Brief ${++k}.` }));
+  const briefs = new BriefService({ index: idx, narrator: n });
+  briefs.setView('c1', 'sess-1');
+  briefs.tick();
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(n.calls.length, 1);
+  const st = idx.loaded.get('sess-1').state;
+  const due = (ms = 0) => { if (ms) age(briefs, 'sess-1', ms); return briefs._due('sess-1', idx.loaded.get('sess-1'), briefs.shown().has('sess-1'), Date.now()); };
+  return { idx, briefs, n, st, ctl, due };
+}
+
+test('activitySince: weighs edits and commands, barely counts reads, spots milestones', () => {
+  const st = new SessionState('x');
+  const from = st.seq;
+  work(st, 'Read', { file_path: '/a.js' });
+  work(st, 'Edit', { file_path: '/a.js', old_string: 'a', new_string: 'b' });
+  work(st, 'Bash', { command: 'npm test' });
+  work(st, 'Bash', { command: 'git add -A && git commit -m "x" && git push' });
+  const a = activitySince(st.events, from);
+  assert.deepEqual([a.events, a.looks, a.edits, a.commands], [4, 1, 1, 2]);
+  assert.equal(a.score, 0.25 + 2 + 1 + 1);
+  assert.deepEqual(a.milestones, ['commit']);
+  assert.equal(milestoneOf(st.events.at(-1)), 'commit');
+  assert.equal(activitySince(st.events, st.seq).events, 0);
+});
+
+test('brief policy: mid-turn, reads alone never refresh; a run of edits does, after the drift wait', async () => {
+  const { st, due } = await briefed();
+  for (let i = 0; i < 20; i++) work(st, 'Read', { file_path: `/f${i}.js` });
+  assert.equal(due(CADENCE.minGapMs), null, '20 reads = 5 points: not enough');
+  for (let i = 0; i < 6; i++) work(st, 'Edit', { file_path: `/f${i}.js`, old_string: 'a', new_string: 'b' });
+  assert.equal(due(), null, 'enough work, but too soon');
+  assert.equal(due(CADENCE.driftMs), 'drift');
+});
+
+test('brief policy: a long turn with a little work gets the heartbeat', async () => {
+  const { st, due } = await briefed();
+  work(st, 'Bash', { command: 'npm test' });
+  work(st, 'Edit', { file_path: '/a.js', old_string: 'a', new_string: 'b' });
+  assert.equal(due(CADENCE.driftMs), null);
+  assert.equal(due(CADENCE.heartbeatMs), 'heartbeat');
+});
+
+test('brief policy: a commit or push refreshes once the trigger spacing has passed', async () => {
+  const { st, due } = await briefed();
+  work(st, 'Bash', { command: 'git push origin main' });
+  assert.equal(due(CADENCE.minGapMs), null, 'commit right after a brief waits');
+  assert.equal(due(CADENCE.triggerGapMs), 'milestone');
+});
+
+test('brief policy: a handoff refreshes, a permission prompt does not', async () => {
+  const { st, ctl, due } = await briefed();
+  work(st, 'Bash', { command: 'ls' });
+  ctl.phase = 'turn'; ctl.state = 'needs permission';
+  assert.equal(due(CADENCE.minGapMs), null, 'permission prompt: the status line has it');
+  ctl.state = 'idle';
+  assert.equal(due(), 'handoff');
+});
+
+test('brief policy: in the background only handoffs, subagents and slow drift', async () => {
+  const { idx, briefs, st, ctl, due } = await briefed();
+  briefs.setView('c1', null);
+  idx.registry.get = () => ({ alive: true });
+  for (let i = 0; i < 10; i++) work(st, 'Edit', { file_path: `/f${i}.js`, old_string: 'a', new_string: 'b' });
+  work(st, 'Bash', { command: 'git commit -m x' });
+  assert.equal(due(CADENCE.driftMs), null, 'no milestone or 3-minute drift in the background');
+  assert.equal(due(CADENCE.backgroundDriftMs), 'drift');
+  ctl.phase = 'turn'; ctl.state = 'idle';
+  assert.equal(due(), 'handoff');
 });
 
 test('BriefService: a reply that is not a brief is reported, not stored', async () => {
@@ -299,4 +396,15 @@ test('UsageTracker: a /usage report and model-call quota merge per window', () =
   assert.equal(s.windows[0].label, 'Session', 'the label from /usage is kept');
   assert.equal(s.account, 'Using your subscription');
   assert.ok(s.windows[0].pace?.perHour > 0, 'minute-rounded and exact resets count as one window');
+});
+
+test('pricing: labels and an estimate per inference', async () => {
+  const { modelLabel, costOf, priceOf } = await import('../public/pricing.js');
+  assert.equal(modelLabel('claude-opus-5-5'), 'Opus 5.5');
+  assert.equal(modelLabel('claude-haiku-4-5-20251001'), 'Haiku 4.5');
+  assert.equal(priceOf('claude-haiku-4-5-20251001').context, 200_000);
+  assert.equal(costOf('claude-unknown', { input: 1 }), null);
+  const c = costOf('claude-opus-5-5', { input: 1e6, cacheRead: 1e6, cacheWrite: 2e6, cacheWrite1h: 1e6, output: 1e6 });
+  assert.deepEqual([c.input, c.cacheRead, c.cacheWrite, c.output], [4, 0.2, 4 * 1.25 + 4 * 2, 20]);
+  assert.equal(costOf('claude-opus-5-5', { output: 1e6 }, 'fast').output, 40);
 });

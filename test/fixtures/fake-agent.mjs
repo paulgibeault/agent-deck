@@ -52,16 +52,20 @@ process.stdin.on('data', (d) => {
     else if (msg.type === 'control_request' && msg.request.subtype === 'interrupt') {
       out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: {} } });
       interrupt?.();
-    } else if (msg.type === 'user') busy = busy.then(() => turn(String(msg.message.content)));
+    } else if (msg.type === 'user') busy = busy.then(() => turn(msg.message.content));
   }
 });
 process.stdin.on('end', () => busy.then(() => process.exit(0)));
 
-async function turn(text) {
+async function turn(content) {
+  // Attachments arrive as content blocks; the words steer, the rest is counted.
+  const blocks = Array.isArray(content) ? content : null;
+  const text = blocks ? blocks.filter(b => b.type === 'text' && !b.text.startsWith('Attached file ')).map(b => b.text).join('\n') : String(content);
+  const files = blocks ? blocks.length - blocks.filter(b => b.type === 'text' && !b.text.startsWith('Attached file ')).length : 0;
   fs.appendFileSync(file, JSON.stringify({ type: 'last-prompt', lastPrompt: text, sessionId: id }) + '\n');
-  record({ type: 'user', message: { role: 'user', content: text } });
+  record({ type: 'user', message: { role: 'user', content } });
   const started = Date.now();
-  let reply = `Fake reply to: ${text}`;
+  let reply = `Fake reply to: ${text}${files ? ` (with ${files} attachment${files === 1 ? '' : 's'})` : ''}`;
   if (/crash/.test(text)) { process.stderr.write('fake-agent: crashed on purpose\n'); process.exit(3); }
   if (/permission/.test(text)) {
     const toolUseId = `toolu_${randomUUID().slice(0, 8)}`;
