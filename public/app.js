@@ -4,6 +4,7 @@ import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferen
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
+import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -267,7 +268,8 @@ function onSession({ id, meta, brief, summary }) {
     for (const b of ['active', 'recent', 'closed']) { const i = state.snapshot[b].findIndex(x => x.id === id); if (i >= 0) state.snapshot[b][i] = summary; }
     scheduleTree();
   }
-  if (id === state.selected) { renderHeader(); renderQueue(); }
+  if (id === state.selected) { renderHeader(); renderQueue(); renderBackground(); }
+  if (state.detailsKey?.startsWith(`task:${id}:`)) showTaskDetails(id, state.detailsKey.slice(`task:${id}:`.length), true);
   if (summary?.subagents?.some(a => state.expanded.has(a.id)) && state.selected === id) scheduleRows();
 }
 
@@ -347,7 +349,7 @@ function sessRow(s, nested = false) {
   const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}` },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
     h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), sub ? h('span', { class: 'sub' }, ...sub) : null),
-    h('span', { class: 'r' }, ago(Date.now() - (s.mtime || 0))));
+    h('span', { class: 'r' }, s.background ? h('span', { class: 'bgc', title: `${s.background} running in the background` }, svgUse('i-bg', 10), String(s.background)) : null, ago(Date.now() - (s.mtime || 0))));
   return h('li', {}, btn);
 }
 
@@ -474,7 +476,10 @@ const narration = createNarration({
 });
 /** Live events only: catch-up and session loads go through onEvents, never here. */
 function narrateEvents(sessionId, events) {
-  for (const ev of events) if (ev.kind === 'text' && ev.text?.trim()) narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'said', markdown: ev.text });
+  for (const ev of events) {
+    if (ev.kind === 'text' && ev.text?.trim()) narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'said', markdown: ev.text });
+    else if (ev.kind === 'system' && ev.subtype === 'task' && ev.status && ev.status !== 'running') narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'background', markdown: ev.text });
+  }
 }
 function narrateBrief(b) {
   const prev = state.briefs.get(b.id);
@@ -966,13 +971,14 @@ function renderOverview() {
   const needs = act.filter(needsYou).sort((a, b) => (sigOf(a) === 'input' ? 0 : 1) - (sigOf(b) === 'input' ? 0 : 1));
   const ready = act.filter(s => sigOf(s) === 'done');
   const runningSubs = act.reduce((n, s) => n + (s.running || 0), 0);
+  const runningBg = act.reduce((n, s) => n + (s.background || 0), 0);
   const spent = act.reduce((n, s) => n + (s.glance?.cost || 0), 0);
   const repos = new Set(act.map(s => s.cwd)).size;
   const askBtn = (key, what) => h('button', { type: 'button', class: 'ask-ico', dataset: { askList: key }, 'aria-label': `Ask about ${what}`, title: `Ask about ${what}` }, starIcon(11));
 
   const head = h('header', { class: 'ov-h' },
     h('h1', {}, act.length ? (needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you, ${working.length} working` : `${working.length} agent${working.length === 1 ? '' : 's'} working, nothing needs you`) : 'No agents running'),
-    h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
+    h('p', {}, act.length ? [`Live across ${repos} repo${repos === 1 ? '' : 's'}`, runningSubs ? `${runningSubs} subagent${runningSubs === 1 ? '' : 's'} running` : null, runningBg ? `${runningBg} in the background` : null, spent ? `${fmtUsd(spent)} spent in live sessions` : null].filter(Boolean).join(' · ')
       : 'Start one with New session, or run claude in a terminal or the desktop app and it shows up here.'));
   head.append(ib('i-plus', 'New session (n)', () => openLaunch(), { cls: 'ov-new', size: 18 }));
   const out = [head];
@@ -1004,7 +1010,7 @@ function renderOverview() {
         h('span', { class: 'nowbox' }, nt.tag ? h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: nt.tag, isError: false, display: nt.tag } }).fam}` }, nt.tag) : null, h('span', { class: 'nb' }, nt.text)),
         h('span', { class: 'fresh' }, h('span', { class: `fdot2${f.live ? ' live' : ''}` }), `Brief · ${f.text}`),
         h('span', { class: 'cs' }, briefLine(s.id) || g.lastText || ''),
-        h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
+        h('span', { class: 'cf' }, h('span', {}, g.turnMs != null ? `turn ${fmtMs(g.turnMs)}` : ''), h('span', {}, s.subagents?.length ? `${s.subagents.filter(a => a.status === 'done').length} / ${s.subagents.length} subagents` : 'no subagents'), s.background ? h('span', {}, `${s.background} in background`) : null, h('span', {}, g.cost != null ? fmtUsd(g.cost) : ''))));
     }
     out.push(h('section', { class: 'ov-sec', dataset: { ov: 'working' } }, h('div', { class: 'ov-sec-h' }, h('h2', {}, 'Working'), askBtn('ov-working', 'the working sessions')), cards));
   }
@@ -1058,7 +1064,7 @@ async function select(id) {
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
-  renderHeader(); renderQueue(); renderPerms(); scheduleRows(true);
+  renderHeader(); renderQueue(); renderPerms(); renderBackground(); scheduleRows(true);
   if (changed) {
     state.files = null; state.changes = null;
     $('files-count').textContent = ''; $('changes-count').textContent = '';
@@ -1099,8 +1105,7 @@ function renderHeader() {
   top.append(h('span', { class: 'spacer' }));
   // Where, which model, tokens and cost: one hover away rather than a line of figures under the brief.
   top.append(detailsBtn());
-  if (d?.alive) top.append(ib('i-power', 'End the claude process (you can resume it later)', stopSession));
-  else if (!isAgent && !s.alive) top.append(ib('i-play', 'Resume in the deck', () => openLaunch({ resumeId: id })));
+  if (d?.alive) top.append(ib('i-power', 'End the claude process now. It ends by itself after 30 minutes idle, and the next prompt starts it again.', stopSession, { cls: 'subtle' }));
   if (!isAgent) top.append(ib('i-copy', 'Copy resume command', (e) => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); flashDone(e.currentTarget); }));
   top.append(win);
 
@@ -1222,9 +1227,12 @@ function statusOf(s, b, phase) {
   if (deckOf(s.id)?.exit && phase === 'ended') {
     const x = deckOf(s.id).exit;
     const bad = x.code !== 0 && x.code !== null || (x.signal && x.signal !== 'SIGTERM');
-    return { sig: bad ? 'error' : 'ended', who: 'ended', head: bad ? `claude exited ${x.signal || `with code ${x.code}`}` : 'Ended from the deck', text: bad && x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
+    if (bad) return { sig: 'error', who: 'ended', head: `claude exited ${x.signal || `with code ${x.code}`}`, text: x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
   }
-  return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded' };
+  const last = g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded';
+  // A top-level session that is not running just waits for the next prompt, which starts it again.
+  if (phase === 'ended' && s.kind === 'session') return { sig, who: 'you', head: 'Your turn', text: last };
+  return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: last };
 }
 
 function renderNow(st) {
@@ -1374,6 +1382,82 @@ function refreshBriefViews(id) {
   if (!state.selected) scheduleOverview();
 }
 
+// ------------------------------------------------------------ background tasks
+// Commands Claude runs (or moves) into the background, Monitors, background
+// agents (lib/transcript.mjs meta.tasks). A strip under the status line shows
+// what is running, the Background tab lists them all, and a task's details
+// show its command, Monitor events and the live end of its output file.
+const bg = { filter: 'all', q: '', timer: null, out: null, key: null };
+const tasksOf = (id) => state.cache.get(id)?.meta?.tasks || [];
+const taskOf = (id, taskId) => tasksOf(id).find(t => t.id === taskId) || null;
+const aliveOf = (id) => !!state.byId.get(id)?.alive;
+function renderBackground() {
+  const id = state.selected;
+  const tasks = tasksOf(id), alive = aliveOf(id);
+  $('bgslot').replaceChildren(...(id ? renderStrip(tasks, alive, { open: (tid) => showTaskDetails(id, tid), openTab: () => setTab('bg') }) : []));
+  const running = tasks.filter(t => taskState(t, alive) === 'running').length;
+  $('bg-count').textContent = tasks.length ? (running ? `${running} running` : String(tasks.length)) : '';
+  $('bg-count').classList.toggle('live', running > 0);
+  if (state.tab === 'bg') {
+    const sel = state.detailsKey?.startsWith(`task:${id}:`) ? state.detailsKey.slice(`task:${id}:`.length) : null;
+    $('bg-list').replaceChildren(renderTable(tasks, alive, { filter: bg.filter, q: bg.q, selected: sel, open: (tid) => showTaskDetails(id, tid) }));
+  }
+}
+function taskCtx(id) {
+  return {
+    alive: aliveOf(id), api,
+    openCall: (toolUseId) => { const ev = findEvent(id, toolUseId); if (ev) jumpToSeq(ev.seq); else toast('That call is not loaded'); },
+    openAgent: (agentId) => select(agentId),
+    runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
+    // Only a session the deck can drive takes the prompt.
+    askStop: deckOf(id)?.alive ? (t) => api.post(`/api/sessions/${sid(id)}/send`, { text: `Please stop the background task ${t.id} (${taskTitle(t)}).`, model: prefs.launchModel || undefined }).then(() => toast('Asked Claude to stop it')).catch(e => toast(e.message)) : null,
+  };
+}
+function showTaskDetails(id, taskId, refresh = false) {
+  const t = taskOf(id, taskId);
+  if (!t) { if (!refresh) toast('That task is not loaded yet'); return; }
+  const key = `task:${id}:${taskId}`;
+  if (!refresh) { pickEvent(); if (bg.key !== key) bg.out = null; }
+  else if (state.detailsKey !== key) return;
+  state.detailsKey = key; bg.key = key; syncDetailsPane();
+  const body = $('details-body');
+  const pre = body.querySelector('.bg-out');
+  const stick = !pre || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+  const keep = refresh ? body.scrollTop : 0;
+  body.replaceChildren(renderTaskDetails(t, bg.out, taskCtx(id)));
+  body.scrollTop = keep;
+  const np = body.querySelector('.bg-out'); if (np && stick) np.scrollTop = np.scrollHeight;
+  if (state.tab === 'bg') renderBackground();
+  if (!refresh) pollTaskOutput();
+}
+/** Read the output tail now, and every 2s while the task runs and its details are open. */
+async function pollTaskOutput() {
+  clearTimeout(bg.timer);
+  const key = bg.key;
+  if (!key || state.detailsKey !== key) return;
+  const [, id, ...rest] = key.split(':'); const taskId = rest.join(':');
+  if (document.visibilityState === 'visible') {
+    try {
+      const r = await api.get(`/api/sessions/${sid(id)}/tasks/${sid(taskId)}/output?tail=65536`);
+      if (state.detailsKey !== key) return;
+      bg.out = r;
+      const t = taskOf(id, taskId);
+      const old = $('details-body').querySelector('.bg-out')?.closest('.dsec');
+      if (t && old) {
+        const pre = old.querySelector('.bg-out');
+        const stick = !pre || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+        const sec = renderOutput(r, t, aliveOf(id), taskCtx(id));
+        old.replaceWith(sec);
+        const np = sec.querySelector('.bg-out'); if (np && stick) np.scrollTop = np.scrollHeight;
+      }
+    } catch { /* the next tick tries again */ }
+  }
+  const t = taskOf(id, taskId);
+  if (t && taskState(t, aliveOf(id)) === 'running') bg.timer = setTimeout(pollTaskOutput, 2000);
+}
+$('bg-seg').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; bg.filter = b.dataset.f; for (const x of $('bg-seg').querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b)); renderBackground(); };
+$('bg-filter').oninput = (e) => { bg.q = e.target.value; renderBackground(); };
+
 // ------------------------------------------------------------ close / delete
 async function closeSession() {
   const s = state.byId.get(state.selected); if (!s) return;
@@ -1414,46 +1498,62 @@ function renderQueue() {
   const s = state.byId.get(id);
   const d = s?.kind === 'session' ? deckOf(id) : null;
   const compose = $('compose'), sendBtn = $('send'), nowBtn = $('send-now'), stopBtn = $('stop');
-  // Only a deck session can take a prompt; for the rest the panel is one line.
-  $('prompt').classList.toggle('readonly', !d?.alive);
+  // Any session the deck can drive takes a prompt; one that is not running
+  // starts again when it is sent. Subagents and sessions running elsewhere
+  // get a line saying why there is no box.
+  const canSend = s?.kind === 'session' && (d?.alive || !s.alive);
+  $('prompt').classList.toggle('readonly', !canSend);
   $('prompt').hidden = !s;
-  if (d?.alive) {
-    const q = d.queue;
-    const idle = d.status === 'idle';
+  $('ro-why').replaceChildren(...(canSend || !s ? [] : roWhy(s)));
+  if (canSend) {
+    const q = d?.queue || [];
+    const running = !!d?.alive;
+    const idle = !running || d.status === 'idle';
     const rows = q.map((item, i) => h('li', { dataset: { qid: item.id } }, h('span', { class: 'muted' }, `${i + 1}.`),
       item.attachments?.length ? h('span', { class: 'q-att', title: item.attachments.map(a => a.name).join('\n') }, svgUse('i-clip', 11), String(item.attachments.length)) : null,
       h('span', { class: 'q editable', title: 'Click to edit', tabindex: '0', role: 'button', 'aria-label': `Edit queued prompt: ${oneLine(item.text, 80)}`, onclick: (e) => editQueued(item, e.currentTarget), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); editQueued(item, e.currentTarget); } } }, item.text.replace(/\s+/g, ' ')),
-      ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || null }),
+      ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || !running || null }),
       ib('i-up', 'Move up', () => queueOp('up', item.id), { size: 12, disabled: i === 0 || null }),
       ib('i-down', 'Move down', () => queueOp('down', item.id), { size: 12, disabled: i === q.length - 1 || null }),
       ib('i-x', 'Remove from the queue', () => queueOp('remove', item.id), { size: 12 })));
-    if (d.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, 'Queue held after interrupt. Nothing goes out until you resume or send.'), ib('i-play', 'Resume the queue', () => queueOp('resume'), { size: 13 })));
+    if (d?.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, running ? 'Queue held after interrupt. Nothing goes out until you resume or send.' : 'Kept from before the backend restarted. Nothing goes out until you press play.'), ib('i-play', running ? 'Resume the queue' : 'Play: send these now', () => queueOp('resume'), { size: 13 })));
     // An open editor is left alone; the list catches up when it closes.
     if (!(state.qEdit && $('queue').contains(state.qEdit.el))) $('queue').replaceChildren(...rows);
     // One send button: it sends when Claude is idle and queues otherwise.
     // The bolt cuts in: interrupt the turn and send this prompt next.
-    const queues = !idle || q.length > 0 || d.held;
+    const starting = running && d.status === 'starting';
+    const queues = running && (!idle || q.length > 0 || d.held);
     compose.disabled = false;
-    compose.placeholder = queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
+    compose.placeholder = starting ? 'Starting… · ⌘↩ queues it' : queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
     sendBtn.disabled = false;
     sendBtn.classList.toggle('queues', queues);
     sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
     sendBtn.setAttribute('aria-label', queues ? 'Queue prompt' : 'Send');
-    nowBtn.hidden = idle && !q.length && !d.held;
-    nowBtn.disabled = !!d.interrupting;
-    nowBtn.title = d.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
+    nowBtn.hidden = idle && !q.length && !d?.held;
+    nowBtn.disabled = !!d?.interrupting;
+    nowBtn.title = d?.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
     // Stop: only while Claude is working. Ends the turn and holds the queue.
     stopBtn.hidden = idle;
-    stopBtn.disabled = !!d.interrupting;
-    stopBtn.title = d.interrupting ? 'Stopping…' : `Stop the current turn (⌘.)${q.length ? '; the queue is held until you resume or send' : ''}`;
+    stopBtn.disabled = !!d?.interrupting;
+    stopBtn.title = d?.interrupting ? 'Stopping…' : `Stop the current turn (⌘.)${q.length ? '; the queue is held until you resume or send' : ''}`;
     return;
   }
   const q = c?.meta?.queue || [];
   $('queue').replaceChildren(...q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
     ib('i-copy', 'Copy', (e) => { navigator.clipboard?.writeText(item.content); flashDone(e.currentTarget); }, { size: 12 }))));
   compose.disabled = true; sendBtn.disabled = true; sendBtn.classList.remove('queues'); nowBtn.hidden = true; stopBtn.hidden = true;
-  compose.placeholder = s?.alive ? 'Launched outside the deck, so it is observe-only here.' : 'This session has ended. Resume it in the deck to send prompts.';
-  sendBtn.title = s?.alive ? 'This session was launched outside the deck; the deck can only observe it.' : 'Resume the session in the deck first';
+  compose.placeholder = '';
+  sendBtn.title = '';
+}
+/** Why a session has no prompt box, with a way to where prompts do go. */
+function roWhy(s) {
+  if (s.kind === 'agent') {
+    const parent = state.byId.get(s.parentId);
+    return [svgUse('i-info', 13), h('span', {}, 'Subagents take their instructions from the session that started them, so there is no prompt box here.'),
+      parent ? h('button', { type: 'button', class: 'linkish', onclick: () => select(s.parentId) }, `Open ${parent.title || 'the parent session'}`) : null];
+  }
+  const where = s.entrypoint === 'claude-desktop' ? 'the Claude desktop app' : /vscode|jetbrains|ide/i.test(s.entrypoint || '') ? 'an editor' : 'a terminal';
+  return [svgUse('i-eye', 13), h('span', {}, `Running in ${where}, so the deck can only watch. Send prompts there; once it ends you can continue it here.`)];
 }
 function focusCompose() { if (!$('compose').disabled) $('compose').focus({ preventScroll: true }); }
 
@@ -1539,7 +1639,7 @@ async function sendPrompt(now = false) {
   if (!text.trim() && !attachments.length && !(now && deckOf(id)?.queue?.length)) { $('compose').focus(); return; }
   $('send').disabled = true; $('send-now').disabled = true;
   try {
-    await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined });
+    await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined, model: prefs.launchModel || undefined });
     $('compose').value = ''; composeFiles.clear(); setLive(true, true);
     narration.hold(false);
   }
@@ -1552,7 +1652,7 @@ $('stop').onclick = interruptSession;
 $('compose').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendPrompt(e.shiftKey); } });
 
 async function queueOp(op, itemId, text) {
-  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId, text }); return true; }
+  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId, text, model: prefs.launchModel || undefined }); return true; }
   catch (e) { if (op !== 'editing') toast(`Queue: ${e.message}`); return false; }
 }
 
@@ -1603,15 +1703,14 @@ async function stopSession() {
   const d = deckOf(s.id);
   const busy = d && d.status !== 'idle';
   if (busy || d?.queue.length) {
-    const ok = await confirmDialog('End this session?', `${busy ? 'Claude is in the middle of a turn, which will be cut off. ' : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}You can resume the session later.`, 'End session');
+    const ok = await confirmDialog('End the claude process?', `${busy ? 'Claude is in the middle of a turn, which will be cut off. ' : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}The next prompt you send starts it again.`, 'End process');
     if (!ok) return;
   }
-  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Session ended'); }
+  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Process ended'); }
   catch (e) { toast(`End failed: ${e.message}`); }
 }
 
-// The launch dialog: a new session, or an ended one resumed under the deck.
-let launchCtx = null;
+// The launch dialog: a new session under the deck.
 // The model new sessions start with: picked in the title bar, preselected in
 // the launch dialog (where a different pick applies to that launch only).
 const MODELS = [['', 'Default'], ['opus', 'Opus'], ['opus[1m]', 'Opus 1M'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
@@ -1632,25 +1731,19 @@ $('tb-model').addEventListener('change', (e) => { prefs.launchModel = e.target.v
 renderModelPicker();
 api.get('/api/config').then(r => { cliModel = r.cliModel; renderModelPicker(); }).catch(() => {});
 
-function openLaunch({ resumeId } = {}) {
+function openLaunch() {
   const dlg = $('new-session');
   if (dlg.open) return;
-  const resume = resumeId ? state.byId.get(resumeId) : null;
-  launchCtx = { resumeId: resume ? resumeId : null };
   const cwds = [...new Set([...state.snapshot.active, ...state.snapshot.recent].map(s => s.cwd).filter(Boolean))].slice(0, 20);
   $('ns-cwds').replaceChildren(...cwds.map(c => h('option', { value: c })));
-  $('ns-t').textContent = resume ? 'Resume in the deck' : 'New session';
-  $('ns-sub').textContent = resume ? `Continues “${oneLine(resume.title, 60)}” under the deck. Your prompt is the next turn.` : 'Runs claude under the deck, so you can send, queue, interrupt and answer permission prompts from here.';
-  $('ns-cwd').value = resume ? resume.cwd : prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
-  $('ns-cwd').readOnly = !!resume;
-  $('ns-name-w').hidden = !!resume;
+  $('ns-cwd').value = prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
   $('ns-name').value = '';
   modelOptions($('ns-model'));
   $('ns-model').value = prefs.launchModel || '';
   $('ns-perm').value = prefs.launchPerm || 'default';
   $('ns-err').hidden = true;
   $('ns-go').disabled = false;
-  $('ns-go').textContent = resume ? 'Resume' : 'Start session';
+  $('ns-go').textContent = 'Start session';
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
 }
@@ -1711,10 +1804,8 @@ $('ns-form').addEventListener('submit', async (e) => {
   $('ns-go').disabled = true; $('ns-err').hidden = true;
   $('ns-go').textContent = 'Starting…';
   try {
-    const st = launchCtx?.resumeId
-      ? await api.post(`/api/sessions/${sid(launchCtx.resumeId)}/resume`, body)
-      : await api.post('/api/launch', body);
-    if (!launchCtx?.resumeId) prefs.launchCwd = body.cwd;
+    const st = await api.post('/api/launch', body);
+    prefs.launchCwd = body.cwd;
     prefs.launchPerm = body.permissionMode; savePrefs();
     state.deck.set(st.id, st);
     $('ns-prompt').value = ''; launchFiles.clear();
@@ -1728,7 +1819,7 @@ $('ns-form').addEventListener('submit', async (e) => {
       ? 'The deck backend is older than this page and cannot launch sessions. Restart it (stop the server and run npm start, or quit and relaunch the app), then try again.'
       : err.message;
     $('ns-err').hidden = false;
-    $('ns-go').disabled = false; $('ns-go').textContent = launchCtx?.resumeId ? 'Resume' : 'Start session';
+    $('ns-go').disabled = false; $('ns-go').textContent = 'Start session';
   }
 });
 function openLaunched(id) {
@@ -1854,9 +1945,11 @@ vlist.addEventListener('click', async (e) => {
     else { state.expanded.add(id); loadSession(id).then(() => scheduleRows()).catch(err => toast(err.message)); }
     scheduleRows(); return;
   }
+  if (btn?.classList.contains('task-open')) { e.stopPropagation(); showTaskDetails(row.dataset.sid, btn.dataset.task); return; }
   if (!row || row.classList.contains('k-turn_end')) return;
   const ev = findEvent(row.dataset.sid, row.dataset.id);
   if (!ev) return;
+  if (ev.kind === 'system' && ev.subtype === 'task' && taskOf(ev.sessionId, ev.taskId)) { setCursor(ev.id); showTaskDetails(ev.sessionId, ev.taskId); return; }
   pickEvent(); setCursor(ev.id); showEventDetails(ev);
   if (btn?.dataset.askRow) askEvent(ev);
 });
@@ -1939,7 +2032,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
   else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }
   else if (e.key === '?') $('keys').showModal();
-  else if (['1', '2', '3', '4'].includes(e.key)) setTab(['events', 'files', 'changes', 'shell'][+e.key - 1]);
+  else if (['1', '2', '3', '4', '5'].includes(e.key)) setTab(['events', 'files', 'changes', 'shell', 'bg'][+e.key - 1]);
 });
 $('keys-btn').onclick = () => $('keys').showModal();
 
@@ -1962,6 +2055,7 @@ const detailCtx = (ev) => {
     agentStatus: (id) => state.byId.get(id)?.status || null,
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
     readAloud: readEvent,
+    openTask: (taskId) => { const tk = ev && taskOf(ev.sessionId, taskId); return tk ? { task: tk, state: taskState(tk, aliveOf(ev.sessionId)), open: () => showTaskDetails(ev.sessionId, taskId) } : null; },
   };
 };
 function syncDetailsPane() { $('deck').classList.toggle('no-details', !state.detailsKey && !state.ask); }
@@ -2165,6 +2259,7 @@ function setTab(name) {
   if (name === 'files' && state.selected) loadFiles();
   if (name === 'changes' && state.selected) loadChanges();
   if (name === 'shell') $('sh-cmd').focus();
+  if (name === 'bg') renderBackground();
 }
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab-b'); if (b) setTab(b.dataset.tab); });
 

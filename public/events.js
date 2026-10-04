@@ -60,7 +60,7 @@ export function tagFor(ev) {
     case 'thinking': return { label: 'Think', fam: 'muted' };
     case 'prompt': return { label: 'You', fam: 'you' };
     case 'queue': return { label: 'Queue', fam: 'muted' };
-    case 'system': return ev.error ? { label: 'Error', fam: 'err' } : { label: 'Note', fam: 'muted' };
+    case 'system': return ev.error ? { label: 'Error', fam: 'err' } : ev.subtype === 'task' ? { label: 'Bg', fam: ev.status === 'failed' ? 'err' : 'muted', title: 'Background task' } : { label: 'Note', fam: 'muted' };
     default: return { label: 'Raw', fam: 'muted' };
   }
 }
@@ -134,6 +134,7 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
         chips.append(h('button', { class: 'mini agent-toggle', dataset: { agent: t.agentId }, title: 'show subagent events inline' }, expanded ? 'hide inline' : 'inline'));
         if (agentStatus) chips.append(h('span', { class: `chip st-${agentStatus}` }, agentStatus));
       }
+      if (t.taskId) chips.append(h('button', { class: 'mini task-open', dataset: { task: t.taskId }, title: 'Open the background task' }, 'background'));
       if (t.pending) dur = h('span', { class: 'dur run' }, 'running');
       else {
         if (t.isError) chips.append(h('span', { class: 'chip err' }, 'error'));
@@ -155,6 +156,11 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
       if (ev.queueDepth != null) chips.append(h('span', { class: 'chip' }, `q${ev.queueDepth}`));
       break;
     case 'system':
+      if (ev.subtype === 'task') {
+        body.append(oneLine(ev.text, 220));
+        if (ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
+        break;
+      }
       body.append(`${ev.subtype || 'system'} · ${oneLine(ev.text, 200)}`);
       break;
     default:
@@ -386,7 +392,7 @@ export function renderSideBySide(ops, { lang = null, startA = 1, startB = 1 } = 
 }
 
 // ------------------------------------------------------------ details
-const copyBtn = (text, label = 'Copy') => ib('i-copy', label, (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); flashDone(e.currentTarget); }, { size: 13 });
+export const copyBtn = (text, label = 'Copy') => ib('i-copy', label, (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); flashDone(e.currentTarget); }, { size: 13 });
 const editorBtn = (path, line, api) => path ? ib('i-open', 'Open in editor', () => api.openEditor(path, line)) : null;
 const openBtn = (path, line, api) => path ? ib('i-open', 'Open in editor', () => api.openEditor(path, line), { size: 13 }) : null;
 
@@ -407,7 +413,7 @@ function stripReadNumbers(text) {
  * A details section: title, action buttons, an Ask button scoped to it.
  * `ask` is a scope spec ({ kind: 'event', ..., label }) or null.
  */
-function section(title, { actions = [], ask = null, note = null } = {}, ...children) {
+export function section(title, { actions = [], ask = null, note = null } = {}, ...children) {
   const head = h('div', { class: 'dsec-h' }, h('span', { class: 'dsec-t', title }, title));
   if (note) head.append(h('span', { class: 'note' }, note));
   head.append(h('span', { class: 'dsec-sp' }), ...actions.filter(Boolean));
@@ -415,7 +421,7 @@ function section(title, { actions = [], ask = null, note = null } = {}, ...child
   return h('section', { class: 'dsec' }, head, ...children);
 }
 
-function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null, actions = [] }) {
+export function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null, actions = [] }) {
   const head = h('div', { class: 'dhead' });
   const row = h('div', { class: 'dh-row' }, tag, ...chips.filter(Boolean), h('span', { class: 'spacer' }));
   if (nav) {
@@ -543,6 +549,9 @@ export function renderDetails(ev, detail, ctx) {
         if (t.pending) body.append(h('div', { class: 'note' }, 'running…'));
       }
     }
+    const bgt = t.taskId && ctx.openTask?.(t.taskId);
+    if (bgt) body.prepend(section('Background', {}, h('div', { class: 'card-row' }, h('span', { class: `chip ${bgt.state === 'running' ? 'st-running' : bgt.state === 'failed' ? 'err' : 'st-ended'}` }, bgt.state),
+      h('span', { class: 'muted' }, bgt.state === 'running' ? 'still running in the background' : bgt.task.summary || ''), h('button', { type: 'button', class: 'btn sm', onclick: bgt.open }, 'Open task'))));
     if (t.meta && Object.keys(t.meta).length) body.append(section('Result metadata', {}, h('details', {}, h('summary', {}, 'toolUseResult (slim)'), h('pre', { class: 'plain' }, JSON.stringify(t.meta, null, 2)))));
   } else {
     body.append(section(ev.subtype || ev.kind, { actions: [copyBtn(ev.text ?? '')], ask: evSpec(null, 'this') }, h('pre', { class: 'plain' + (ev.error ? ' err' : '') }, ev.text ?? '')));

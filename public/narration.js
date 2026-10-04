@@ -18,9 +18,10 @@ export const KINDS = [
   ['error', 'Errors', 'A session hit an error'],
   ['done', 'Finished', 'A session handed back'],
   ['brief', 'Brief updated', 'A new brief summary'],
+  ['background', 'Background finished', 'A background command, Monitor or agent ended'],
 ];
 const KIND_LABEL = Object.fromEntries(KINDS.map(([k, l]) => [k, l]));
-const DEFAULTS = { scope: 'all', subagents: false, voice: '', rate: 1.1, events: { said: true, needs: false, error: false, done: false, brief: false }, length: 'full', latest: true };
+const DEFAULTS = { scope: 'all', subagents: false, voice: '', rate: 1.1, events: { said: true, needs: false, error: false, done: false, brief: false, background: false }, length: 'full', latest: true };
 const SHORT_CHARS = 600;
 const LINGER_MS = 1500;
 const BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, dt, dd';
@@ -207,10 +208,11 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     pane.hidden = false;
     requestAnimationFrame(() => pane.classList.add('open'));
   }
-  function hidePane() {
+  /** `keep`: a pause; the item stays rendered for when play brings the pane back. */
+  function hidePane(keep = false) {
     pane.classList.remove('open');
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => { if (!pane.classList.contains('open')) { pane.hidden = true; body.replaceChildren(); lastView = null; } }, 200);
+    hideTimer = setTimeout(() => { if (!pane.classList.contains('open')) { pane.hidden = true; if (!keep) { body.replaceChildren(); lastView = null; } } }, 200);
   }
 
   /** Render an item into the pane and cut it into chunks. */
@@ -429,10 +431,10 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     pump();
   }
   /** Pausing with nothing playing is allowed: new items then wait in the queue until play. */
-  function pause() { if (paused) return; paused = true; repause = false; gen++; hush(); keepAlive.pause(); media(cur ? 'paused' : 'none'); changed(); }
+  function pause() { if (paused) return; paused = true; repause = false; gen++; hush(); keepAlive.pause(); hidePane(true); media(cur ? 'paused' : 'none'); changed(); }
   function play() {
     if (blocked) { unblock(); return; }
-    if (paused) { paused = false; if (cur) { media('playing'); playChunk(); } else pump(); return; }
+    if (paused) { paused = false; if (cur) { pane.hidden = false; showPane(); media('playing'); playChunk(); } else pump(); return; }
     if (held) { held = false; }
     pump();
   }
