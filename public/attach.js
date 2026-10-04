@@ -93,12 +93,18 @@ export function attachable({ input, tray, clip, file, drop, toast }) {
     const pdf = a.mediaType === 'application/pdf';
     return h('span', { class: `att att-file${pdf ? ' pdf' : ''}`, title: tip, tabindex: '0', 'aria-label': tip }, svgUse('i-file', 15), h('span', { class: 'att-ext' }, pdf ? 'PDF' : (a.name.split('.').pop() || 'txt').slice(0, 4)), x);
   };
+  // With attachments, the paperclip joins their row (left end), so the box's
+  // top-right corner stays clear; with none it goes back to the corner.
+  const clipHome = { parent: clip.parentNode, next: clip.nextSibling };
   function render() {
     tray.hidden = !list.length && !pending;
+    if (!tray.hidden && clip.parentNode !== tray) tray.prepend(clip);
+    else if (tray.hidden && clip.parentNode === tray) clipHome.parent.insertBefore(clip, clipHome.next);
+    clip.classList.toggle('in-tray', !tray.hidden);
     const shown = list.length > SLOTS ? list.slice(-(SLOTS - 1)) : list;
     const offset = list.length - shown.length;
     const more = offset ? [h('button', { type: 'button', class: 'att att-more', title: `${offset} more`, 'aria-label': `${offset} more attachments`, onclick: (e) => moreList(e.currentTarget) }, `+${offset}`)] : [];
-    tray.replaceChildren(...more, ...shown.map((a, k) => chip(a, offset + k)), ...(pending ? [h('span', { class: 'att att-wait', title: 'reading…' }, h('i'), h('i'), h('i'))] : []));
+    tray.replaceChildren(...(tray.hidden ? [] : [clip]), ...more, ...shown.map((a, k) => chip(a, offset + k)), ...(pending ? [h('span', { class: 'att att-wait', title: 'reading…' }, h('i'), h('i'), h('i'))] : []));
   }
   // One floating panel per box for the enlarged image and the "+n" list.
   const pop = h('div', { class: 'att-pop', popover: 'auto' });

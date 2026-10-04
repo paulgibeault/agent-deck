@@ -454,6 +454,8 @@ svg { flex: none; }
 .ib.clip { position: absolute; top: 5px; right: 5px; min-width: 22px; height: 22px; padding: 0; opacity: .35; transition: opacity .12s; }
 .ta-wrap:hover .clip, .ta-wrap textarea:focus ~ .clip, .ib.clip:focus-visible, .dropping .clip { opacity: .85; }
 .ta-wrap textarea:disabled ~ .clip { display: none; }
+.att-tray .ib.clip.in-tray { position: static; width: 24px; min-width: 24px; height: 28px; opacity: .55; }
+.att-tray .ib.clip.in-tray:hover, .att-tray .ib.clip.in-tray:focus-visible { opacity: 1; }
 .dropping .ta-wrap textarea { border-color: var(--info); border-style: dashed; background: color-mix(in srgb, var(--info) 6%, var(--bg0)); }
 .att-tray[hidden] { display: none; }
 /* Attachments: pinned in the text box's bottom-right corner, clear of the
@@ -465,6 +467,8 @@ svg { flex: none; }
 .dropping .ta-wrap > .att-tray { background: none; }
 .att { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line2); border-radius: 6px; background: var(--bg1); color: var(--fg2); font: 10px var(--mono); cursor: default; box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
 .att-img { overflow: hidden; cursor: zoom-in; }
+/* A faint light ring so dark screenshots still read against a dark box. */
+.att-img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 28%, transparent); pointer-events: none; }
 .att-img img { width: 100%; height: 100%; object-fit: cover; }
 .att-file { flex-direction: column; gap: 0; color: var(--t-read); }
 .att-file.pdf { color: var(--err-fg); }
@@ -477,6 +481,7 @@ svg { flex: none; }
 @keyframes att-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
 .att-x { position: absolute; top: -6px; right: -6px; display: none; align-items: center; justify-content: center; width: 15px; height: 15px; padding: 0; border: 1px solid var(--line2); border-radius: 50%; background: var(--bg1); color: var(--fg); cursor: pointer; }
 .att:hover .att-x, .att:focus-within .att-x, .att-x:focus-visible { display: inline-flex; }
+.att-x { z-index: 1; }
 .att-pop { position: fixed; inset: auto; margin: 0; padding: 8px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg1); color: var(--fg); box-shadow: 0 12px 32px rgba(0, 0, 0, .22); }
 .att-pop > img { display: block; max-width: min(420px, 80vw); max-height: 320px; border-radius: 6px; }
 .att-cap { margin-top: 6px; font: 11.5px var(--sans); color: var(--muted); }
