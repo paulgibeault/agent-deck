@@ -197,10 +197,15 @@ minute, "crash" exits with an error.
   dot) keeps the list and the details pane on the newest event; picking an
   event, scrolling away or opening a file greys it out, and clicking either
   Live button (list or details) brings both back to the newest event. `tool_use` and its result fold into
-  one row with a tool-specific one-liner, duration, error chip, token cost.
-  Thinking collapses to a faint row. Agent rows can be opened as a session or
-  expanded inline. Prompts and turn ends are visual separators. Filter box,
-  All / Tools / Messages / Errors, thinking toggle, Live. Keys:
+  one row. Each row leads with a bare glyph: its color is the family (git,
+  run, change, inspect, delegate, external, talk, system) and its shape the
+  kind, classified by what happened (`public/classify.js`; a Bash command by
+  what it does). Claude's description leads, the command dims after it;
+  results add small facts (commit, PR, test counts); a faint duration sits
+  flush right, with model, tokens and Ask on hover. The turn's last message
+  is marked as its answer. Agent rows can be opened as a session or expanded
+  inline. Filter box, a multi-select glyph filter (All, conversation,
+  thinking, each family, errors; from All a pick isolates one kind), Live. Keys:
   ↓/↑ move, `Enter` details, `a` ask, `l` live / pause, `/` filter,
   `1`–`4` tabs, `Esc` overview, `?` help.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;

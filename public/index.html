@@ -83,6 +83,7 @@
   <symbol id="i-issue" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/></g><circle cx="8" cy="8" r="1.6" fill="currentColor"/></symbol>
   <symbol id="i-proc" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M1.5 8.5h3l1.8-4.5 3 8 1.9-5 1 1.5h2.3"/></symbol>
   <symbol id="i-stage" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M8 5.5v5M5.5 8h5"/></g></symbol>
+  <symbol id="i-filter" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5h11L9.25 8.5v4L6.75 13.5v-5z"/></symbol>
   <symbol id="i-logo" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--logo-bg)" stroke="var(--ok)"/><path d="M6 7h8M6 10h5M6 13h7" stroke="var(--ok)" stroke-width="1.6" stroke-linecap="round"/></symbol>
 </svg>
 
@@ -167,13 +168,8 @@
       <section id="tab-events" class="tab active">
         <div class="toolbar">
           <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter events</span><input id="ev-filter" type="search" placeholder="Filter by text, tool or path" spellcheck="false"></label>
-          <div class="seg" role="group" aria-label="Event kind" id="kind-seg">
-            <button type="button" data-k="all" aria-pressed="true">All</button>
-            <button type="button" data-k="tools" aria-pressed="false">Tools</button>
-            <button type="button" data-k="messages" aria-pressed="false">Messages</button>
-            <button type="button" data-k="errors" aria-pressed="false" class="seg-err">Errors <span id="err-count"></span></button>
-          </div>
-          <button id="show-thinking" type="button" class="ib tg" aria-pressed="true" aria-label="Show thinking rows" title="Show thinking rows"><svg width="15" height="15"><use href="#i-think"/></svg></button>
+          <button id="kind-btn" type="button" class="kind-btn" popovertarget="kind-pop" aria-haspopup="menu"><span id="kind-ico" class="kind-ico"></span><svg class="chev" width="9" height="9" aria-hidden="true"><use href="#i-down"/></svg><span id="err-count" class="kb-err"></span></button>
+          <div id="kind-pop" class="kind-pop" popover role="menu" aria-label="Show events"></div>
           <button id="follow" type="button" class="live" aria-pressed="true"><span class="ldot"></span>Live</button>
           <button type="button" class="ask-ico lg" data-ask-list="events" aria-label="Ask about these events" title="Ask about these events"><svg width="13" height="13"><use href="#i-star"/></svg></button>
         </div>
