@@ -279,6 +279,43 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     begin(view, i);
   });
 
+  // ---------------------------------------------------------- history (the bell)
+  // Every narration event, kept in this browser, newest last. An entry is
+  // unheard while its item waits in the queue; once spoken, skipped or
+  // cleared it is simply heard. Only the speaking window writes; the others
+  // follow through the storage event.
+  const LOG_KEY = 'deck.readAloudLog';
+  const LOG_MAX = 500;
+  let log = [], logQueued = [], logSaved = '';
+  try { ({ entries: log = [], queued: logQueued = [] } = JSON.parse(localStorage.getItem(LOG_KEY) || '{}')); } catch { /* fresh */ }
+  function record(item) {
+    log.push({ id: item.id, sessionId: item.sessionId, eventId: item.eventId || null, kind: item.kind, title: item.title,
+      text: String(item.markdown || item.text || '').slice(0, 4000), permission: !!item.permission, at: Date.now() });
+    if (log.length > LOG_MAX) log.splice(0, log.length - LOG_MAX);
+    logSaved = null;
+  }
+  function saveLog() {
+    if (!leader) return;
+    const q = queue.items.filter(x => !x.manual).map(x => x.id);
+    const key = `${log.length}:${log.at(-1)?.id}:${q.join(',')}`;
+    if (key === logSaved) return;
+    logSaved = key; logQueued = q;
+    try { localStorage.setItem(LOG_KEY, JSON.stringify({ entries: log, queued: q })); } catch { /* full or private */ }
+  }
+  addEventListener('storage', (e) => {
+    if (e.key !== LOG_KEY || leader) return;
+    try { ({ entries: log = [], queued: logQueued = [] } = JSON.parse(e.newValue || '{}')); } catch { return; }
+    changed();
+  });
+  /** { entries: newest first, unheard: Set of ids } */
+  function history() {
+    const unheard = new Set(leader ? queue.items.filter(x => !x.manual).map(x => x.id) : logQueued);
+    return { entries: log.slice().reverse(), unheard };
+  }
+  /** Heard without playing: the queue empties, what is playing goes on. */
+  function markAllHeard() { queue.clear(x => !x.manual); changed(); }
+  function clearHistory() { log = []; logSaved = null; changed(); }
+
   // ---------------------------------------------------------- playback
   function pump() {
     if (cur || paused || blocked) { changed(); return; }
@@ -353,6 +390,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
 
   // ---------------------------------------------------------- public
   function changed() {
+    saveLog();
     queued.textContent = queue.length ? `${queue.length} queued` : '';
     pane.classList.toggle('playing', !!cur && !paused && !blocked);
     onChange?.(status());
@@ -361,19 +399,20 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     return {
       state: blocked && (cur || queue.length) ? 'blocked' : paused ? 'paused' : cur ? 'playing' : queue.length ? (held ? 'held' : 'waiting') : 'idle',
       item: cur?.item || null, queued: queue.length, on: s.scope !== 'off', leader,
+      unheard: leader ? queue.items.filter(x => !x.manual).length : logQueued.length,
     };
   }
-  function wants(item) {
-    if (!leader || s.scope === 'off' || !s.events[item.kind]) return false;
-    if (isSubagent(item.sessionId) && !s.subagents) return false;
-    return s.scope === 'all' || inScope(item.sessionId);
-  }
+  /** Logged: an enabled kind from a source the settings include, whatever the scope. */
+  function loggable(item) { return leader && !!s.events[item.kind] && (s.subagents || !isSubagent(item.sessionId)); }
+  function wants(item) { return loggable(item) && s.scope !== 'off' && (s.scope === 'all' || inScope(item.sessionId)); }
   /** An event from the live stream: queued if the settings want it. */
   function auto(item) {
     if (seen.has(item.id)) return;
     seen.add(item.id);
     if (seen.size > 2000) seen.delete(seen.values().next().value);
     item = { priority: item.kind === 'needs' ? 'high' : 'normal', title: titleOf(item.sessionId), ...item };
+    if (!loggable(item)) return;
+    record(item);
     if (!wants(item)) return;
     queue.push(item);
     // One SSE batch can carry several messages: queue them all before picking, so they collapse.
@@ -463,5 +502,5 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
       h('p', { class: 'ra-keys muted' }, h('kbd', {}, 'Space'), ' play/pause · ', h('kbd', {}, ']'), ' next · ', h('kbd', {}, 'j'), ' open the event · ', h('kbd', {}, 'r'), ' read the selection'));
   }
 
-  return { auto, read, play, pause, toggle, skip, stop, hold, status, renderSettings, reloadVoices: loadAzure, current: () => cur?.item || lastView?.item || null, settings: s };
+  return { history, markAllHeard, clearHistory, kindLabel: (k) => KIND_LABEL[k] || k, auto, read, play, pause, toggle, skip, stop, hold, status, renderSettings, reloadVoices: loadAzure, current: () => cur?.item || lastView?.item || null, settings: s };
 }
