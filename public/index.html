@@ -117,18 +117,19 @@
   <aside id="sessions" class="pane rail" aria-label="Sessions">
     <header class="rail-h">
       <span class="spacer"></span>
+      <button id="procs-btn" type="button" class="icon-btn" aria-label="Processes" title="Processes (p)"><svg width="14" height="14"><use href="#i-proc"/></svg></button>
       <button id="history-btn" type="button" class="icon-btn" aria-label="All sessions" title="All sessions (h)"><svg width="14" height="14"><use href="#i-history"/></svg></button>
       <button id="new-btn" type="button" class="icon-btn" aria-label="New session" title="New session (n)"><svg width="14" height="14"><use href="#i-plus"/></svg></button>
       <button id="rail-toggle" type="button" class="icon-btn" aria-label="Collapse the session list ([)" title="Collapse the session list ([)" aria-expanded="true"><svg width="13" height="13"><use href="#i-left"/></svg></button>
     </header>
     <nav id="mini" class="mini-rail" aria-label="Sessions"></nav>
     <div class="rail-search">
-      <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter sessions</span><input id="tree-filter" type="search" placeholder="Filter sessions" spellcheck="false"></label>
+      <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Filter sessions</span><input id="tree-filter" type="search" placeholder="Filter sessions" spellcheck="false"></label>
     </div>
     <div id="tree" class="tree">
-      <section class="bucket" data-bucket="active"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Active <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="active" aria-label="Ask about active sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
-      <section class="bucket" data-bucket="recent"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Recent <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="recent" aria-label="Ask about recent sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
-      <section class="bucket collapsed" data-bucket="closed"><h3><button type="button" class="bk-t"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Closed <span class="count"></span></button></h3><ul></ul></section>
+      <section class="bucket" data-bucket="active"><h3><button type="button" class="bk-t" title="Collapse or expand"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Active <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="active" aria-label="Ask about active sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
+      <section class="bucket" data-bucket="recent"><h3><button type="button" class="bk-t" title="Collapse or expand"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Recent <span class="count"></span></button><button type="button" class="ask-ico" data-ask-list="recent" aria-label="Ask about recent sessions" title="Ask about these sessions"><svg width="10" height="10"><use href="#i-star"/></svg></button></h3><ul></ul></section>
+      <section class="bucket collapsed" data-bucket="closed"><h3><button type="button" class="bk-t" title="Collapse or expand"><svg class="tri" width="10" height="10"><use href="#i-down"/></svg>Closed <span class="count"></span></button></h3><ul></ul></section>
     </div>
     <footer class="rail-f"><span id="tree-foot"></span><span class="spacer"></span><button id="history-btn-f" type="button" class="icon-btn sm" aria-label="All sessions" title="All sessions (h)"><svg width="13" height="13"><use href="#i-history"/></svg></button><button id="keys-btn" type="button" class="icon-btn sm mono" aria-label="Keyboard shortcuts">?</button></footer>
   </aside>
@@ -175,7 +176,7 @@
 
       <section id="tab-events" class="tab active">
         <div class="toolbar">
-          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter events</span><input id="ev-filter" type="search" placeholder="Filter by text, tool or path" spellcheck="false"></label>
+          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Filter events</span><input id="ev-filter" type="search" placeholder="Filter by text, tool or path" spellcheck="false"></label>
           <button id="kind-btn" type="button" class="kind-btn" popovertarget="kind-pop" aria-haspopup="menu"><span id="kind-ico" class="kind-ico"></span><svg class="chev" width="9" height="9" aria-hidden="true"><use href="#i-down"/></svg><span id="err-count" class="kb-err"></span></button>
           <div id="kind-pop" class="kind-pop" popover role="menu" aria-label="Show events"></div>
           <button id="follow" type="button" class="live" aria-pressed="true"><span class="ldot"></span>Live</button>
@@ -189,7 +190,7 @@
 
       <section id="tab-files" class="tab">
         <div class="toolbar">
-          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Find a file</span><input id="files-find" type="search" placeholder="Find a file" spellcheck="false" autocomplete="off"></label>
+          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Find a file</span><input id="files-find" type="search" placeholder="Find a file" spellcheck="false" autocomplete="off"></label>
           <button id="files-touched" type="button" class="ib tg" aria-pressed="false" aria-label="Only files this session read or wrote" title="Only files this session read or wrote"><svg width="15" height="15"><use href="#i-eye"/></svg></button>
           <button id="files-ignored" type="button" class="ib tg" aria-pressed="false" aria-label="Show git-ignored files" title="Show git-ignored files"><svg width="15" height="15"><use href="#i-gitlook"/></svg></button>
           <button id="files-collapse" type="button" class="ib" aria-label="Collapse all folders" title="Collapse all folders"><svg width="15" height="15"><use href="#i-collapse"/></svg></button>
@@ -209,14 +210,14 @@
           <span id="changes-head" class="changes-head"></span><span class="spacer"></span>
           <button id="changes-collapse" type="button" class="ib" aria-label="Collapse all turns" title="Collapse all turns"><svg width="15" height="15"><use href="#i-collapse"/></svg></button>
           <button type="button" class="ask-ico lg" data-ask-list="changes" aria-label="Ask about these changes" title="Ask about these changes"><svg width="13" height="13"><use href="#i-star"/></svg></button>
-          <button id="changes-refresh" class="icon-btn" aria-label="Refresh changes"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></div>
+          <button id="changes-refresh" class="icon-btn" aria-label="Refresh changes" title="Refresh changes"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></div>
         <div id="changes-turns" class="ct-list" tabindex="0" aria-label="Changes by turn"></div>
         <div id="changes" class="table-wrap"></div>
       </section>
 
       <section id="tab-bg" class="tab">
         <div class="toolbar">
-          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Filter background tasks</span><input id="bg-filter" type="search" placeholder="Filter by description, command or result" spellcheck="false"></label>
+          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Filter background tasks</span><input id="bg-filter" type="search" placeholder="Filter by description, command or result" spellcheck="false"></label>
           <div class="seg" role="group" aria-label="Show" id="bg-seg">
             <button type="button" data-f="all" aria-pressed="true">All</button>
             <button type="button" data-f="running" aria-pressed="false">Running</button>
@@ -325,10 +326,32 @@
 
 <dialog id="history" class="dialog wide history" aria-labelledby="hist-t">
   <form method="dialog" class="hist-f">
-    <div class="hist-h"><h2 id="hist-t">All sessions</h2><span id="hist-n" class="muted"></span><span class="spacer"></span><button value="cancel" class="icon-btn sm ghost" aria-label="Close"><svg width="12" height="12"><use href="#i-x"/></svg></button></div>
-    <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Search sessions</span><input id="hist-q" type="search" placeholder="Search title, folder, branch, PR or id" spellcheck="false" autocomplete="off"></label>
+    <div class="hist-h"><h2 id="hist-t">All sessions</h2><span id="hist-n" class="muted"></span><span class="spacer"></span><button value="cancel" class="icon-btn sm ghost" aria-label="Close" title="Close (Esc)"><svg width="12" height="12"><use href="#i-x"/></svg></button></div>
+    <label class="search"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Search sessions</span><input id="hist-q" type="search" placeholder="Search title, folder, branch, PR or id" spellcheck="false" autocomplete="off"></label>
     <ul id="hist-list" class="hist-list" role="listbox" aria-label="Sessions"></ul>
   </form>
+</dialog>
+
+<dialog id="procs" class="dialog procs" aria-labelledby="pm-t">
+  <div class="pm">
+    <header class="pm-h">
+      <h2 id="pm-t">Processes</h2><span id="pm-n" class="muted"></span>
+      <div class="seg icons" role="group" aria-label="Show" id="pm-scope">
+        <button type="button" data-s="agents" aria-pressed="true" aria-label="The deck and its agents" title="The deck and its agents"><svg width="14" height="14"><use href="#i-agent"/></svg></button>
+        <button type="button" data-s="all" aria-pressed="false" aria-label="Every process on this host" title="Every process on this host"><svg width="14" height="14"><use href="#i-globe"/></svg></button>
+      </div>
+      <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Search processes</span><input id="pm-q" type="search" placeholder="Search name, pid, command or session" spellcheck="false" autocomplete="off"></label>
+      <button id="pm-live" type="button" class="live" aria-pressed="true"><span class="ldot"></span>Live</button>
+      <button id="pm-close" type="button" class="icon-btn sm ghost" aria-label="Close" title="Close (Esc)"><svg width="12" height="12"><use href="#i-x"/></svg></button>
+    </header>
+    <div class="pm-body">
+      <div class="pm-left">
+        <div class="pm-cols" aria-hidden="true"><span>Process</span><span class="num">PID</span><span class="num">CPU %</span><span class="num">Memory</span><span class="num">Up</span></div>
+        <div id="pm-list" class="pm-list" tabindex="0" role="tree" aria-label="Processes"></div>
+      </div>
+      <div id="pm-detail" class="pm-detail"></div>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="keys" class="dialog">
@@ -349,6 +372,7 @@
       <dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Events, Files, Changes, Shell, Background</dd>
       <dt><kbd>n</kbd></dt><dd>new session</dd>
       <dt><kbd>h</kbd></dt><dd>search all sessions</dd>
+      <dt><kbd>p</kbd></dt><dd>processes: ↑/↓ move, ←/→ collapse / expand, / search</dd>
       <dt><kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send the prompt</dd>
       <dt><kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send now: stop the current turn and send the prompt with everything queued, as one message</dd>
       <dt><kbd>⌘</kbd> <kbd>.</kbd></dt><dd>stop the current turn</dd>

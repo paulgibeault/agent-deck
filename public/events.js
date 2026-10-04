@@ -566,11 +566,13 @@ export function headerFor({ tag, chips = [], title, meta = [], nav = true, raw =
   if (m.length) head.append(h('div', { class: 'dmeta' }, ...m.map(x => h('span', {}, x))));
   return head;
 }
-export function svgUse(id, n = 12) {
+/** An icon. `tip` adds a tooltip of its own, for a glyph with no labelled control around it. */
+export function svgUse(id, n = 12, tip = null) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', n); svg.setAttribute('height', n); svg.setAttribute('aria-hidden', 'true');
   const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
   use.setAttribute('href', '#' + id); svg.append(use);
+  if (tip) { const t = document.createElementNS('http://www.w3.org/2000/svg', 'title'); t.textContent = tip; svg.append(t); }
   return svg;
 }
 
@@ -606,7 +608,7 @@ export function renderDetails(ev, detail, ctx) {
   const tokens = ev.usage?.output_tokens ? `${fmtTokens(ev.usage.output_tokens)} tokens` : null;
   root.append(headerFor({
     tag: tagEl(ev, { label: true }), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
-    meta: [when, ev.kind === 'tool' && t.durationMs != null ? fmtMs(t.durationMs) : null, tokens, ev.model ? ev.model.replace('claude-', '') : null, ctx.position],
+    meta: [when, ev.kind === 'tool' && t.durationMs != null ? fmtMs(t.durationMs) : null, tokens, ev.model ? ev.model.replace('claude-', '') : null, ctx.position, ctx.pidOf?.(ev)],
   }));
 
   const body = h('div', { class: 'dbody' });
