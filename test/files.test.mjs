@@ -46,3 +46,21 @@ test('filetree lists one level, flags git state, and stays inside the folder', a
   assert.deepEqual((await allFiles(dir)).files.sort(), ['A.txt', 'b.md', 'src/a.js']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('markdown for files: nesting, fences in lists, callouts, safe HTML, anchors', () => {
+  const md = [
+    '<p align="center"><img src="a.png" width="72" onerror="x()"></p>',
+    '# Title', '', '> [!NOTE]', '> Heads up.', '',
+    '1. one', '2. two:', '   ```bash', '   npm test', '   ```', '   - nested', '',
+    '| a | b |', '|:-:|--:|', '| `x|y` | 2 |', '', '[jump](#title) <script>alert(1)</script>',
+  ].join('\n');
+  const html = markdown(md, { soft: true, html: true, img: (s) => `/raw/${s}`, link: () => null });
+  assert.match(html, /<p align="center"><img src="\/raw\/a\.png" alt="" width="72" loading="lazy"><\/p>/);
+  assert.doesNotMatch(html, /onerror|<script/);           // attributes and scripts never pass
+  assert.match(html, /<h1 id="title">Title<\/h1>/);
+  assert.match(html, /<div class="callout c-note"><div class="callout-t">Note<\/div><p>Heads up\.<\/p><\/div>/);
+  assert.match(html, /<li>two:<pre><code class="hl language-bash">npm test<\/code><\/pre><ul><li>nested<\/li><\/ul><\/li>/);
+  assert.match(html, /<th style="text-align:center">a<\/th><th style="text-align:right">b<\/th>/);
+  assert.match(html, /<code>x\|y<\/code>/);
+  assert.match(html, /<a href="#" data-anchor="title">jump<\/a>/);
+});

@@ -222,71 +222,140 @@ const fmtUsd4 = (n) => n >= 0.1 ? `$${n.toFixed(2)}` : n >= 0.001 ? `$${n.toFixe
 
 // ------------------------------------------------------------ markdown
 /**
- * `opts.img(src)` maps an image path to a URL; `opts.link(href)` maps a
- * relative link to an absolute path (rendered as data-abs) or null. Without
- * them images stay remote-only and relative links stay text.
+ * Markdown to HTML. Chat text calls it bare. Files pass options:
+ * `soft` joins wrapped lines and keeps real heading levels (with ids);
+ * `img(src)` maps an image path to a URL; `link(href)` maps a relative link
+ * to an absolute path (rendered as data-abs) or null; `html` lets a small,
+ * attribute-stripped subset of inline HTML through (img, kbd, details…).
  */
+const CALLOUT = { note: 'Note', tip: 'Tip', important: 'Important', warning: 'Warning', caution: 'Caution' };
+export const slug = (t) => String(t).toLowerCase().replace(/<[^>]+>/g, '').replace(/&\w+;/g, '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
 export function markdown(src, opts = {}) {
   const lines = String(src ?? '').replace(/\r\n?/g, '\n').split('\n');
   const out = []; let i = 0;
-  const unesc = (s) => s.replace(/&amp;/g, '&');
-  const inline = (s) => esc(s)
-    .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
-    .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, alt, u) => {
-      const url = /^(https?:|data:image\/)/.test(unesc(u)) ? unesc(u) : opts.img ? opts.img(unesc(u)) : null;
-      return url ? `<img src="${esc(url)}" alt="${alt}" loading="lazy">` : alt;
-    })
-    .replace(/\[([^\]]+)\]\((?!https?:)([^)\s]+)\)/g, (m, t, u) => {
-      const abs = opts.link ? opts.link(unesc(u)) : null;
-      return abs ? `<a href="#" data-abs="${esc(abs)}" title="${esc(unesc(u))}">${t}</a>` : t;
-    })
-    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-    .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|\s)(https?:\/\/[^\s<]+[^\s<.,;:)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  const unesc = (s) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+  const imgUrl = (u) => /^(https?:|data:image\/)/.test(u) ? u : opts.img ? opts.img(u) : null;
+  const inline = (s) => {
+    // Code spans first, parked so nothing below rewrites their insides.
+    const parked = [];
+    let t = esc(s).replace(/(`+)([\s\S]+?)\1/g, (_, __, c) => { parked.push(`<code>${c.trim()}</code>`); return `\u0000${parked.length - 1}\u0000`; });
+    if (opts.html) {
+      t = t.replace(/&lt;!--[\s\S]*?--&gt;/g, '')
+        .replace(/&lt;img\b([\s\S]*?)\/?&gt;/gi, (_, attrs) => {
+          const get = (n) => new RegExp(`\\b${n}=&quot;([^&]*(?:&amp;[^&]*)*)&quot;`, 'i').exec(attrs)?.[1];
+          const url = get('src') && imgUrl(unesc(get('src'))); if (!url) return '';
+          const w = /^\d+%?$/.test(get('width') || '') ? ` width="${get('width')}"` : '';
+          return `<img src="${esc(url)}" alt="${get('alt') || ''}"${w} loading="lazy">`;
+        })
+        .replace(/&lt;a\s[^&]*?href=&quot;(https?:[^&]*)&quot;[\s\S]*?&gt;([\s\S]*?)&lt;\/a&gt;/gi, '<a href="$1" target="_blank" rel="noopener">$2</a>')
+        .replace(/&lt;(\/?)(br|kbd|sub|sup|b|i|u|em|strong|details|summary|p|div|span|center|small|mark|ins|picture|source|h[1-6])\b((?:[^&]|&quot;|&amp;|&#39;)*?)\/?&gt;/gi, (_, c, tag, attrs) => {
+          // Attributes are dropped, except a plain alignment.
+          tag = tag.toLowerCase(); if (tag === 'source') return '';
+          const al = !c && /\balign=&quot;(left|center|right)&quot;/i.exec(attrs)?.[1];
+          return `<${c}${tag}${al ? ` align="${al.toLowerCase()}"` : ''}>`;
+        });
+    }
+    t = t
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, alt, u) => { const url = imgUrl(unesc(u)); return url ? `<img src="${esc(url)}" alt="${alt}" loading="lazy">` : alt; })
+      .replace(/\[([^\]]+)\]\(#([^)\s]+)\)/g, (_, txt, a) => opts.soft ? `<a href="#" data-anchor="${esc(slug(unesc(a)))}">${txt}</a>` : txt)
+      .replace(/\[([^\]]+)\]\((?!https?:)([^)\s]+)\)/g, (m, txt, u) => { const abs = opts.link ? opts.link(unesc(u)) : null; return abs ? `<a href="#" data-abs="${esc(abs)}" title="${esc(unesc(u))}">${txt}</a>` : txt; })
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, '$1<strong>$2</strong>')
+      .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
+      .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/(^|\s)(https?:\/\/[^\s<]+[^\s<.,;:)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+    return t.replace(/\u0000(\d+)\u0000/g, (_, n) => parked[+n]);
+  };
+  const LI = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+  const indent = (l) => /^\s*/.exec(l)[0].replace(/\t/g, '    ').length;
+  const li = (t, sub) => {
+    const tm = /^\[([ xX])\]\s+(.*)$/.exec(t);
+    return tm ? `<li class="task"><input type="checkbox" disabled${tm[1] !== ' ' ? ' checked' : ''}> ${inline(tm[2])}${sub}</li>` : `<li>${inline(t)}${sub}</li>`;
+  };
+  // A list and anything nested under it, by indentation.
+  const list = (start) => {
+    const m0 = LI.exec(lines[start]); const ind = indent(lines[start]);
+    const ordered = /\d/.test(m0[2]); const first = ordered ? parseInt(m0[2], 10) : 1;
+    const items = []; let j = start;
+    while (j < lines.length) {
+      const m = LI.exec(lines[j]); const d = indent(lines[j]);
+      if (m && d === ind) { items.push({ text: m[3], sub: '' }); j++; continue; }
+      if (m && d > ind && items.length) { const r = list(j); items[items.length - 1].sub += r.html; j = r.next; continue; }
+      if (!m && d > ind && items.length && /^\s*(```|~~~)/.test(lines[j])) {
+        // A fenced block inside an item.
+        const fm = /^\s*(```+|~~~+)\s*([\w+#.-]+)?/.exec(lines[j]); const buf = []; j++;
+        while (j < lines.length && !lines[j].trim().startsWith(fm[1])) buf.push(lines[j++].slice(Math.min(d, indent(lines[j - 1]))));
+        j++;
+        items[items.length - 1].sub += `<pre><code class="hl${fm[2] ? ' language-' + esc(fm[2].toLowerCase()) : ''}">${esc(buf.join('\n'))}</code></pre>`;
+        continue;
+      }
+      if (!m && lines[j].trim() && d > ind && items.length) { items[items.length - 1].text += ' ' + lines[j].trim(); j++; continue; }
+      if (!lines[j].trim()) {
+        let k = j; while (k < lines.length && !lines[k].trim()) k++;
+        if (k < lines.length && LI.test(lines[k]) && indent(lines[k]) >= ind) { j = k; continue; }
+      }
+      break;
+    }
+    const tag = ordered ? 'ol' : 'ul';
+    return { html: `<${tag}${ordered && first !== 1 ? ` start="${first}"` : ''}>${items.map(it => li(it.text, it.sub)).join('')}</${tag}>`, next: j };
+  };
   while (i < lines.length) {
     const l = lines[i];
-    const fence = /^\s*```\s*(\w+)?/.exec(l);
+    const fence = /^\s*(```+|~~~+)\s*([\w+#.-]+)?/.exec(l);
     if (fence) {
-      const lang = fence[1] || ''; const buf = []; i++;
-      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+      const lang = fence[2] || ''; const buf = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) buf.push(lines[i++]);
       i++;
-      out.push(`<pre><code class="hl${lang ? ' language-' + esc(lang) : ''}">${esc(buf.join('\n'))}</code></pre>`);
+      out.push(`<pre><code class="hl${lang ? ' language-' + esc(lang.toLowerCase()) : ''}">${esc(buf.join('\n'))}</code></pre>`);
       continue;
     }
-    const hm = /^(#{1,6})\s+(.*)$/.exec(l);
-    if (hm) { out.push(`<h${hm[1].length + 1}>${inline(hm[2])}</h${hm[1].length + 1}>`); i++; continue; }
-    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
+    const hm = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l);
+    if (hm) {
+      const n = opts.soft ? hm[1].length : Math.min(6, hm[1].length + 1); const body = inline(hm[2]);
+      out.push(opts.soft ? `<h${n} id="${esc(slug(hm[2]))}">${body}</h${n}>` : `<h${n}>${body}</h${n}>`); i++; continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
     if (/^\s*>/.test(l)) {
       const buf = []; while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
-      out.push(`<blockquote>${markdown(buf.join('\n'), opts)}</blockquote>`); continue;
-    }
-    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '')) {
-      const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
-      const head = cells(l); i += 2; const rows = [];
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
-      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+      const cm = /^\[!(\w+)\]\s*$/.exec(buf[0] || '');
+      if (cm && CALLOUT[cm[1].toLowerCase()]) {
+        const k = cm[1].toLowerCase();
+        out.push(`<div class="callout c-${k}"><div class="callout-t">${CALLOUT[k]}</div>${markdown(buf.slice(1).join('\n'), opts)}</div>`);
+      } else out.push(`<blockquote>${markdown(buf.join('\n'), opts)}</blockquote>`);
       continue;
     }
-    const lm = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(l);
-    if (lm) {
-      const ordered = /\d/.test(lm[2]); const items = [];
-      while (i < lines.length) {
-        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
-        if (!m) { if (items.length && /^\s{2,}\S/.test(lines[i])) { items[items.length - 1] += ' ' + lines[i].trim(); i++; continue; } break; }
-        items.push(m[3]); i++;
-      }
-      const li = (t) => { const tm = /^\[([ xX])\]\s+(.*)$/.exec(t); return tm ? `<li class="task"><input type="checkbox" disabled${tm[1] !== ' ' ? ' checked' : ''}> ${inline(tm[2])}</li>` : `<li>${inline(t)}</li>`; };
-      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map(li).join('')}</${ordered ? 'ol' : 'ul'}>`);
+    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?\s*:?-+:?\s*(\||$)/.test(lines[i + 1] || '')) {
+      // Cells split on |, but not on \| or a | inside `code`.
+      const split = (r) => {
+        const cells = []; let cur = '', tick = false; const t = r.trim().replace(/^\|/, '').replace(/\|$/, '');
+        for (let k = 0; k < t.length; k++) {
+          const ch = t[k];
+          if (ch === '\\' && t[k + 1] === '|') { cur += '|'; k++; continue; }
+          if (ch === '`') tick = !tick;
+          if (ch === '|' && !tick) { cells.push(cur.trim()); cur = ''; continue; }
+          cur += ch;
+        }
+        cells.push(cur.trim());
+        return cells;
+      };
+      const align = split(lines[i + 1]).map(c => /^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : null);
+      const cell = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ''}>${inline(c)}</${tag}>`;
+      const head = split(l); i += 2; const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(split(lines[i++]));
+      out.push(`<div class="tbl"><table><thead><tr>${head.map((c, k) => cell('th', c, k)).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, k) => cell('td', c, k)).join('')}</tr>`).join('')}</tbody></table></div>`);
       continue;
     }
+    if (LI.test(l)) { const r = list(i); out.push(r.html); i = r.next; continue; }
     if (!l.trim()) { i++; continue; }
     const buf = [];
-    while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,6}\s|>|[-*+]\s|\d+[.)]\s|\|)/.test(lines[i])) buf.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>|[-*+]\s|\d+[.)]\s|\|)/.test(lines[i])) buf.push(lines[i++]);
     if (!buf.length) { buf.push(lines[i++]); }
     // Files wrap prose at a column (soft breaks); chat text means its newlines.
+    // A paragraph that is itself an HTML block (<p align>, <div>…) isn't wrapped again.
+    if (opts.html && /^\s*<(p|div|center|details|picture|h[1-6])\b/i.test(buf[0])) { out.push(inline(buf.join(' '))); continue; }
     out.push(`<p>${opts.soft ? inline(buf.join(' ')) : inline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
   }
   return out.join('\n');

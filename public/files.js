@@ -364,7 +364,7 @@ function parseCsv(text, sep) {
 }
 
 /** Markdown with images and relative links resolved against the file's folder. */
-function markdownView(text, file, ctx) {
+function markdownView(text, file, ctx, { outline = true } = {}) {
   const dir = file.abs.slice(0, file.abs.lastIndexOf('/'));
   const resolve = (href) => {
     if (/^(https?:|data:|mailto:|#)/.test(href)) return null;
@@ -372,12 +372,24 @@ function markdownView(text, file, ctx) {
     const out = []; for (const p of parts) { if (p === '..') out.pop(); else if (p !== '.') out.push(p); }
     return out.join('/').split('#')[0];
   };
-  const div = h('div', { class: 'md fileview', html: markdown(text, { soft: true, img: (src) => { const a = resolve(src); return a ? rawUrl(a) : src; }, link: resolve }) });
-  div.addEventListener('click', (e) => {
-    const a = e.target.closest('a[data-abs]'); if (!a) return;
-    e.preventDefault(); ctx.openPath?.(a.dataset.abs);
+  const doc = h('div', { class: 'md fileview', html: markdown(text, { soft: true, html: true, img: (src) => { const a = resolve(src); return a ? rawUrl(a) : null; }, link: resolve }) });
+  const wrap = h('div', { class: 'md-wrap' });
+  // An outline for longer documents: the headings, as a jump list.
+  const heads = [...doc.querySelectorAll('h1[id], h2[id], h3[id]')];
+  if (outline && heads.length >= 4) {
+    const top = Math.min(...heads.map(x => +x.tagName[1]));
+    wrap.append(h('details', { class: 'md-outline' }, h('summary', {}, svgUse('i-list', 12), h('span', {}, 'Outline'), h('span', { class: 'n' }, heads.length)),
+      h('nav', {}, ...heads.map(x => h('a', { href: '#', dataset: { anchor: x.id }, class: `lv${+x.tagName[1] - top}` }, x.textContent)))));
+  }
+  wrap.append(doc);
+  wrap.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-abs], a[data-anchor]'); if (!a) return;
+    e.preventDefault();
+    if (a.dataset.abs) return ctx.openPath?.(a.dataset.abs);
+    const target = doc.querySelector(`[id="${CSS.escape(a.dataset.anchor)}"]`);
+    if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); target.classList.add('flash'); setTimeout(() => target.classList.remove('flash'), 1200); }
   });
-  return div;
+  return wrap;
 }
 
 /** The Details pane for a file from the Files tab. */
