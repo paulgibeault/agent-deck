@@ -124,3 +124,40 @@ test('AzureTts keeps a working key (0600), caches audio, and never stores a reje
   await t.configure({});
   assert.equal(fs.existsSync(path.join(dir, 'tts.json')), false);
 });
+
+import { KokoroTts } from '../lib/kokoro.mjs';
+
+test('KokoroTts is off until installed, loads once, runs one chunk at a time, caches, and unloads when idle', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kokoro-'));
+  assert.deepEqual(new KokoroTts({ dir }).status(), { installed: false, loaded: false, voices: [] });
+  await assert.rejects(new KokoroTts({ dir }).synth({ text: 'hi', voice: 'af_heart' }), /not installed/);
+
+  let loads = 0, running = 0, most = 0, disposed = 0;
+  const load = async () => {
+    loads++;
+    return {
+      model: { dispose: async () => { disposed++; } },
+      generate: async (text, { voice, speed }) => {
+        running++; most = Math.max(most, running);
+        await new Promise(r => setTimeout(r, 5));
+        running--;
+        return { toWav: () => new TextEncoder().encode(`${voice}:${speed}:${text}`).buffer };
+      },
+    };
+  };
+  const k = new KokoroTts({ dir, load, idleMs: 20 });
+  assert.equal(k.status().voices[0].id, 'af_heart');
+  await assert.rejects(k.synth({ text: 'hi', voice: 'nope' }), /Kokoro voice required/);
+  const [a, b] = await Promise.all([k.synth({ text: 'one', voice: 'af_heart', rate: 1.5 }), k.synth({ text: 'two', voice: 'bm_george' })]);
+  assert.equal(a.toString(), 'af_heart:1.5:one');
+  assert.equal(b.toString(), 'bm_george:1:two');
+  assert.equal(most, 1);
+  assert.equal(loads, 1);
+  assert.equal(await k.synth({ text: 'one', voice: 'af_heart', rate: 1.5 }), a);
+  await new Promise(r => setTimeout(r, 60));
+  assert.equal(disposed, 1);
+  assert.equal(k.status().loaded, false);
+  await k.synth({ text: 'three', voice: 'af_heart' });
+  assert.equal(loads, 2);
+  await k.unload();
+});

@@ -6,9 +6,10 @@
 // chunk at a time: the chunk being read is highlighted (CSS Custom Highlight
 // API, no DOM changes), a click on any chunk restarts from there.
 //
-// Two engines: the browser's speechSynthesis (local voices, plus Microsoft's
-// online voices when the deck runs in Edge) and Azure neural voices through
-// the server (/api/tts). The queue rules live in speech.js.
+// Two kinds of engine: the browser's speechSynthesis (local voices, plus
+// Microsoft's online voices when the deck runs in Edge), and audio made by the
+// server (/api/tts): Kokoro voices generated on this machine, and Azure neural
+// voices. The queue rules live in speech.js.
 import { h, markdown, highlightIn, svgUse } from './events.js';
 import { SpeechQueue, splitSentences, forSpeech, codeSay, introFor } from './speech.js';
 
@@ -98,6 +99,8 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
   let hideTimer = null;
   let soon = false;
   let azure = { configured: false, voices: [], region: null, error: null };
+  let kokoro = { installed: false, voices: [] };
+  const served = (id) => /^(azure|kokoro):/.test(id);
 
   // ---------------------------------------------------------- one speaking window
   navigator.locks?.request('agent-deck-narration', () => { leader = true; changed(); pump(); return new Promise(() => {}); });
@@ -122,6 +125,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
   function voiceList() {
     const local = [], online = [];
     for (const v of browserVoices()) (v.localService ? local : online).push({ id: `browser:${v.voiceURI}`, name: v.name.replace(/^Microsoft /, '').replace(/ Online \(Natural\).*/, ' (Natural)'), online: !v.localService });
+    for (const v of kokoro.voices) if (v.locale.slice(0, 2) === lang) local.push({ id: `kokoro:${v.id}`, name: `${v.name} · ${v.locale} · Kokoro`, kokoro: true });
     for (const v of azure.voices) if (v.locale.slice(0, 2) === lang || v.multilingual) online.push({ id: `azure:${v.id}`, name: `${v.name} · ${v.locale}${v.multilingual ? ' · multilingual' : ''}`, online: true, azure: true });
     return { local, online };
   }
@@ -131,15 +135,15 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     const all = [...local, ...online];
     if (s.voice && all.some(v => v.id === s.voice)) return s.voice;
     const natural = online.find(v => !v.azure && /Natural/.test(v.name));
-    const nice = local.find(v => /Premium|Enhanced/.test(v.name));
+    const nice = local.find(v => v.kokoro) || local.find(v => /Premium|Enhanced/.test(v.name));
     const def = browserVoices().find(v => v.default);
     return natural?.id || nice?.id || (def ? `browser:${def.voiceURI}` : local[0]?.id || online[0]?.id || '');
   }
-  async function loadAzure() {
-    try { azure = await api.get('/api/tts/voices'); } catch (e) { azure = { configured: false, voices: [], error: e.message }; }
+  async function loadVoices() {
+    try { ({ kokoro, ...azure } = await api.get('/api/tts/voices')); } catch (e) { azure = { configured: false, voices: [], error: e.message }; }
     changed();
   }
-  loadAzure();
+  loadVoices();
 
   // ---------------------------------------------------------- engines
   const audio = new Audio();
@@ -160,8 +164,8 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
 
   /** Speak one chunk; resolves when it ends or is cancelled. Rejects { blocked } or { failed }. */
   async function speak(text, voiceId, onWord) {
-    if (voiceId.startsWith('azure:')) {
-      const url = await clip(text, voiceId.slice(6)).catch((e) => { throw Object.assign(e, { failed: true }); });
+    if (served(voiceId)) {
+      const url = await clip(text, voiceId).catch((e) => { throw Object.assign(e, { failed: true }); });
       audio.src = url;
       await new Promise((resolve, reject) => {
         audio.onended = audio.onpause = () => resolve();
@@ -349,15 +353,15 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     const g = c.gen = ++gen;
     mark(ch);
     changed();
-    if (c.voice.startsWith('azure:') && c.view.chunks[c.i + 1]) clip(c.view.chunks[c.i + 1].say, c.voice.slice(6)).catch(() => {});
+    if (served(c.voice) && c.view.chunks[c.i + 1]) clip(c.view.chunks[c.i + 1].say, c.voice).catch(() => {});
     try { await speak(ch.say, c.voice, wordMarker(ch)); }
     catch (e) {
       if (cur !== c || c.gen !== g) return;
       if (e.blocked) { blocked = true; changed(); return; }
-      // An online voice failed: the rest of this item uses a local one.
-      if (c.voice.startsWith('azure:')) {
-        onWarn?.(`Online voice failed (${e.message}); using a local voice`);
-        const local = voiceList().local[0];
+      // A server voice failed: the rest of this item uses a browser one.
+      if (served(c.voice)) {
+        onWarn?.(`${c.voice.startsWith('kokoro:') ? 'Kokoro' : 'Online'} voice failed (${e.message}); using a browser voice`);
+        const local = voiceList().local.find(v => !v.kokoro);
         if (local) { c.voice = local.id; playChunk(); return; }
       }
     }
@@ -464,17 +468,31 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
     const check = (label, checked, on, hint) => h('label', { class: 'ra-opt', title: hint || null }, h('input', { type: 'checkbox', checked: checked || null, onchange: (e) => on(e.target.checked) }), label);
     const { local, online } = voiceList();
     const cv = pickVoice();
+    const opts = (list) => list.map(v => h('option', { value: v.id, selected: v.id === cv || null }, v.name));
+    const made = local.filter(v => v.kokoro), browser = local.filter(v => !v.kokoro);
     const sel = h('select', { class: 'field', onchange: (e) => { set('voice', e.target.value); renderSettings(el); } },
-      local.length ? h('optgroup', { label: 'Local' }, ...local.map(v => h('option', { value: v.id, selected: v.id === cv || null }, v.name))) : null,
+      made.length ? h('optgroup', { label: 'Kokoro · made on this machine' }, ...opts(made)) : null,
+      browser.length ? h('optgroup', { label: 'Local' }, ...opts(browser)) : null,
       online.length ? h('optgroup', { label: '☁ Online' }, ...online.map(v => h('option', { value: v.id, selected: v.id === cv || null }, `☁ ${v.name}`))) : null);
     const rate = h('input', { type: 'range', min: '0.7', max: '2', step: '0.05', value: String(s.rate), oninput: (e) => { set('rate', Number(e.target.value)); rateOut.textContent = `${s.rate.toFixed(2)}×`; } });
     const rateOut = h('span', { class: 'muted' }, `${s.rate.toFixed(2)}×`);
+    // Ways to better voices, shown only while they are missing.
+    const code = (t) => h('code', { class: 'ra-code' }, t);
+    const ko = kokoro.installed ? null : h('details', { class: 'ra-az' }, h('summary', {}, 'Add Kokoro voices (free, on this machine)'),
+      h('p', { class: 'muted' }, 'Natural voices generated here: no account, and the text stays on this machine. In the agent-deck folder run ', code('npm run setup-voices'),
+        ' (about 730 MB), then reopen this. ', h('a', { href: 'https://github.com/paulgibeault/agent-deck#better-voices', target: '_blank', rel: 'noopener' }, 'More')));
+    const mac = /Mac/.test(navigator.platform) && !browser.some(v => /Premium|Enhanced/.test(v.name))
+      ? h('details', { class: 'ra-az' }, h('summary', {}, 'Better Mac voices'),
+        h('p', { class: 'muted' }, 'System Settings → Accessibility → Spoken Content → System voice → Manage Voices. Download a Premium voice (e.g. English → Zoe or Ava), then restart the browser. They appear under Local.'))
+      : null;
+    if (!kokoro.installed) api.get('/api/tts/voices').then((r) => { if (r.kokoro?.installed) { ({ kokoro, ...azure } = r); if (el.isConnected) renderSettings(el); } }, () => {});
     const az = h('details', { class: 'ra-az' }, h('summary', {}, azure.configured ? `Azure voices: on (${azure.region})` : 'Add Microsoft voices (Azure)'));
     if (azure.fromEnv) az.append(h('p', { class: 'muted' }, 'Set by AZURE_SPEECH_KEY / AZURE_SPEECH_REGION.'));
     else {
       const key = h('input', { class: 'field', type: 'password', placeholder: azure.configured ? 'key (saved)' : 'Azure Speech key', autocomplete: 'off', spellcheck: 'false' });
       const region = h('input', { class: 'field', type: 'text', placeholder: 'region, e.g. eastus', value: azure.region || '', spellcheck: 'false' });
-      const msg = h('p', { class: 'muted' }, azure.error || 'Neural voices from Azure AI Speech. The free tier covers 0.5M characters a month. The key stays on this machine.');
+      const msg = h('p', { class: 'muted' }, azure.error || 'Neural voices from Azure AI Speech. The free tier covers 0.5M characters a month. The key stays on this machine. ',
+        azure.error ? null : h('a', { href: 'https://github.com/paulgibeault/agent-deck#microsoft-voices-azure-speech-key', target: '_blank', rel: 'noopener' }, 'Get a free key'));
       const save = h('button', { type: 'button', class: 'btn primary', onclick: async () => {
         save.disabled = true; msg.textContent = 'Checking…';
         try { azure = await api.post('/api/tts/config', { key: key.value || undefined, region: region.value }); renderSettings(el); }
@@ -493,7 +511,7 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
         check('Include subagents', s.subagents, (v) => set('subagents', v), 'Also read what subagents say')),
       h('div', { class: 'ra-g' }, h('div', { class: 'ra-l' }, 'Voice'),
         h('div', { class: 'ra-row' }, sel, h('button', { type: 'button', class: 'ib', 'aria-label': 'Preview the voice', title: 'Preview', onclick: preview }, svgUse('i-play', 13))),
-        h('div', { class: 'ra-row' }, h('span', { class: 'ra-l2' }, 'Speed'), rate, rateOut), az),
+        h('div', { class: 'ra-row' }, h('span', { class: 'ra-l2' }, 'Speed'), rate, rateOut), ko, mac, az),
       h('div', { class: 'ra-g' }, h('div', { class: 'ra-l' }, 'Read'),
         ...KINDS.map(([k, l, hint]) => check(l, s.events[k], (v) => set(`events.${k}`, v), hint))),
       h('div', { class: 'ra-g' }, h('div', { class: 'ra-l' }, 'Queue'),
@@ -504,5 +522,5 @@ export function createNarration({ prefs, savePrefs, api, host, isSubagent, inSco
       h('p', { class: 'ra-keys muted' }, h('kbd', {}, 'Space'), ' play/pause · ', h('kbd', {}, ']'), ' next · ', h('kbd', {}, 'j'), ' open the event · ', h('kbd', {}, 'r'), ' read the selection'));
   }
 
-  return { history, markAllHeard, clearHistory, kindLabel: (k) => KIND_LABEL[k] || k, auto, read, play, pause, toggle, skip, stop, hold, status, renderSettings, reloadVoices: loadAzure, current: () => cur?.item || lastView?.item || null, settings: s };
+  return { history, markAllHeard, clearHistory, kindLabel: (k) => KIND_LABEL[k] || k, auto, read, play, pause, toggle, skip, stop, hold, status, renderSettings, reloadVoices: loadVoices, current: () => cur?.item || lastView?.item || null, settings: s };
 }
