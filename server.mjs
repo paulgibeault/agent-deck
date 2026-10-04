@@ -126,11 +126,16 @@ function send(res, code, body, headers = {}) {
   res.writeHead(code, { 'Content-Type': isBuf ? headers['Content-Type'] || 'application/octet-stream' : typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
   res.end(data);
 }
+// Prompts may carry attachments (base64), so they get a larger allowance.
+const PROMPT_BODY_LIMIT = 48 << 20;
 function readBody(req, limit = 1 << 20) {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else chunks.push(c); });
-    req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
+    let size = 0; let chunks = [];
+    // Over the limit: keep draining so the client gets a 413 rather than a dropped connection.
+    req.on('data', c => { size += c.length; if (size > limit) chunks = null; else chunks?.push(c); });
+    req.on('end', () => {
+      if (!chunks) return reject(Object.assign(new Error(`request too large (${Math.round(size / 1024 / 1024)} MB; limit ${Math.round(limit / 1024 / 1024)} MB)`), { code: 413 }));
+      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
 }
@@ -152,6 +157,11 @@ function serveStatic(res, rel) {
     if (err) return send(res, 404, 'not found');
     send(res, 200, data, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
   });
+}
+
+/** The model the CLI uses when none is passed: the `model` in Claude Code's user settings. */
+function cliModel() {
+  try { return JSON.parse(fs.readFileSync(path.join(index.claudeDir, 'settings.json'), 'utf8')).model || null; } catch { return null; }
 }
 
 // --------------------------------------------------------------- routes
@@ -179,6 +189,7 @@ async function route(req, res, url) {
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
   if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
+  if (p === '/api/config' && req.method === 'GET') return send(res, 200, { cliModel: cliModel() });
   if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
   if (p === '/api/usage/refresh' && req.method === 'POST') {
     await probeQuota();
@@ -201,9 +212,9 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/launch' && req.method === 'POST') {
-    const { cwd, prompt, model, permissionMode, name } = await readBody(req);
+    const { cwd, prompt, attachments, model, permissionMode, name } = await readBody(req, PROMPT_BODY_LIMIT);
     try {
-      const st = await agents.launch({ cwd, prompt, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined });
+      const st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined });
       return send(res, 200, st);
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
@@ -211,11 +222,11 @@ async function route(req, res, url) {
   let m;
   if ((m = /^\/api\/sessions\/([^/]+)\/(send|send-now|queue|interrupt|permission|stop|resume)$/.exec(p)) && req.method === 'POST') {
     const id = decodeURIComponent(m[1]);
-    const body = await readBody(req);
+    const body = await readBody(req, PROMPT_BODY_LIMIT);
     try {
       switch (m[2]) {
-        case 'send': return send(res, 200, { item: agents.send(id, body.text) });
-        case 'send-now': return send(res, 200, { item: agents.sendNow(id, body.text) });
+        case 'send': return send(res, 200, { item: agents.send(id, body.text, body.attachments) });
+        case 'send-now': return send(res, 200, { item: agents.sendNow(id, body.text, body.attachments) });
         case 'queue': agents.queueOp(id, body); break;
         case 'interrupt': return send(res, 200, { interrupted: agents.interrupt(id) });
         case 'permission': agents.answer(id, body.requestId, body.decision, body.message); break;
@@ -224,7 +235,7 @@ async function route(req, res, url) {
           const cwd = index.cwdOf(id);
           if (!cwd) return send(res, 404, { error: 'unknown session' });
           if (index.registry.get(id)?.alive) return send(res, 409, { error: 'session is still running outside the deck' });
-          return send(res, 200, await agents.launch({ cwd, resume: id, prompt: body.prompt, model: body.model || undefined, permissionMode: body.permissionMode || 'default' }));
+          return send(res, 200, await agents.launch({ cwd, resume: id, prompt: body.prompt, attachments: body.attachments, model: body.model || undefined, permissionMode: body.permissionMode || 'default' }));
         }
       }
       return send(res, 200, { ok: true, state: agents.publicState(id) });
@@ -347,7 +358,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (!authorized(req, url)) return send(res, 401, { error: 'missing or wrong token' });
   try { await route(req, res, url); }
-  catch (e) { console.error(e); if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
+  catch (e) {
+    if (e.code !== 413) console.error(e);
+    if (!res.headersSent) send(res, e.code === 413 ? 413 : 500, { error: e.message }); else res.end();
+  }
 });
 
 server.listen(PORT, HOST, () => {

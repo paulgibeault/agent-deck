@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AgentManager } from '../lib/agent.mjs';
+import { AgentManager, messageContent, normalizeAttachments } from '../lib/agent.mjs';
+import { promptParts } from '../lib/transcript.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-agent.mjs');
@@ -123,4 +124,37 @@ test('launch failure surfaces the CLI error', async (t) => {
 test('missing binary rejects launch', async () => {
   const agents = new AgentManager({ bin: path.join(cwd, 'no-such-claude') });
   await assert.rejects(() => agents.launch({ cwd, prompt: 'hi' }), /not found|ENOENT/);
+});
+
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+test('attachments: content blocks out, descriptors back, data kept off the wire', async (t) => {
+  const files = normalizeAttachments([
+    { name: 'shot.png', mediaType: 'image/png', data: PNG },
+    { name: 'notes.md', mediaType: 'text/markdown', data: Buffer.from('# hi').toString('base64') },
+  ]);
+  const content = messageContent('look at these', files);
+  assert.deepEqual(content.map(b => b.type), ['image', 'text', 'text']);
+  assert.equal(content[1].text, 'Attached file notes.md:\n\n# hi');
+  assert.equal(messageContent('plain', []), 'plain');
+  const parts = promptParts(content);
+  assert.equal(parts.text, 'look at these');
+  assert.deepEqual(parts.attachments.map(a => [a.kind, a.index, a.name ?? a.mediaType]), [['image', 0, 'image/png'], ['text', 1, 'notes.md']]);
+  assert.throws(() => normalizeAttachments([{ name: 'x.zip', mediaType: 'application/zip', data: 'AAAA' }]), /cannot be attached/);
+  assert.throws(() => normalizeAttachments([{ name: 'big.png', mediaType: 'image/png', data: 'A'.repeat(8 << 20) }]), /too large/);
+
+  const agents = new AgentManager({ bin: FAKE });
+  t.after(() => agents.stopAll());
+  const st = await agents.launch({ cwd, prompt: '', attachments: [{ name: 'shot.png', mediaType: 'image/png', data: PNG }] });
+  await until(agents, st.id, x => x.status === 'idle');
+  agents.send(st.id, 'slow one');
+  const item = agents.send(st.id, 'with a picture', [{ name: 'shot.png', mediaType: 'image/png', data: PNG }]);
+  assert.deepEqual(item.attachments, [{ name: 'shot.png', mediaType: 'image/png', size: 68 }]);
+  assert.doesNotMatch(JSON.stringify(agents.publicState(st.id)), new RegExp(PNG.slice(0, 20)));
+  agents.interrupt(st.id); await until(agents, st.id, x => x.status === 'idle');
+  agents.queueOp(st.id, { op: 'resume' });
+  await until(agents, st.id, x => x.status === 'idle' && !x.queue.length && x.turns === 3);
+  const lines = fs.readFileSync(path.join(claudeDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${st.id}.jsonl`), 'utf8');
+  assert.match(lines, /Fake reply to: with a picture \(with 1 attachment\)/);
+  assert.match(lines, /"type":"image"/);
 });

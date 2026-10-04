@@ -1,5 +1,6 @@
 // public/events.js — normalized-event renderers: Events rows + Details pane,
 // plus the small markdown / diff / highlight helpers they share.
+import { modelLabel, priceOf, costOf } from './pricing.js';
 
 // ------------------------------------------------------------ formatting
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -105,6 +106,7 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     const card = h('div', { class: 'turn-card' });
     card.append(tagEl(ev), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
     if (ev.origin && ev.origin !== 'human') card.append(h('span', { class: 'chip' }, ev.origin));
+    if (ev.attachments?.length) card.append(h('span', { class: 'chip', title: ev.attachments.map(attLabel).join('\n') }, svgUse('i-clip', 10), ` ${ev.attachments.length}`));
     card.append(h('span', { class: 'meta' }, turn?.meta || fmtTime(ev.ts)), askMini());
     row.append(card);
     return row;
@@ -160,12 +162,73 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
   }
   if (chips.childNodes.length) row.append(chips);
   if (dur) row.append(dur);
+  // The model that produced this. The first event of an API response carries
+  // its inference details; the rest of that response show the name dimmer.
+  // Hovering either opens the inference card (inferenceCard below).
+  const inf = ev.inference;
+  if (inf) {
+    const flag = inf.synthetic ? ' syn' : inf.stopReason === 'max_tokens' || inf.stopReason === 'refusal' ? ' warn' : inf.switchedFrom ? ' sw' : '';
+    row.append(h('span', { class: `mdl${flag}`, 'aria-describedby': 'hovercard' },
+      inf.switchedFrom ? '↻ ' : '', modelLabel(inf.model), inf.effort ? h('i', {}, ` ${inf.effort}`) : null));
+  } else if (ev.msgId && ev.model) row.append(h('span', { class: 'mdl cont', 'aria-describedby': 'hovercard' }, modelLabel(ev.model)));
   const end = h('span', { class: 'end' });
   if (ev.usage?.output_tokens) end.append(h('span', { class: 'tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, fmtTokens(ev.usage.output_tokens)));
   end.append(askMini());
   row.append(end);
   return row;
 }
+
+// ------------------------------------------------------------ inference card
+const STOP = { end_turn: 'finished its reply', tool_use: 'to call a tool', max_tokens: 'hit the output limit', stop_sequence: 'on a stop sequence', pause_turn: 'paused (server tool)', refusal: 'refused' };
+const MISS = { model_changed: 'the model changed', messages_changed: 'earlier messages changed', previous_message_not_found: 'the previous request was not found', unavailable: 'no diagnosis available' };
+
+/** Hover card for an API response: how it was produced and what it cost. */
+export function inferenceCard(ev) {
+  const inf = ev.inference;
+  const u = inf.usage;
+  const rows = [];
+  const row = (k, v, cls) => { if (v) rows.push(h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, v))); };
+  const ctx = u.input + u.cacheRead + u.cacheWrite;
+  const price = priceOf(inf.model);
+  const cost = costOf(inf.model, u, inf.speed);
+
+  row('Model', [inf.model, inf.switchedFrom ? `switched from ${modelLabel(inf.switchedFrom)}` : null].filter(Boolean).join(' · '), 'mono');
+  if (inf.advisorModel) row('Advisor', inf.advisorModel, 'mono');
+  row('Effort', inf.effort ? `${inf.effort}${inf.sessionEffort ? ` (session ${inf.sessionEffort})` : ''}` : null);
+  const stop = STOP[inf.stopReason] || inf.stopReason;
+  row('Stopped', inf.stopDetails ? `${stop} · ${[inf.stopDetails.category, inf.stopDetails.explanation].filter(Boolean).join(': ')}` : stop,
+    inf.stopReason === 'max_tokens' || inf.stopReason === 'refusal' ? 'err' : null);
+  if (ctx) {
+    const pct = price ? ctx / price.context : null;
+    const td = h('td', {}, `${fmtTokens(ctx)}${price ? ` of ${fmtTokens(price.context)} (${(pct * 100).toFixed(pct < 0.1 ? 1 : 0)}%)` : ''}`);
+    if (pct != null) td.append(h('span', { class: 'inf-bar' }, h('span', { style: `width:${Math.min(100, pct * 100)}%` })));
+    rows.push(h('tr', {}, h('th', {}, 'Context'), td));
+  }
+  row('Input', [u.cacheRead ? `${fmtTokens(u.cacheRead)} cached` : null, u.cacheWrite ? `${fmtTokens(u.cacheWrite)} written to cache${u.cacheWrite1h === u.cacheWrite ? ' (1h)' : u.cacheWrite1h ? ` (${fmtTokens(u.cacheWrite1h)} 1h)` : ' (5m)'}` : null, `${fmtTokens(u.input)} new`].filter(Boolean).join(' · '));
+  row('Output', `${fmtTokens(u.output)} tokens${u.thinking ? ` · ${fmtTokens(u.thinking)} thinking` : ''}${inf.thinkingMs != null ? ` · thought ${fmtMs(inf.thinkingMs)}` : ''}`);
+  if (ctx) {
+    const hit = u.cacheRead / ctx;
+    row('Cache', inf.cacheMiss
+      ? `miss: ${MISS[inf.cacheMiss.reason] || inf.cacheMiss.reason.replace(/_/g, ' ')}${inf.cacheMiss.tokens ? ` · ${fmtTokens(inf.cacheMiss.tokens)} tokens re-read at full price` : ''}`
+      : `${(hit * 100).toFixed(hit > 0.99 && hit < 1 ? 1 : 0)}% read from cache`, inf.cacheMiss ? 'err' : null);
+  }
+  if (inf.thinkingDropped) row('Thinking', `${inf.thinkingDropped.count} earlier block${inf.thinkingDropped.count === 1 ? '' : 's'} dropped (${(inf.thinkingDropped.reason || '').replace(/_/g, ' ')})`);
+  if (cost) {
+    const parts = [['cached', cost.cacheRead], ['cache writes', cost.cacheWrite], ['new input', cost.input], ['output', cost.output]].filter(([, v]) => v >= 0.0005);
+    rows.push(h('tr', {}, h('th', {}, 'Cost'), h('td', { title: `${modelLabel(inf.model)} list prices per million tokens: input $${price.input}, cache read $${price.cacheRead}, output $${price.output}; cache writes 1.25x input (5m) or 2x (1h)${inf.speed === 'fast' ? '; fast mode 2x' : ''}` },
+      h('b', {}, `≈ ${fmtUsd4(cost.total)}`), ' at API rates', parts.length > 1 ? h('div', { class: 'muted' }, parts.map(([k, v]) => `${k} ${fmtUsd4(v)}`).join(' · ')) : null)));
+  }
+  row('Served', [inf.speed ? `${inf.speed} mode` : null, inf.tier ? `${inf.tier} tier` : null, inf.geo ? `in ${inf.geo}` : null, inf.fallbacks ? `${inf.fallbacks} fallback${inf.fallbacks === 1 ? '' : 's'}` : null].filter(Boolean).join(' · '));
+  if (inf.web) row('Web', [inf.web.searches ? `${inf.web.searches} search${inf.web.searches === 1 ? '' : 'es'}` : null, inf.web.fetches ? `${inf.web.fetches} fetch${inf.web.fetches === 1 ? '' : 'es'}` : null].filter(Boolean).join(' · '));
+  if (inf.synthetic) row('Note', 'Written by Claude Code, not the model (an API error or interruption)');
+  row('Request', inf.requestId, 'mono');
+  return [
+    h('div', { class: 'hc-h' }, h('b', {}, `${modelLabel(inf.model)} · one API response`)),
+    h('table', { class: 'hc-tbl' }, h('tbody', {}, ...rows)),
+    h('div', { class: 'hc-foot' }, [inf.cli ? `Claude Code ${inf.cli}` : null, inf.entrypoint].filter(Boolean).join(' · ')),
+  ];
+}
+const fmtUsd4 = (n) => n >= 0.1 ? `$${n.toFixed(2)}` : n >= 0.001 ? `$${n.toFixed(3)}` : '<$0.001';
 
 // ------------------------------------------------------------ markdown
 export function markdown(src) {
@@ -421,6 +484,7 @@ export function renderDetails(ev, detail, ctx) {
     body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
   } else if (ev.kind === 'prompt') {
     body.append(section('Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
+    if (ev.attachments?.length) body.append(section('Attachments', {}, renderPromptAttachments(ev)));
   } else if (ev.kind === 'tool') {
     const path = t.input.file_path || t.input.notebook_path || null;
     switch (t.name) {
@@ -490,6 +554,18 @@ export function renderDetails(ev, detail, ctx) {
   root.append(rawPane);
   highlightIn(root);
   return root;
+}
+
+const attLabel = (a) => a.kind === 'image' ? `image (${a.mediaType || '?'})` : a.name;
+function renderPromptAttachments(ev) {
+  const wrap = h('div', { class: 'prompt-att' });
+  for (const a of ev.attachments) {
+    if (a.kind === 'image') {
+      const src = `/api/sessions/${encodeURIComponent(ev.sessionId)}/events/${encodeURIComponent(ev.id)}/image/${a.index}`;
+      wrap.append(h('a', { href: src, target: '_blank' }, h('img', { src, alt: a.mediaType || 'image', title: `${a.mediaType} · ${fmtTokens(a.bytes)} b64 chars` })));
+    } else wrap.append(h('span', { class: 'chip', title: a.kind === 'pdf' ? 'PDF document' : 'inlined as text' }, svgUse('i-clip', 10), ` ${a.name}`));
+  }
+  return wrap;
 }
 
 function renderImages(ev, ctx) {
