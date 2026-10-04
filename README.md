@@ -23,6 +23,9 @@ stored in a cookie so the page can be reloaded without it. The token itself
 is kept in `~/.agent-deck/token`, so the cookie keeps working across
 restarts. Node 20+, no dependencies, no build step.
 
+Optional: `npm run setup-voices` adds natural voices for Read aloud,
+generated on this machine (see [Better voices](#better-voices)).
+
 ### Install as an app
 
 The deck is an installable web app. With it open, use Chrome/Edge's
@@ -60,7 +63,7 @@ Flags and environment:
 | `DECK_CLAUDE_BIN` | `claude` | CLI used for model calls |
 | `DECK_AGENT_BIN` | `claude` | CLI used for deck-launched sessions |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | unset | Microsoft neural voices for Read aloud (or set them in its settings) |
-| `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash |
+| `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash, Kokoro voices |
 
 The Brief and Ask call `claude -p` with no tools, no MCP servers and no
 session persistence, using whatever login the CLI already has. If that login
@@ -76,6 +79,69 @@ runs the whole deck on the fakes with a throwaway `CLAUDE_CONFIG_DIR`, so
 you can try launching without a login or touching `~/.claude`. Its prompt
 words steer it: "permission" asks to run a command, "slow" works for a
 minute, "crash" exits with an error.
+
+### Better voices
+
+Read aloud speaks with the browser's voices out of the box. Three ways to
+better ones, all free. In Edge, Microsoft's natural voices come with the
+browser and none of this is needed.
+
+#### Kokoro voices (recommended)
+
+[Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) is a small open model
+(82M, Apache-2.0) whose voices come close to Microsoft's neural ones. The
+deck's server generates them on this machine: no account, and the text never
+leaves it.
+
+```bash
+npm run setup-voices
+```
+
+That installs `kokoro-js` and the model (about 730 MB together) into
+`~/.agent-deck/kokoro`, not the repo, so agent-deck itself keeps no
+dependencies. It ends by generating a test sentence and, on macOS, printing
+the Premium voice steps below. The running deck picks the voices up without a
+restart: reopen Read aloud settings and they head the Voice list (Heart is
+the default). `npm run setup-voices -- --uninstall` removes them.
+
+The model loads on first use (under a second once downloaded, about 1 GB of
+memory) and unloads after 5 idle minutes. On Apple Silicon it generates
+speech about 5× faster than it plays, a sentence ahead of the one being read.
+
+#### Mac Premium voices
+
+Apple's Premium voices are a free download and need no setup in the deck:
+
+1. System Settings → Accessibility → Spoken Content.
+2. Next to **System voice**, open the menu → **Manage Voices…**
+3. Under **English**, download a Premium voice, e.g. **Zoe (Premium)** or
+   **Ava (Premium)** (each a few hundred MB). Enhanced voices are smaller
+   and a step below.
+4. Quit and reopen the browser. The voices appear under Local. When no
+   voice is chosen, the deck picks Kokoro first, then Premium or Enhanced.
+
+They are clearly better than the default voices, though below Kokoro.
+
+#### Microsoft voices (Azure Speech key)
+
+Microsoft's neural voices, through Azure AI Speech. The free tier (F0)
+covers 0.5M characters a month, but signing up for Azure asks for a card.
+
+1. Sign in to the [Azure portal](https://portal.azure.com) (a free
+   [Azure account](https://azure.microsoft.com/free/) works).
+2. [Create a Speech resource](https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices):
+   pick a subscription, a resource group (make one), a region near you, any
+   name, and pricing tier **Free F0**. Review + create.
+3. Open the resource, then **Keys and Endpoint**. Copy **KEY 1** and the
+   **Location/Region** (e.g. `eastus`).
+4. In the deck, open Read aloud settings (the speaker) → **Add Microsoft
+   voices (Azure)**, paste both and Save. Or set `AZURE_SPEECH_KEY` and
+   `AZURE_SPEECH_REGION` before starting the server.
+
+The deck checks the key before keeping it, stores it in
+`~/.agent-deck/tts.json` (0600) and never sends it back to the page. The ☁
+voices then appear under Voice. More in Microsoft's
+[Speech service docs](https://learn.microsoft.com/azure/ai-services/speech-service/overview).
 
 ## What you get
 
@@ -242,9 +308,10 @@ minute, "crash" exits with an error.
 - **Read aloud.** The speaker next to the model picker opens its settings:
   - **Narrate:** off, the selected session, or all sessions.
   - **Include subagents.**
-  - **Voice:** Local, or ☁ Online. Online voices are Microsoft's natural
+  - **Voice:** Kokoro, Local, or ☁ Online. Kokoro voices are generated on
+    this machine once installed; online voices are Microsoft's natural
     voices: in Edge they come with the browser; elsewhere add an Azure Speech
-    key.
+    key. See [Better voices](#better-voices).
   - **Speed.**
   - **Read:** which events to narrate (Said by default; also Needs you,
     Errors, Finished, Brief updated).
@@ -307,6 +374,7 @@ lib/gitinfo.mjs       status / diff / log
 lib/shell.mjs         pilot shell runner
 lib/agent.mjs         deck-launched sessions (stream-json control)
 lib/tts.mjs           Read aloud: Azure neural voices + audio cache
+lib/kokoro.mjs        Read aloud: Kokoro voices generated on this machine
 public/narration.js   Read aloud player: voices, queue, pane, highlights
 public/speech.js      Read aloud queue + text rules (pure, tested)
 public/               index.html, app.js, events.js, styles.css, vendor/
