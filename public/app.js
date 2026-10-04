@@ -1361,14 +1361,14 @@ function renderQueue() {
     // The bolt cuts in: interrupt the turn and send this prompt next.
     const queues = !idle || q.length > 0 || d.held;
     compose.disabled = false;
-    compose.placeholder = queues ? 'Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends now' : 'Prompt · ⌘↩ to send';
+    compose.placeholder = queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
     sendBtn.disabled = false;
     sendBtn.classList.toggle('queues', queues);
     sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
     sendBtn.setAttribute('aria-label', queues ? 'Queue prompt' : 'Send');
     nowBtn.hidden = idle && !q.length && !d.held;
     nowBtn.disabled = !!d.interrupting;
-    nowBtn.title = d.interrupting ? 'Stopping…' : 'Send now: stop the current turn and send this prompt (⇧⌘↩)';
+    nowBtn.title = d.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
     // Stop: only while Claude is working. Ends the turn and holds the queue.
     stopBtn.hidden = idle;
     stopBtn.disabled = !!d.interrupting;
@@ -1462,7 +1462,8 @@ async function sendPrompt(now = false) {
   const id = state.selected;
   if (composeFiles.busy()) { toast('Still reading the attachments…'); return; }
   const attachments = composeFiles.payload();
-  if (!text.trim() && !attachments.length) { $('compose').focus(); return; }
+  // Send now with an empty box still sends: it flushes the queue.
+  if (!text.trim() && !attachments.length && !(now && deckOf(id)?.queue?.length)) { $('compose').focus(); return; }
   $('send').disabled = true; $('send-now').disabled = true;
   try {
     await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined });
