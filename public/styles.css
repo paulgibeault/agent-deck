@@ -827,3 +827,11 @@ select.field { font-family: var(--sans); padding-right: 6px; }
 .bell-f { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 11.5px; }
 .linkish { border: 0; padding: 0; background: none; color: var(--info); font-size: 11.5px; cursor: pointer; }
 .linkish:hover { text-decoration: underline; }
+
+/* No prompt box: why (a subagent, or a session running elsewhere) */
+.ro-why { display: none; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.queue-panel.readonly .ro-why:not(:empty) { display: flex; }
+.ro-why svg { flex: none; }
+/* Ending the process is rarely needed: present, but quiet. */
+.ib.subtle { opacity: .45; }
+.ib.subtle:hover, .ib.subtle:focus-visible { opacity: 1; }
