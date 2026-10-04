@@ -338,3 +338,33 @@ export function classify(ev) {
     default: return { fam: 'muted', icon: 'i-code', label: ev.subtype || 'Raw record', text: ev.text };
   }
 }
+
+// ------------------------------------------------------------ filters
+/**
+ * The Events filter: a multi-select of glyph categories that together cover
+ * every event. Errors add any failed event, whatever its category.
+ */
+export const FILTER_ALL = { icon: 'i-filter', fam: 'muted', label: 'All events' };
+export const FILTERS = [
+  { k: 'messages', icon: 'i-said',   fam: 'said',  label: 'Conversation' },
+  { k: 'thinking', icon: 'i-think',  fam: 'muted', label: 'Thinking' },
+  { k: 'git',      icon: 'i-branch', fam: 'git',   label: 'Git & GitHub' },
+  { k: 'run',      icon: 'i-play',   fam: 'bash',  label: 'Commands: tests, builds, scripts' },
+  { k: 'edit',     icon: 'i-pencil', fam: 'edit',  label: 'File changes' },
+  { k: 'read',     icon: 'i-search', fam: 'read',  label: 'Reading & searching' },
+  { k: 'agent',    icon: 'i-agent',  fam: 'agent', label: 'Subagents, skills & plans' },
+  { k: 'web',      icon: 'i-globe',  fam: 'web',   label: 'Web & MCP' },
+  { k: 'other',    icon: 'i-info',   fam: 'muted', label: 'Notes & system' },
+  { k: 'errors',   icon: 'i-alert',  fam: 'err',   label: 'Errors' },
+];
+const GROUP = { git: 'git', bash: 'run', stop: 'run', shell: 'run', edit: 'edit', read: 'read', agent: 'agent', web: 'web', said: 'messages', you: 'messages' };
+/** The filter category an event belongs to (never 'errors'; that one is cross-cutting). */
+export function filterCat(ev) {
+  switch (ev.kind) {
+    case 'text': case 'prompt': return 'messages';
+    case 'thinking': return 'thinking';
+    case 'tool': return GROUP[classify(ev).fam] || 'other';
+    case 'system': return ev.subtype === 'task' ? 'agent' : 'other';
+    default: return 'other';
+  }
+}

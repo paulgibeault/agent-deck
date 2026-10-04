@@ -2,6 +2,7 @@
 import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
+import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
@@ -37,7 +38,7 @@ const state = {
   picked: false,              // the user picked an event to look at (scrolling back up does not resume live)
   cursor: null,               // selected event id
   rows: [], offsets: [], total: 0,
-  filter: '', kind: 'all', showThinking: prefs.showThinking !== false,
+  filter: '', kinds: initKinds(),
   treeFilter: '',
   subsOpen: new Set(), subsAll: new Set(),
   files: null, changes: null,
@@ -1836,19 +1837,15 @@ function scheduleRows(jump = false) {
   requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
+// A Bash command's category depends only on its input, so it's safe to keep.
+const catOf = (ev) => ev._cat || (ev._cat = filterCat(ev));
 function evMatches(ev, q) {
   if (!q) return true;
   const hay = (ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary} ${JSON.stringify(ev.tool.input).slice(0, 2000)}` : `${ev.kind} ${ev.text || ''} ${ev.subtype || ''}`) + ' ' + tagFor(ev).label;
   return hay.toLowerCase().includes(q);
 }
 function keepKind(ev) {
-  if (!state.showThinking && ev.kind === 'thinking') return false;
-  switch (state.kind) {
-    case 'tools': return ev.kind === 'tool' || ev.kind === 'prompt';
-    case 'messages': return ev.kind === 'text' || ev.kind === 'prompt';
-    case 'errors': return isErr(ev);
-    default: return true;
-  }
+  return allKinds() || state.kinds.has(catOf(ev)) || (state.kinds.has('errors') && isErr(ev));
 }
 /**
  * Turn numbering and per-turn totals, chronological. Also marks each finished
@@ -1906,12 +1903,17 @@ function buildRows() {
   const q = state.filter.toLowerCase();
   const s = state.byId.get(state.selected);
   const turns = turnInfo(c.events, phaseOf(s) === 'working');
+  // Under a kind filter a prompt stays as context only for turns with a match
+  // (rows run newest first, so a turn's events arrive before its prompt).
+  const narrowed = !allKinds() && !state.kinds.has('messages');
+  let hits = 0;
   const push = (ev, depth, turn = null) => {
     if (turns.hidden.has(ev.id)) return;
-    if (ev.kind === 'turn_end' && state.kind !== 'all' && state.kind !== 'tools') return;
+    if (ev.kind === 'turn_end' && !allKinds()) return;
+    if (ev.kind === 'prompt' && narrowed) { if (!hits) return; hits = 0; rows.push({ ev, depth, turn }); return; }
     if (ev.kind !== 'prompt' && ev.kind !== 'turn_end' && !keepKind(ev)) return;
-    if (ev.kind === 'prompt' && state.kind === 'errors') return;
     if (!evMatches(ev, q)) return;
+    hits++;
     rows.push({ ev, depth, turn });
   };
   // Newest first. Inline subagent events sit directly under their Agent row.
@@ -1928,8 +1930,16 @@ function buildRows() {
   for (let i = 0; i < rows.length; i++) { offsets[i] = y; y += rowHeight(rows[i].ev); }
   state.rows = rows; state.offsets = offsets; state.total = y;
   $('events-count').textContent = rows.length;
-  const errs = c.events.reduce((n, ev) => n + (isErr(ev) ? 1 : 0), 0);
-  $('err-count').textContent = errs || '';
+  const counts = { errors: 0 };
+  for (const ev of c.events) {
+    if (turns.hidden.has(ev.id) || ev.kind === 'turn_end') continue;
+    if (isErr(ev)) counts.errors++;
+    const k = catOf(ev); counts[k] = (counts[k] || 0) + 1;
+  }
+  state.kindCounts = counts;
+  $('err-count').textContent = counts.errors || '';
+  $('err-count').title = counts.errors ? `${counts.errors} error${counts.errors > 1 ? 's' : ''}` : '';
+  if ($('kind-pop').matches(':popover-open')) renderKindPop();
 }
 const vlist = $('vlist'), vspacer = $('vspacer'), vrows = $('vrows');
 function rowIndexAt(y) {
@@ -1942,7 +1952,7 @@ function renderRows(jump = false) {
   vspacer.style.height = `${state.total + 12}px`;
   if (jump || state.live) vlist.scrollTop = 0; // newest rows live at the top
   if (!n) {
-    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || state.kind !== 'all' ? 'No events match.' : 'No events yet.') : 'Loading…'));
+    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || !allKinds() ? 'No events match.' : 'No events yet.') : 'Loading…'));
     return;
   }
   const first = rowIndexAt(Math.max(0, vlist.scrollTop - 200));
@@ -1996,17 +2006,73 @@ function setLive(on, quiet = false) {
   if (on && !quiet) { vlist.scrollTop = 0; followLive(); renderRows(); }
 }
 function pickEvent() { state.picked = true; setLive(false); }
-function setKind(k) {
-  state.kind = k;
-  for (const b of $('kind-seg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.k === k));
-  setTab('events');
+// The kind filter: a glyph button opening a multi-select of glyphs (names in
+// tooltips, counts beside them). From "all", picking a glyph shows just that
+// kind; after that each pick adds or removes one. Empty means all again.
+function initKinds() {
+  const ks = FILTERS.map(f => f.k);
+  const saved = Array.isArray(prefs.evKinds) ? prefs.evKinds.filter(k => ks.includes(k)) : null;
+  return new Set(saved?.length ? saved : prefs.showThinking === false ? ks.filter(k => k !== 'thinking') : ks);
+}
+const allKinds = () => FILTERS.every(f => state.kinds.has(f.k));
+const kindsLabel = () => allKinds() ? FILTER_ALL.label : FILTERS.filter(f => state.kinds.has(f.k)).map(f => f.label).join(', ');
+function setKinds(ks) {
+  state.kinds = new Set(ks.length ? ks : FILTERS.map(f => f.k));
+  prefs.evKinds = allKinds() ? null : [...state.kinds]; savePrefs();
+  paintKind();
+  if ($('kind-pop').matches(':popover-open')) renderKindPop();
   scheduleRows(true);
 }
+function pickKind(k) {
+  if (k === 'all') return setKinds([]);
+  if (allKinds()) return setKinds([k]);
+  const ks = new Set(state.kinds); ks.has(k) ? ks.delete(k) : ks.add(k);
+  setKinds([...ks]);
+}
+const glyph = (f) => h('span', { class: `tic f-${f.fam}` }, svgUse(f.icon, 15));
+function paintKind() {
+  const on = FILTERS.filter(f => state.kinds.has(f.k));
+  const all = allKinds();
+  $('kind-ico').replaceChildren(...(all ? [glyph(FILTER_ALL)] : on.slice(0, 3).map(glyph)), !all && on.length > 3 ? h('span', { class: 'kb-more' }, `+${on.length - 3}`) : null);
+  const btn = $('kind-btn'); btn.classList.toggle('on', !all);
+  btn.title = `Showing: ${kindsLabel()}`; btn.setAttribute('aria-label', btn.title);
+}
+function renderKindPop() {
+  const n = state.kindCounts || {};
+  const all = allKinds();
+  const item = (f, k, checked, count) => h('button', {
+    type: 'button', role: 'menuitemcheckbox', class: `kp-item${k === 'all' ? ' kp-all' : ''}`, 'aria-checked': String(checked), dataset: { k },
+    title: f.label, 'aria-label': `${f.label}${count ? ', ' + count : ''}`,
+  }, glyph(f), h('span', { class: 'kp-n' }, count ? fmtTokens(count) : ''));
+  const total = FILTERS.reduce((t, f) => t + (f.k === 'errors' ? 0 : n[f.k] || 0), 0);
+  $('kind-pop').classList.toggle('some', !all);
+  $('kind-pop').replaceChildren(item(FILTER_ALL, 'all', all, total), h('span', { class: 'kp-sep', role: 'separator' }),
+    ...FILTERS.filter(f => n[f.k] || state.kinds.has(f.k) && !all).map(f => item(f, f.k, !all && state.kinds.has(f.k), n[f.k])));
+  return $('kind-pop');
+}
+$('kind-pop').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const r = $('kind-btn').getBoundingClientRect();
+  const pop = renderKindPop();
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.left = `${Math.max(8, r.left + r.width / 2 - pop.offsetWidth / 2)}px`;
+  pop.querySelector('.kp-item')?.focus();
+});
+$('kind-pop').addEventListener('click', (e) => {
+  const b = e.target.closest('.kp-item'); if (!b) return;
+  pickKind(b.dataset.k);
+  $('kind-pop').querySelector(`[data-k="${b.dataset.k}"]`)?.focus();
+});
+$('kind-pop').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = [...$('kind-pop').querySelectorAll('.kp-item')];
+  const i = items.indexOf(document.activeElement);
+  items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+});
+paintKind();
 $('follow').onclick = () => setLive(true);
 $('ev-filter').oninput = (e) => { state.filter = e.target.value; scheduleRows(); };
-$('kind-seg').onclick = (e) => { const b = e.target.closest('button'); if (b) setKind(b.dataset.k); };
-$('show-thinking').setAttribute('aria-pressed', String(state.showThinking));
-$('show-thinking').onclick = () => { state.showThinking = !state.showThinking; prefs.showThinking = state.showThinking; savePrefs(); $('show-thinking').setAttribute('aria-pressed', String(state.showThinking)); scheduleRows(); };
 
 function scrollToRow(i) {
   const top = state.offsets[i]; const hgt = rowHeight(state.rows[i].ev);
@@ -2029,7 +2095,7 @@ function moveCursor(delta) {
 function jumpToSeq(seq) {
   const c = state.cache.get(state.selected); if (!c) return;
   const ev = c.events.find(e => e.seq === seq); if (!ev) { toast('That event is not loaded'); return; }
-  if (state.kind !== 'all' || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKind('all'); buildRows(); }
+  if (!allKinds() || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKinds([]); buildRows(); }
   setTab('events'); pickEvent();
   const i = state.rows.findIndex(r => r.ev.id === ev.id);
   state.cursor = ev.id;
@@ -2243,7 +2309,7 @@ function askList(key, btn) {
   switch (key) {
     case 'events': {
       const lines = state.rows.slice(0, 400).map(({ ev }) => `${fmtTime(ev.ts)} ${tagFor(ev).label} ${ev.kind === 'tool' ? ev.tool.summary + (ev.tool.isError ? ' [error]' : '') : oneLine(ev.text || '', 200)}`);
-      spec = { kind: 'text', label: `Events (${state.kind}${state.filter ? `, filter "${state.filter}"` : ''})`, text: lines.join('\n'), what: 'these events' }; ring = { type: 'sel', sel: '#vlist' }; break;
+      spec = { kind: 'text', label: `Events (${kindsLabel()}${state.filter ? `, filter "${state.filter}"` : ''})`, text: lines.join('\n'), what: 'these events' }; ring = { type: 'sel', sel: '#vlist' }; break;
     }
     case 'files': {
       const cwd = state.byId.get(state.selected)?.cwd;
