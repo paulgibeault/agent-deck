@@ -84,6 +84,14 @@
   <symbol id="i-proc" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M1.5 8.5h3l1.8-4.5 3 8 1.9-5 1 1.5h2.3"/></symbol>
   <symbol id="i-stage" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M8 5.5v5M5.5 8h5"/></g></symbol>
   <symbol id="i-filter" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5h11L9.25 8.5v4L6.75 13.5v-5z"/></symbol>
+  <!-- Files: kinds of file. -->
+  <symbol id="i-folder-open" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2 12.5v-8h4l1.5 1.5H13v1.5M2 12.5l2-5h11l-2 5z"/></symbol>
+  <symbol id="i-md" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M4 10V6l1.75 2L7.5 6v4M11 6v4M9.5 8.5 11 10l1.5-1.5"/></g></symbol>
+  <symbol id="i-braces" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6 2.5c-1.5 0-2 .7-2 2v1.5c0 1-.6 1.6-1.5 2 .9.4 1.5 1 1.5 2v1.5c0 1.3.5 2 2 2M10 2.5c1.5 0 2 .7 2 2v1.5c0 1 .6 1.6 1.5 2-.9.4-1.5 1-1.5 2v1.5c0 1.3-.5 2-2 2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.3"/><path d="M8 1.75v2M8 12.25v2M1.75 8h2M12.25 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></g></symbol>
+  <symbol id="i-table" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.75" width="12" height="10.5" rx="1.5"/><path d="M2 6.5h12M2 10h12M6.5 2.75v10.5"/></g></symbol>
+  <symbol id="i-collapse" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M4.5 3 8 6.5 11.5 3M4.5 13 8 9.5l3.5 3.5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.8.8M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.8-.8"/></symbol>
   <symbol id="i-logo" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--logo-bg)" stroke="var(--ok)"/><path d="M6 7h8M6 10h5M6 13h7" stroke="var(--ok)" stroke-width="1.6" stroke-linecap="round"/></symbol>
 </svg>
 
@@ -180,10 +188,16 @@
       </section>
 
       <section id="tab-files" class="tab">
-        <div class="toolbar"><span class="muted">Files this session read or wrote</span><span class="spacer"></span>
+        <div class="toolbar">
+          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/></svg><span class="sr">Find a file</span><input id="files-find" type="search" placeholder="Find a file" spellcheck="false" autocomplete="off"></label>
+          <button id="files-touched" type="button" class="ib tg" aria-pressed="false" aria-label="Only files this session read or wrote" title="Only files this session read or wrote"><svg width="15" height="15"><use href="#i-eye"/></svg></button>
+          <button id="files-ignored" type="button" class="ib tg" aria-pressed="false" aria-label="Show git-ignored files" title="Show git-ignored files"><svg width="15" height="15"><use href="#i-gitlook"/></svg></button>
+          <button id="files-collapse" type="button" class="ib" aria-label="Collapse all folders" title="Collapse all folders"><svg width="15" height="15"><use href="#i-collapse"/></svg></button>
+          <button id="files-refresh" type="button" class="ib" aria-label="Refresh" title="Refresh"><svg width="14" height="14"><use href="#i-refresh"/></svg></button>
           <button type="button" class="ask-ico lg" data-ask-list="files" aria-label="Ask about these files" title="Ask about these files"><svg width="13" height="13"><use href="#i-star"/></svg></button>
-          <button id="files-refresh" class="icon-btn" aria-label="Refresh files"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></div>
-        <div id="files" class="table-wrap"></div>
+        </div>
+        <nav id="files-crumbs" class="crumbs" aria-label="Folder path"></nav>
+        <div id="files" class="ftree" tabindex="0" aria-label="Files"></div>
       </section>
 
       <section id="tab-changes" class="tab">

@@ -208,6 +208,17 @@ minute, "crash" exits with an error.
   thinking, each family, errors; from All a pick isolates one kind), Live. Keys:
   ↓/↑ move, `Enter` details, `a` ask, `l` live / pause, `/` filter,
   `1`–`4` tabs, `Esc` overview, `?` help.
+- **Files.** A tree of the session's folder, loaded a level at a time and
+  git-aware: ignored entries hidden (or shown dim), status marks on files
+  and rolled up to folders, and a dot on each file this session read (blue)
+  or wrote (amber). Find-as-you-type across every file, a breadcrumb, and a
+  "touched only" view of just what the session read or wrote. Keys: ↑/↓
+  move (and preview), →/← open/close or go to parent, `Enter`, `e` editor.
+  Picking a file renders it in Details: images on a checkerboard (click for
+  actual size), SVG, PDF, audio/video, markdown rendered with its images and
+  relative links working, JSON formatted, `.env` values masked, CSV as a
+  table, code and config highlighted. A folder shows its mix of files and
+  its README.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +
   stdout/stderr for Bash; decoded images; subagent card for Agent; JSON for

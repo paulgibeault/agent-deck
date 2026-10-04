@@ -221,11 +221,27 @@ export function inferenceCard(ev) {
 const fmtUsd4 = (n) => n >= 0.1 ? `$${n.toFixed(2)}` : n >= 0.001 ? `$${n.toFixed(3)}` : '<$0.001';
 
 // ------------------------------------------------------------ markdown
-export function markdown(src) {
+/**
+ * `opts.img(src)` maps an image path to a URL; `opts.link(href)` maps a
+ * relative link to an absolute path (rendered as data-abs) or null. Without
+ * them images stay remote-only and relative links stay text.
+ */
+export function markdown(src, opts = {}) {
   const lines = String(src ?? '').replace(/\r\n?/g, '\n').split('\n');
   const out = []; let i = 0;
+  const unesc = (s) => s.replace(/&amp;/g, '&');
   const inline = (s) => esc(s)
     .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, alt, u) => {
+      const url = /^(https?:|data:image\/)/.test(unesc(u)) ? unesc(u) : opts.img ? opts.img(unesc(u)) : null;
+      return url ? `<img src="${esc(url)}" alt="${alt}" loading="lazy">` : alt;
+    })
+    .replace(/\[([^\]]+)\]\((?!https?:)([^)\s]+)\)/g, (m, t, u) => {
+      const abs = opts.link ? opts.link(unesc(u)) : null;
+      return abs ? `<a href="#" data-abs="${esc(abs)}" title="${esc(unesc(u))}">${t}</a>` : t;
+    })
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+    .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
@@ -245,7 +261,7 @@ export function markdown(src) {
     if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push('<hr>'); i++; continue; }
     if (/^\s*>/.test(l)) {
       const buf = []; while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
-      out.push(`<blockquote>${markdown(buf.join('\n'))}</blockquote>`); continue;
+      out.push(`<blockquote>${markdown(buf.join('\n'), opts)}</blockquote>`); continue;
     }
     if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '')) {
       const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
@@ -262,14 +278,16 @@ export function markdown(src) {
         if (!m) { if (items.length && /^\s{2,}\S/.test(lines[i])) { items[items.length - 1] += ' ' + lines[i].trim(); i++; continue; } break; }
         items.push(m[3]); i++;
       }
-      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map(t => `<li>${inline(t)}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
+      const li = (t) => { const tm = /^\[([ xX])\]\s+(.*)$/.exec(t); return tm ? `<li class="task"><input type="checkbox" disabled${tm[1] !== ' ' ? ' checked' : ''}> ${inline(tm[2])}</li>` : `<li>${inline(t)}</li>`; };
+      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map(li).join('')}</${ordered ? 'ol' : 'ul'}>`);
       continue;
     }
     if (!l.trim()) { i++; continue; }
     const buf = [];
     while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,6}\s|>|[-*+]\s|\d+[.)]\s|\|)/.test(lines[i])) buf.push(lines[i++]);
     if (!buf.length) { buf.push(lines[i++]); }
-    out.push(`<p>${inline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
+    // Files wrap prose at a column (soft breaks); chat text means its newlines.
+    out.push(`<p>${opts.soft ? inline(buf.join(' ')) : inline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
   }
   return out.join('\n');
 }
@@ -568,21 +586,6 @@ function renderImages(ev, ctx) {
     wrap.append(h('a', { href: src, target: '_blank' }, h('img', { src, alt: im.mediaType, title: `${im.mediaType} · ${fmtTokens(im.bytes)} b64 chars` })));
   }
   return wrap;
-}
-
-/** Details content for a file from the Files tab. */
-export function renderFileDetails(file, ctx, highlightLine = null) {
-  const root = h('div', { class: 'details' });
-  const name = relPath(file.path, ctx.cwd);
-  root.append(headerFor({ tag: h('span', { class: 'tag f-read' }, 'File'), title: name, nav: false,
-    actions: [file.error ? null : editorBtn(file.path, highlightLine || 1, ctx.api)],
-    meta: [file.size != null ? `${fmtTokens(file.size)} bytes` : null, file.truncated ? 'truncated' : null] }));
-  const body = h('div', { class: 'dbody' });
-  body.append(section('Contents', { actions: [copyBtn(file.content ?? '')], ask: file.content ? { kind: 'text', label: `File ${name}`, fromSection: true, what: 'this file' } : null },
-    file.binary ? h('div', { class: 'note' }, 'binary file') : file.error ? h('div', { class: 'note err' }, file.error) : codeBlock(file.content ?? '', langFor(file.path))));
-  root.append(body);
-  highlightIn(root);
-  return root;
 }
 
 /** Details content for a git diff from the Changes tab. */
