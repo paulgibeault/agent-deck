@@ -3,7 +3,7 @@ import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtToken
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
-import { createFilesView, renderFileView, renderDirView } from './files.js';
+import { createFilesView, renderFileView } from './files.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
@@ -2372,12 +2372,11 @@ function setTab(name) {
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab-b'); if (b) setTab(b.dataset.tab); });
 
 // ------------------------------------------------------------ files tab
-// A tree of the session's folder (files.js); picking a file or folder shows it
-// in the details pane. The session's own reads/writes mark the tree.
+// A tree of the session's folder (files.js); folders open and close in place,
+// picking a file shows it in the details pane. The session's own reads/writes mark the tree.
 const files = createFilesView({
   list: $('files'), crumbs: $('files-crumbs'), find: $('files-find'), api,
   onOpen: ({ rel, abs, entry }) => openFile(abs, null, { rel, git: entry?.git, size: entry?.size, mtime: entry?.mtime }),
-  onOpenDir: (d) => openDir(d),
   openEditor: (p, line) => api.openEditor(p, line),
   onCount: (n) => { $('files-count').textContent = n || ''; },
 });
@@ -2408,20 +2407,6 @@ async function openFile(path, line = null, info = {}) {
 function openPathFromLink(p) {
   if (files.root && p.startsWith(files.root + '/')) { setTab('files'); files.reveal(p.slice(files.root.length + 1), { open: true }); }
   else openFile(p);
-}
-async function openDir({ rel, abs, entries, load }) {
-  pickEvent(); const key = `dir:${abs}`; state.detailsKey = key; syncDetailsPane();
-  const es = entries && !entries.error ? entries : await load();
-  if (state.detailsKey !== key) return;
-  const rm = (es || []).find(e => !e.dir && /^readme(\.(md|markdown|txt))?$/i.test(e.name));
-  let readme = null;
-  if (rm) {
-    const f = await api.get(`/api/file?path=${encodeURIComponent(abs + '/' + rm.name)}`).catch(() => null);
-    if (f && !f.binary) readme = { ...f, abs: abs + '/' + rm.name };
-  }
-  if (state.detailsKey !== key) return;
-  $('details-body').replaceChildren(renderDirView({ rel, abs }, es, readme, { ...detailCtx(), root: files.root, openPath: (p) => openPathFromLink(p) }));
-  $('details-body').scrollTop = 0;
 }
 function paintFilesToggles() {
   $('files-touched').setAttribute('aria-pressed', String(files.mode === 'touched'));

@@ -76,10 +76,10 @@ function marked(text, hits, offset) {
 
 // ------------------------------------------------------------ the tree
 /**
- * The Files tab. `api` fetches; `onOpen({ rel, abs, entry })` shows a file,
- * `onOpenDir({ rel, abs, entries })` a folder; `openEditor(abs, line)`.
+ * The Files tab. `api` fetches; `onOpen({ rel, abs, entry })` shows a file;
+ * folders only open and close in place. `openEditor(abs, line)`.
  */
-export function createFilesView({ list, crumbs, find, api, onOpen, onOpenDir, openEditor, onCount }) {
+export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, onCount }) {
   const st = {
     sid: null, root: null, cwd: null, expanded: new Set(), cache: new Map(), loading: new Map(),
     selected: null, rows: [], all: null, query: '', mode: 'tree', ignored: false,
@@ -252,8 +252,7 @@ export function createFilesView({ list, crumbs, find, api, onOpen, onOpenDir, op
   function openSelected() {
     const r = st.rows.find(x => x.e?.path === st.selected); if (!r) return;
     const e = r.e;
-    if (e.dir) onOpenDir?.({ rel: e.path, abs: abs(e.path), entries: st.cache.get(e.path) || null, load: () => loadDir(e.path) });
-    else onOpen?.({ rel: e.outside ? null : e.path, abs: e.outside ? e.path : abs(e.path), entry: e });
+    if (!e.dir) onOpen?.({ rel: e.outside ? null : e.path, abs: e.outside ? e.path : abs(e.path), entry: e });
   }
   async function toggle(path, force) {
     const open = force ?? !st.expanded.has(path);
@@ -291,9 +290,9 @@ export function createFilesView({ list, crumbs, find, api, onOpen, onOpenDir, op
     if (res) return reveal(st.results[+res.dataset.r].p, { open: true });
     const row = ev.target.closest('.frow[data-i]'); if (!row) return;
     const r = st.rows[+row.dataset.i];
-    if (r.e.dir && (ev.target.closest('.twist') || st.selected === r.e.path)) toggle(r.e.path);
-    else if (r.e.dir && !st.expanded.has(r.e.path)) toggle(r.e.path, true);
-    select(r.e.path, { open: true, now: true });
+    // A folder click opens or closes it in place; a file shows in Details.
+    if (r.e.dir) { if (st.mode === 'tree') toggle(r.e.path); select(r.e.path); }
+    else select(r.e.path, { open: true, now: true });
   });
   list.addEventListener('dblclick', (ev) => {
     const row = ev.target.closest('.frow[data-i]'); if (!row) return;
@@ -458,28 +457,5 @@ export function renderFileView(file, ctx) {
   body.append(section('Contents', { ask: file.content ? { kind: 'text', label: `File ${file.rel || basename(file.abs)}`, text: text.slice(0, 200_000), what: 'this file' } : null }, pane));
   root.append(body);
   show('main');
-  return root;
-}
-
-/** The Details pane for a folder: what's in it, and its README if it has one. */
-export function renderDirView(dir, entries, readme, ctx) {
-  const root = h('div', { class: 'details fileview-d' });
-  const es = entries || [];
-  const dirs = es.filter(e => e.dir).length, files = es.length - dirs;
-  const bytes = es.reduce((n, e) => n + (e.size || 0), 0);
-  const changed = es.filter(e => e.git).length;
-  const tag = h('span', { class: 'tic lab' }, glyph('dir', true), h('span', {}, 'Folder'));
-  root.append(headerFor({ tag, title: dir.rel || basename(dir.abs), nav: false,
-    meta: [`${dirs} folder${dirs === 1 ? '' : 's'}`, `${files} file${files === 1 ? '' : 's'}`, bytes ? fmtTokens(bytes) + 'B here' : null, changed ? `${changed} with changes` : null],
-    actions: [ib('i-link', 'Copy path', () => navigator.clipboard?.writeText(dir.abs), { size: 14 }), ctx.api ? ib('i-open', 'Open in editor', () => ctx.api.openEditor(dir.abs, 1), { size: 14 }) : null] }));
-  const body = h('div', { class: 'dbody' });
-  // A glance at the mix of kinds in here.
-  const mix = new Map();
-  for (const e of es) if (!e.dir) { const kd = fileKind(e.name); mix.set(kd, (mix.get(kd) || 0) + 1); }
-  if (mix.size) body.append(h('div', { class: 'fv-mix' }, ...[...mix].sort((a, b) => b[1] - a[1]).map(([kd, n]) => h('span', { class: 'chip', title: KINDS[kd].label }, glyph(kd), ` ${n}`))));
-  if (readme) body.append(section(basename(readme.abs), {}, markdownView(readme.content || '', readme, ctx)));
-  else if (!es.length) body.append(h('div', { class: 'note' }, 'Empty folder.'));
-  root.append(body);
-  highlightIn(root);
   return root;
 }

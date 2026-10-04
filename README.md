@@ -217,8 +217,7 @@ minute, "crash" exits with an error.
   Picking a file renders it in Details: images on a checkerboard (click for
   actual size), SVG, PDF, audio/video, markdown rendered with its images and
   relative links working, JSON formatted, `.env` values masked, CSV as a
-  table, code and config highlighted. A folder shows its mix of files and
-  its README.
+  table, code and config highlighted. Folders open and close in place.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +
   stdout/stderr for Bash; decoded images; subagent card for Agent; JSON for
