@@ -22,6 +22,7 @@ import { ask } from './lib/ask.mjs';
 import { DeckState } from './lib/deckstate.mjs';
 import { AgentManager } from './lib/agent.mjs';
 import { AzureTts } from './lib/tts.mjs';
+import { KokoroTts } from './lib/kokoro.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -72,6 +73,7 @@ const agents = new AgentManager({
   },
 });
 const tts = new AzureTts({ dir: deck.dir });
+const kokoro = new KokoroTts({ dir: deck.dir });
 index.external = () => agents.registryEntries();
 index.deckState = (id) => agents.publicState(id);
 
@@ -231,10 +233,11 @@ async function route(req, res, url) {
     catch (e) { return send(res, 502, { error: e.message }); }
   }
 
-  // Read aloud: Azure neural voices (lib/tts.mjs). The page speaks local voices itself.
+  // Read aloud: Azure neural voices (lib/tts.mjs) and Kokoro voices made on
+  // this machine (lib/kokoro.mjs). The page speaks browser voices itself.
   if (p === '/api/tts/voices' && req.method === 'GET') {
-    try { return send(res, 200, { ...tts.status(), voices: await tts.voices() }); }
-    catch (e) { return send(res, 200, { ...tts.status(), voices: [], error: e.message }); }
+    try { return send(res, 200, { ...tts.status(), voices: await tts.voices(), kokoro: kokoro.status() }); }
+    catch (e) { return send(res, 200, { ...tts.status(), voices: [], error: e.message, kokoro: kokoro.status() }); }
   }
   if (p === '/api/tts/config' && req.method === 'POST') {
     const { key, region } = await readBody(req);
@@ -242,8 +245,12 @@ async function route(req, res, url) {
     catch (e) { return send(res, 400, { error: e.message }); }
   }
   if (p === '/api/tts' && req.method === 'POST') {
-    const { text, voice, rate } = await readBody(req);
-    try { return send(res, 200, await tts.synth({ text, voice, rate }), { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' }); }
+    const { text, voice = '', rate } = await readBody(req);
+    const local = String(voice).startsWith('kokoro:');
+    try {
+      const audio = local ? await kokoro.synth({ text, voice: voice.slice(7), rate }) : await tts.synth({ text, voice: String(voice).replace(/^azure:/, ''), rate });
+      return send(res, 200, audio, { 'Content-Type': local ? 'audio/wav' : 'audio/mpeg', 'Cache-Control': 'private, max-age=3600' });
+    }
     catch (e) { return send(res, e.code || 502, { error: e.message }); }
   }
 
