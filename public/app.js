@@ -1630,6 +1630,13 @@ const sendError = (e, files) => e instanceof TypeError && files
 
 // Files go with the prompt: the paperclip, a paste or a drop on the panel.
 guardWindowDrops();
+// The prompt box is never shorter than the buttons beside it (send, send now,
+// stop); it grows with them, and the pilot can still drag it taller.
+{
+  const actions = document.querySelector('#prompt .compose-actions');
+  const fit = () => { if (actions.offsetHeight) $('compose').style.minHeight = `${Math.max(44, actions.offsetHeight)}px`; };
+  new ResizeObserver(fit).observe(actions);
+}
 const composeFiles = attachable({ input: $('compose'), tray: $('compose-files'), clip: $('compose-clip'), file: $('compose-file'), drop: $('prompt'), toast });
 
 async function sendPrompt(now = false) {
