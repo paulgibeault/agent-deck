@@ -437,6 +437,7 @@ function renderTree() {
   }
   const total = snap.active.length + snap.recent.length + snap.closed.length;
   renderMini(lists);
+  paintSpeaking();
   $('tree-foot').textContent = `${total} sessions · ${snap.active.length} live`;
   // A background tab still shows how many sessions need you.
   const needs = snap.active.filter(needsYou).length;
@@ -506,10 +507,10 @@ function readEvent(ev) {
 }
 async function jumpToNarration() {
   const it = narration.current();
-  if (!it?.sessionId) return;
+  if (!it?.sessionId) { narration.reveal(); return; }
   await select(it.sessionId);
   const ev = it.eventId && findEvent(it.sessionId, it.eventId);
-  if (ev) jumpToSeq(ev.seq);
+  if (ev) jumpToSeq(ev.seq); else narration.reveal();
 }
 function renderReadAloud(st) {
   const btn = $('ra-btn');
@@ -535,10 +536,42 @@ function renderReadAloud(st) {
   bn.textContent = st.unheard > 99 ? '99+' : String(st.unheard || '');
   $('bell').title = $('bell').ariaLabel = `Narration history${st.unheard ? ` · ${st.unheard} unheard` : ''} (b)`;
   if ($('bell-pop').matches(':popover-open')) renderBellList();
+  const sp = st.item?.sessionId ? { sid: st.item.sessionId, eid: st.item.eventId || null, playing } : null;
+  const spKey = sp ? `${sp.sid}:${sp.eid}:${sp.playing}` : '';
+  if (spKey !== speaking.key) { speaking.key = spKey; speaking.now = sp; renderMini(railLists()); paintSpeaking(); }
   const now = $('ra-now');
   now.hidden = !st.item;
   now.classList.toggle('playing', playing);
   if (st.item) { now.querySelector('.ra-now-t').textContent = `${playing ? 'Reading' : 'Paused'}: ${st.item.title}`; now.title = 'Open this in the session (j)'; }
+}
+// What is being read: a speaker on its event row and on its session in the
+// rail, pulsing while the voice is going. The rail marks what can be seen: the
+// session's row, else the row it hides under (a subagent's parent, a
+// sub-task's starter), else the header of the collapsed bucket holding it.
+const speaking = { key: '', now: null };
+/** The speaking session, then whoever it sits under in the rail. */
+function speakingChain() {
+  const ids = [];
+  for (let id = speaking.now?.sid; id && !ids.includes(id); ) {
+    ids.push(id);
+    const s = state.byId.get(id);
+    id = s?.kind === 'agent' ? s.parentId : s?.spawnedBy;
+  }
+  return ids;
+}
+function paintSpeaking() {
+  document.querySelectorAll('.spk').forEach(x => x.remove());
+  const sp = speaking.now;
+  if (!sp) return;
+  const icon = () => h('span', { class: `spk${sp.playing ? ' on' : ''}`, 'aria-hidden': 'true' }, svgUse('i-speaker', 12));
+  const chain = speakingChain();
+  const find = (sel) => chain.map(id => document.querySelector(sel(CSS.escape(id)))).find(Boolean);
+  const row = find(id => `#tree .sess[data-id="${id}"]`);
+  const bucket = row?.closest('.bucket');
+  if (bucket?.classList.contains('collapsed')) bucket.querySelector('.bk-t').append(icon());
+  else row?.querySelector('.r').prepend(icon());
+  find(id => `#mini .mchip[data-id="${id}"]`)?.append(icon());
+  if (sp.eid) $('vrows').querySelector(`.row[data-sid="${CSS.escape(sp.sid)}"][data-id="${CSS.escape(sp.eid)}"] .tg`)?.after(icon());
 }
 $('ra-play').onclick = () => narration.toggle();
 $('ra-next').onclick = () => narration.skip();
@@ -803,6 +836,9 @@ function renderMini(lists) {
   const recent = lists.recent.filter(s => s.alive).slice(0, 8);
   if (out.length && recent.length) out.push(h('hr'));
   out.push(...recent.map(miniChip));
+  // A session being read aloud gets a chip while it speaks, listed or not.
+  const top = speaking.now && state.byId.get(speakingChain().at(-1));
+  if (top && !lists.active.includes(top) && !recent.includes(top)) out.push(...(out.length ? [h('hr')] : []), miniChip(top));
   $('mini').replaceChildren(...out);
 }
 // Clicking opens the session and puts the card away until the pointer leaves that chip.
@@ -914,6 +950,24 @@ function hoverCards(root, sel) {
 // A card stays while the pointer is on it, so its links (a pid) can be clicked.
 $('hovercard').addEventListener('mouseenter', () => clearTimeout(card.timer));
 $('hovercard').addEventListener('mouseleave', () => hideCard());
+// Backstop for the leave handlers above, which a fast flick, a row rebuilt
+// under the pointer, or a pending show firing after the pointer has gone can
+// all slip past. Any move off the card and off everything that opens one puts
+// it away: a pending show at once, an open card after the usual grace.
+const HOVER_KEEP = '#hovercard, [aria-describedby="hovercard"], #tree .sess, #mini .mchip';
+let strayTimer = null;
+document.addEventListener('pointermove', (e) => {
+  if (e.target.closest?.(HOVER_KEEP)) { clearTimeout(strayTimer); strayTimer = null; return; }
+  if (card.anchor?.matches(':focus-visible')) return;
+  if ($('hovercard').hidden) { clearTimeout(card.timer); return; }
+  strayTimer ??= setTimeout(() => { strayTimer = null; hideCard(true); }, $('hovercard').querySelector('.pidlink') ? 350 : 150);
+}, { passive: true });
+// Off the window, out of the app, or the page scrolled out from under the anchor: gone now.
+const dropCard = () => { clearTimeout(strayTimer); strayTimer = null; hideCard(true); };
+document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) dropCard(); });
+window.addEventListener('blur', dropCard);
+document.addEventListener('visibilitychange', () => { if (document.hidden) dropCard(); });
+document.addEventListener('wheel', (e) => { if (!e.target.closest?.('#hovercard')) dropCard(); }, { passive: true });
 hoverCards($('mini'), '.mchip');
 hoverCards($('tree'), '.sess');
 $('mini').addEventListener('keydown', (e) => {
@@ -928,7 +982,7 @@ $('mini').addEventListener('keydown', (e) => {
 $('tree').addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t) return;
-  if (t.classList.contains('bk-t')) { t.closest('.bucket').classList.toggle('collapsed'); return; }
+  if (t.classList.contains('bk-t')) { t.closest('.bucket').classList.toggle('collapsed'); paintSpeaking(); return; }
   if (t.dataset.askList) { askList(t.dataset.askList, t); return; }
   if (t.dataset.subs) {
     const id = t.dataset.subs; const open = t.getAttribute('aria-expanded') === 'true';
@@ -2041,6 +2095,7 @@ function renderRows(jump = false) {
   }
   vrows.replaceChildren(frag);
   applyRing();
+  paintSpeaking();
 }
 vlist.addEventListener('scroll', () => {
   const atTop = vlist.scrollTop <= 30;
@@ -2080,7 +2135,8 @@ function setLive(on, quiet = false) {
   for (const b of [$('follow'), $('details-pin')]) { b.setAttribute('aria-pressed', String(on)); b.title = on ? 'Live: showing the newest event (l to pause)' : 'Go live: jump to the newest event (l)'; }
   if (on && !quiet) { vlist.scrollTop = 0; followLive(); renderRows(); }
 }
-function pickEvent() { state.picked = true; setLive(false); }
+/** The pilot picked something for the details pane: the narration overlay steps aside, reading goes on. */
+function pickEvent() { state.picked = true; setLive(false); narration.dismiss(); }
 // The kind filter: a glyph button opening a multi-select of glyphs (names in
 // tooltips, counts beside them). From "all", picking a glyph shows just that
 // kind; after that each pick adds or removes one. Empty means all again.
@@ -2259,7 +2315,7 @@ async function showEventDetails(ev, refreshOnly = false) {
   const key = `${ev.sessionId}:${ev.id}`;
   const body = $('details-body');
   const needsFull = ev.kind === 'tool' && (ev.tool.result?.truncated || ev.tool.result?.images?.length || !ev.tool.pending);
-  if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; syncDetailsPane(); body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx(ev))); body.scrollTop = 0; applyRing(); }
+  if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; syncDetailsPane(); body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx(ev))); body.scrollTop = 0; applyRing(); narration.mirror(key, body.querySelector('.md'), body); }
   if (!needsFull && !refreshOnly) return;
   try {
     const d = await api.get(`/api/sessions/${sid(ev.sessionId)}/events/${sid(ev.id)}`);
