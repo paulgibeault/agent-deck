@@ -1937,8 +1937,18 @@ function buildRows() {
     const k = catOf(ev); counts[k] = (counts[k] || 0) + 1;
   }
   state.kindCounts = counts;
-  $('err-count').textContent = counts.errors || '';
-  $('err-count').title = counts.errors ? `${counts.errors} error${counts.errors > 1 ? 's' : ''}` : '';
+  // The red mark is a "just failed" signal, not a tally: it shows only while
+  // the newest event is an error (thinking and turn ends don't count), and
+  // goes away on its own once the agent moves on. Errors stay in the filter.
+  let fresh = 0;
+  for (let i = c.events.length - 1; i >= 0; i--) {
+    const ev = c.events[i];
+    if (turns.hidden.has(ev.id) || ev.kind === 'turn_end' || ev.kind === 'thinking') continue;
+    if (!isErr(ev)) break;
+    fresh++;
+  }
+  $('err-count').textContent = fresh || '';
+  $('err-count').title = fresh ? (fresh > 1 ? `The last ${fresh} events failed` : 'The last event failed') : '';
   if ($('kind-pop').matches(':popover-open')) renderKindPop();
 }
 const vlist = $('vlist'), vspacer = $('vspacer'), vrows = $('vrows');
