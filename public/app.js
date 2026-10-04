@@ -1,8 +1,9 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
-import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
+import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
+import { createFilesView, renderFileView, renderDirView } from './files.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
@@ -2324,7 +2325,8 @@ function askList(key, btn) {
     }
     case 'files': {
       const cwd = state.byId.get(state.selected)?.cwd;
-      spec = { kind: 'text', label: 'Files touched', text: (state.files || []).map(f => `${relPath(f.path, cwd)} reads=${f.reads} writes=${f.writes} last=${f.lastTs || ''}`).join('\n'), what: 'these files' }; ring = { type: 'sel', sel: '#files' }; break;
+      const shown = [...$('files').querySelectorAll('.frow[aria-level]')].map(r => '  '.repeat(+r.getAttribute('aria-level') - 1) + r.querySelector('.fname').textContent + (r.classList.contains('dir') ? '/' : ''));
+      spec = { kind: 'text', label: `Files in ${basename(cwd || '')}`, text: `Folder tree as shown:\n${shown.join('\n')}\n\nFiles this session touched:\n${(state.files || []).map(f => `${relPath(f.path, cwd)} reads=${f.reads} writes=${f.writes} last=${f.lastTs || ''}`).join('\n')}`, what: 'these files' }; ring = { type: 'sel', sel: '#files' }; break;
     }
     case 'changes': {
       const c = state.changes;
@@ -2370,41 +2372,65 @@ function setTab(name) {
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab-b'); if (b) setTab(b.dataset.tab); });
 
 // ------------------------------------------------------------ files tab
+// A tree of the session's folder (files.js); picking a file or folder shows it
+// in the details pane. The session's own reads/writes mark the tree.
+const files = createFilesView({
+  list: $('files'), crumbs: $('files-crumbs'), find: $('files-find'), api,
+  onOpen: ({ rel, abs, entry }) => openFile(abs, null, { rel, git: entry?.git, size: entry?.size, mtime: entry?.mtime }),
+  onOpenDir: (d) => openDir(d),
+  openEditor: (p, line) => api.openEditor(p, line),
+  onCount: (n) => { $('files-count').textContent = n || ''; },
+});
 async function loadFiles() {
   const id = state.selected; if (!id) return;
+  const cwd = state.byId.get(id)?.cwd || state.cache.get(id)?.meta?.cwd || null;
   try {
-    const r = await api.get(`/api/sessions/${sid(id)}/files`);
+    const r = await api.get(`/api/sessions/${sid(id)}/files`).catch(() => ({ files: [] }));
     if (state.selected !== id) return;
-    state.files = r.files; renderFiles();
+    state.files = r.files;
+    await files.show(id, cwd, r.files || []);
+    paintFilesToggles();
   } catch (e) { $('files').replaceChildren(h('div', { class: 'pad muted' }, e.message)); }
 }
-function renderFiles() {
-  const files = state.files || []; const cwd = state.byId.get(state.selected)?.cwd;
-  $('files-count').textContent = files.length || '';
-  const now = Date.now();
-  const table = h('table', { class: 'list' }, h('thead', {}, h('tr', {}, h('th', {}, 'File'), h('th', {}, 'Reads'), h('th', {}, 'Writes'), h('th', {}, 'Last'), h('th', {}, ''))));
-  const tb = h('tbody');
-  for (const f of files) {
-    const age = f.lastTs ? now - Date.parse(f.lastTs) : null;
-    const hot = age != null && age < 10 * 60_000;
-    tb.append(h('tr', { onclick: (e) => { tb.querySelectorAll('tr').forEach(r => r.classList.remove('selected')); e.currentTarget.classList.add('selected'); openFile(f.path); } },
-      h('td', { title: f.path }, hot ? h('span', { class: 'hot', title: 'touched in the last 10 minutes' }, '● ') : null, relPath(f.path, cwd)),
-      h('td', { class: 'num' }, f.reads || ''), h('td', { class: 'num' }, f.writes || ''),
-      h('td', { class: 'num', title: f.lastTs || '' }, f.lastTs ? ago(age) + ' ago' : ''),
-      h('td', {}, ib('i-open', 'Open in editor', (e) => { e.stopPropagation(); api.openEditor(f.path, 1); }, { size: 13 }))));
-  }
-  table.append(tb);
-  $('files').replaceChildren(files.length ? table : h('div', { class: 'pad muted' }, 'No files touched yet.'));
-}
-async function openFile(path, line = null) {
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico|pdf|mp3|wav|ogg|m4a|flac|mp4|webm|mov)$/i;
+async function openFile(path, line = null, info = {}) {
   pickEvent(); state.detailsKey = `file:${path}`; syncDetailsPane();
+  const ctx = { ...detailCtx(), root: files.root, openPath: (p) => openPathFromLink(p) };
+  const rel = info.rel ?? (files.root && path.startsWith(files.root + '/') ? path.slice(files.root.length + 1) : null);
   try {
-    const f = await api.get(`/api/file?path=${encodeURIComponent(path)}`);
+    const f = await api.get(`/api/file?path=${encodeURIComponent(path)}${MEDIA_EXT.test(path) ? '&meta=1' : ''}`);
     if (state.detailsKey !== `file:${path}`) return;
-    $('details-body').replaceChildren(renderFileDetails(f, detailCtx(), line));
-  } catch (e) { $('details-body').replaceChildren(renderFileDetails({ path, error: e.message }, detailCtx())); }
+    $('details-body').replaceChildren(renderFileView({ ...info, ...f, abs: path, rel }, ctx));
+  } catch (e) { $('details-body').replaceChildren(renderFileView({ abs: path, rel, error: e.message }, ctx)); }
+  $('details-body').scrollTop = 0;
 }
-$('files-refresh').onclick = loadFiles;
+/** A relative link in rendered markdown: reveal it in the tree when it's inside. */
+function openPathFromLink(p) {
+  if (files.root && p.startsWith(files.root + '/')) { setTab('files'); files.reveal(p.slice(files.root.length + 1), { open: true }); }
+  else openFile(p);
+}
+async function openDir({ rel, abs, entries, load }) {
+  pickEvent(); const key = `dir:${abs}`; state.detailsKey = key; syncDetailsPane();
+  const es = entries && !entries.error ? entries : await load();
+  if (state.detailsKey !== key) return;
+  const rm = (es || []).find(e => !e.dir && /^readme(\.(md|markdown|txt))?$/i.test(e.name));
+  let readme = null;
+  if (rm) {
+    const f = await api.get(`/api/file?path=${encodeURIComponent(abs + '/' + rm.name)}`).catch(() => null);
+    if (f && !f.binary) readme = { ...f, abs: abs + '/' + rm.name };
+  }
+  if (state.detailsKey !== key) return;
+  $('details-body').replaceChildren(renderDirView({ rel, abs }, es, readme, { ...detailCtx(), root: files.root, openPath: (p) => openPathFromLink(p) }));
+  $('details-body').scrollTop = 0;
+}
+function paintFilesToggles() {
+  $('files-touched').setAttribute('aria-pressed', String(files.mode === 'touched'));
+  $('files-ignored').setAttribute('aria-pressed', String(files.ignored));
+}
+$('files-touched').onclick = () => { files.setMode(files.mode === 'touched' ? 'tree' : 'touched'); paintFilesToggles(); };
+$('files-ignored').onclick = () => { files.setIgnored(!files.ignored); paintFilesToggles(); };
+$('files-collapse').onclick = () => files.collapseAll();
+$('files-refresh').onclick = () => { loadFiles(); files.refresh(); };
 
 // ------------------------------------------------------------ changes tab
 async function loadChanges() {

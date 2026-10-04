@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { SessionIndex } from './lib/sessions.mjs';
 import { ShellRunner } from './lib/shell.mjs';
 import * as gitinfo from './lib/gitinfo.mjs';
+import * as filetree from './lib/filetree.mjs';
 import { Narrator } from './lib/narrator.mjs';
 import { UsageTracker, readUsageReport, parseUsageReport } from './lib/usage.mjs';
 import { Attention } from './lib/attention.mjs';
@@ -323,12 +324,33 @@ async function route(req, res, url) {
     if (!cwd || !file) return send(res, 400, { error: 'cwd and file required' });
     return send(res, 200, await gitinfo.fileDiff(cwd, file));
   }
+  if ((m = /^\/api\/sessions\/([^/]+)\/tree$/.exec(p))) {
+    const cwd = index.cwdOf(decodeURIComponent(m[1]));
+    if (!cwd) return send(res, 404, { error: 'no folder for this session' });
+    const r = q.get('all') ? await filetree.allFiles(cwd) : await filetree.listDir(cwd, q.get('dir') || '');
+    return send(res, r.error ? 400 : 200, r);
+  }
+  if (p === '/api/file/raw' && req.method === 'GET') {
+    // Images, PDFs, audio/video for the Files view; streamed with a real type.
+    const file = q.get('path');
+    const type = file && filetree.RAW_TYPES[path.extname(file).toLowerCase()];
+    if (!type) return send(res, 400, { error: 'not a viewable media file' });
+    try {
+      const st = fs.statSync(file);
+      if (!st.isFile()) return send(res, 400, { error: 'not a file' });
+      // SVG can carry script: sandbox it so it can only ever render.
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+        ...(type === 'image/svg+xml' ? { 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" } : {}) });
+      return fs.createReadStream(file).pipe(res);
+    } catch (e) { return send(res, 404, { error: e.message }); }
+  }
   if (p === '/api/file' && req.method === 'GET') {
     const file = q.get('path');
     if (!file) return send(res, 400, { error: 'path required' });
     try {
       const st = fs.statSync(file);
       if (!st.isFile()) return send(res, 400, { error: 'not a file' });
+      if (q.get('meta')) return send(res, 200, { path: file, size: st.size, mtime: st.mtimeMs });
       const LIMIT = 2 * 1024 * 1024;
       const fd = fs.openSync(file, 'r');
       const buf = Buffer.allocUnsafe(Math.min(st.size, LIMIT));

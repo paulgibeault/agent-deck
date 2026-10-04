@@ -905,3 +905,84 @@ table.bg-tbl .bg-act { white-space: normal; max-width: 260px; font-size: 11.5px;
 .bg-events li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
 .bg-sum { margin: 0; }
 .bg-stop { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }
+
+/* ---------------------------------------------------------------- Files tab */
+.crumbs { display: flex; align-items: center; gap: 2px; padding: 6px 14px; border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; white-space: nowrap; font-size: 12px; }
+.crumb { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: var(--fg2); }
+.crumb:hover { background: var(--hover); color: var(--fg); }
+.crumb.root { font-weight: 600; color: var(--fg); }
+.crumb:last-child:not(.root) { color: var(--fg); font-weight: 500; }
+.csep { color: var(--muted); opacity: .6; padding: 0 1px; }
+.ftree { flex: 1; overflow: auto; padding: 4px 8px 16px; outline: none; }
+.frow { display: flex; align-items: center; gap: 6px; height: 26px; padding-right: 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; font-size: 12.5px; color: var(--fg); }
+.frow:hover { background: var(--hover); }
+.frow.sel { background: var(--sel); }
+.ftree:focus-visible .frow.sel { box-shadow: inset 0 0 0 1px var(--info); }
+/* Indent guides: one faint rule per level. */
+.frow .ind { flex: none; align-self: stretch; width: calc(var(--d, 0) * 16px); margin-left: 4px;
+  background-image: repeating-linear-gradient(to right, transparent 0 7px, var(--line) 7px 8px, transparent 8px 16px); }
+.frow:hover .ind, .frow.sel .ind { background-image: repeating-linear-gradient(to right, transparent 0 7px, var(--line2) 7px 8px, transparent 8px 16px); }
+.frow .twist { flex: none; width: 12px; display: inline-flex; justify-content: center; color: var(--muted); transition: transform .12s; }
+.frow[aria-expanded="true"] .twist { transform: rotate(90deg); }
+.frow .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.frow.dir .fname { font-weight: 500; }
+.frow .fsp { flex: 1; }
+.frow .fsz { font: 11px var(--mono); color: var(--muted); opacity: 0; font-variant-numeric: tabular-nums; }
+.frow:hover .fsz, .frow.sel .fsz { opacity: .8; }
+.frow.ign { opacity: .45; }
+.frow.note { color: var(--muted); font-size: 12px; cursor: default; }
+.frow.note:hover { background: none; }
+.frow.grp { margin-top: 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.flink { color: var(--muted); }
+/* What this session did to a file: blue read, amber wrote. */
+.ftouch { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--t-read); }
+.ftouch.w { background: var(--t-edit); }
+.ftouch.dimr { width: 5px; height: 5px; background: var(--muted); opacity: .6; }
+.fgit { flex: none; min-width: 10px; text-align: center; font: 600 10.5px var(--mono); }
+.fgit.g-M { color: var(--turn-fg); } .fgit.g-A, .fgit.g-U { color: var(--ok-fg); } .fgit.g-D { color: var(--err-fg); } .fgit.g-R { color: var(--info-fg); }
+.frow.res { padding-left: 8px; }
+.frow.res mark { background: none; color: var(--info-fg); font-weight: 600; }
+.frow.res .fdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); direction: rtl; text-align: left; }
+/* File-kind glyphs. */
+.fi { flex: none; display: inline-flex; color: var(--muted); }
+.fk-dir { color: var(--fg2); }
+.fk-code { color: var(--t-read); }
+.fk-doc { color: var(--t-web); }
+.fk-conf { color: var(--t-edit); }
+.fk-data { color: var(--t-bash); }
+.fk-media { color: var(--t-git); }
+.fk-pdf { color: var(--err-fg); }
+.fk-bin { color: var(--muted); }
+
+/* File details. */
+.seg.sm button { height: 22px; padding: 0 8px; font-size: 11.5px; }
+.fv-pane { min-width: 0; }
+.fv-img { display: flex; justify-content: center; padding: 16px; border-radius: 8px; overflow: auto; cursor: zoom-in;
+  background: repeating-conic-gradient(var(--bg2) 0 25%, var(--bg1) 0 50%) 0 0 / 16px 16px; border: 1px solid var(--line); }
+.fv-img img { display: block; image-rendering: auto; }
+.fv-img img.vec.fit { min-width: min(100%, 200px); }
+.fv-img img.fit { max-width: 100%; max-height: 70vh; object-fit: contain; }
+.fv-img:has(img:not(.fit)) { cursor: zoom-out; justify-content: flex-start; }
+.fv-pdf { width: 100%; height: 78vh; border: 1px solid var(--line); border-radius: 8px; background: var(--bg1); }
+.fv-media { width: 100%; max-height: 70vh; border-radius: 8px; }
+.fv-bin { display: flex; align-items: center; gap: 12px; padding: 18px; border: 1px dashed var(--line2); border-radius: 8px; }
+.fv-bin .fi svg { width: 28px; height: 28px; }
+.fv-table { overflow: auto; max-height: 75vh; border: 1px solid var(--line); border-radius: 8px; }
+.fv-table table { border-collapse: collapse; font: 12px var(--mono); width: max-content; min-width: 100%; }
+.fv-table th { position: sticky; top: 0; background: var(--bg2); text-align: left; font-weight: 600; }
+.fv-table th, .fv-table td { padding: 4px 10px; border-bottom: 1px solid var(--line); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-table tr:hover td { background: var(--hover); }
+.fv-table .n { color: var(--muted); text-align: right; font-size: 11px; }
+.fv-mix { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.fv-mix .chip { gap: 4px; }
+.md.fileview { font-size: 13.5px; line-height: 1.6; max-width: 820px; }
+.md.fileview h2 { font-size: 20px; margin: 18px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.md.fileview h3 { font-size: 16px; margin: 16px 0 6px; }
+.md.fileview h4, .md.fileview h5, .md.fileview h6, .md.fileview h7 { font-size: 14px; }
+.md.fileview img { max-width: 100%; border-radius: 6px; }
+.md.fileview a[data-abs] { color: var(--info-fg); text-decoration: underline dotted; }
+.md li.task { list-style: none; margin-left: -18px; }
+.md li.task input { margin: 0 6px 0 0; vertical-align: -1px; }
+.md del { color: var(--muted); }
+.md td code, .md th code { white-space: nowrap; overflow-wrap: normal; }
+.md.fileview p { margin: 8px 0; }
