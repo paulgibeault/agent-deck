@@ -624,6 +624,19 @@ table.sbs td.add { background: var(--add); }
 table.sbs td.del { background: var(--del); }
 table.sbs td.empty { background: var(--bg2); }
 table.sbs tr.hunk td { background: var(--bg2); color: var(--muted); padding: 2px 8px; }
+table.sbs td .lt { display: inline; }
+/* Unified diff: two gutters, a sign, the line. */
+table.udiff { border-collapse: collapse; width: 100%; font: 12px var(--mono); }
+table.udiff td { vertical-align: top; padding: 0 6px; white-space: pre-wrap; word-break: break-all; }
+table.udiff td.ln { width: 1%; min-width: 34px; text-align: right; color: var(--muted); user-select: none; white-space: nowrap; }
+table.udiff td.sg { width: 1%; padding: 0 4px; user-select: none; color: var(--muted); }
+table.udiff tr.add td { background: var(--add); } table.udiff tr.add td.sg { color: var(--addfg); }
+table.udiff tr.del td { background: var(--del); } table.udiff tr.del td.sg { color: var(--delfg); }
+table.udiff tr.hunk td, table.sbs tr.hunk td { background: var(--bg2); color: var(--muted); padding: 3px 10px; font: 11px var(--sans); letter-spacing: .02em; }
+/* The words that changed inside a changed line. */
+mark.wd { color: inherit; border-radius: 3px; padding: 0 1px; }
+td.add mark.wd, tr.add mark.wd { background: color-mix(in srgb, var(--ok) 34%, transparent); }
+td.del mark.wd, tr.del mark.wd { background: color-mix(in srgb, var(--err) 32%, transparent); }
 
 /* ---------------------------------------------------------------- ask composer */
 .ask { flex: none; display: flex; flex-direction: column; gap: 10px; margin: 0 12px 12px; padding: 12px; border-radius: 10px; background: var(--ask-bg); border: 1px solid var(--ask-line); max-height: 60%; min-height: 0; }
@@ -1037,3 +1050,35 @@ table.bg-tbl .bg-act { white-space: normal; max-width: 260px; font-size: 11.5px;
 .md-outline nav a { padding: 3px 8px; border-radius: 5px; color: var(--fg2); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .md-outline nav a:hover { background: var(--hover); color: var(--fg); }
 .md-outline nav a.lv1 { padding-left: 22px; } .md-outline nav a.lv2 { padding-left: 36px; font-size: 12px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- Changes by turn */
+.seg.icons button { display: inline-flex; align-items: center; padding: 0 8px; }
+#tab-changes .ct-list { display: none; }
+#tab-changes.by-turn .ct-list { display: block; flex: 1; overflow: auto; padding: 6px 8px 16px; outline: none; }
+#tab-changes.by-turn #changes, #tab-changes.by-turn #changes-head { display: none; }
+#tab-changes:not(.by-turn) #changes-collapse { display: none; }
+.ct-turn { display: flex; align-items: center; gap: 8px; height: 34px; margin-top: 6px; padding: 0 10px 0 6px; border-radius: 7px; cursor: pointer; background: color-mix(in srgb, var(--you) 7%, transparent); border: 1px solid color-mix(in srgb, var(--you) 20%, var(--line)); white-space: nowrap; }
+.ct-turn:hover { border-color: color-mix(in srgb, var(--you) 40%, var(--line)); }
+.ct-turn:first-child { margin-top: 0; }
+.ct-turn .twist { width: 12px; display: inline-flex; justify-content: center; color: var(--muted); transform: rotate(90deg); transition: transform .12s; }
+.ct-turn.shut .twist { transform: none; }
+.ct-n { font-weight: 600; font-size: 12.5px; flex: none; }
+.ct-p { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg2); font-size: 12.5px; }
+.ct-m { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+.ct-t { font: 11px var(--mono); opacity: .8; }
+.ct-file { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px 0 28px; border-radius: 6px; cursor: pointer; white-space: nowrap; font-size: 12.5px; outline: none; }
+.ct-file:hover, .ct-file:focus-visible { background: var(--hover); }
+.ct-file.sel { background: var(--sel); }
+.ct-file .fi { flex: none; display: inline-flex; }
+.ct-name { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ct-file.shell .ct-name { font-weight: 400; color: var(--fg2); font-style: italic; }
+.ct-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; direction: rtl; text-align: left; }
+.ct-new { font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--ok-fg); }
+.ct-x { font: 11px var(--mono); color: var(--muted); }
+.ct-del { font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--err-fg); }
+.ct-live { font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--ok-fg); }
+.dstat { display: inline-flex; gap: 6px; font: 11.5px var(--mono); font-variant-numeric: tabular-nums; }
+.dstat.sm { font-size: 11px; }
+.dbar { display: inline-flex; gap: 2px; }
+.dbar i { width: 7px; height: 7px; border-radius: 2px; background: var(--bg3); }
+.dbar i.a { background: var(--ok); } .dbar i.d { background: var(--err); }

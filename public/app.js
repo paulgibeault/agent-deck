@@ -4,6 +4,7 @@ import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtToken
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
 import { createFilesView, renderFileView } from './files.js';
+import { turnChanges, renderTurnList, renderTurnFileDiff } from './changes.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
@@ -1835,7 +1836,7 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 // A Bash command's category depends only on its input, so it's safe to keep.
@@ -2330,6 +2331,10 @@ function askList(key, btn) {
     }
     case 'changes': {
       const c = state.changes;
+      if (changesMode() === 'turns') {
+        spec = { kind: 'text', label: 'Changes by turn', text: ct.turns.map(t => `Turn ${t.n}: ${oneLine(t.prompt?.text || '', 120)} (+${t.add} -${t.del})\n${t.files.map(f => `  ${f.rel} +${f.add} -${f.del}${f.created ? ' (new)' : ''}${f.edits.length > 1 ? ` x${f.edits.length}` : ''}`).join('\n')}${t.shell.length ? `\n  + ${t.shell.length} edit(s) by shell command` : ''}`).join('\n') || '(no changes)', what: 'these changes' };
+        ring = { type: 'sel', sel: '#changes-turns' }; break;
+      }
       spec = { kind: 'text', label: 'Git changes', text: c?.repo ? `branch ${c.branch} ahead ${c.ahead ?? '?'} behind ${c.behind ?? '?'}\n${c.files.map(f => `${f.untracked ? '??' : (f.x + f.y).trim()} ${f.path} +${f.added ?? 0} -${f.deleted ?? 0}`).join('\n')}\nrecent commits:\n${c.commits.map(k => `${k.short} ${k.subject}`).join('\n')}` : 'not a git repository', what: 'these changes' };
       ring = { type: 'sel', sel: '#changes' }; break;
     }
@@ -2365,7 +2370,7 @@ function setTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === `tab-${name}`));
   if (name === 'events') renderRows();
   if (name === 'files' && state.selected) loadFiles();
-  if (name === 'changes' && state.selected) loadChanges();
+  if (name === 'changes' && state.selected) { loadChanges(); renderTurns(); }
   if (name === 'shell') $('sh-cmd').focus();
   if (name === 'bg') renderBackground();
 }
@@ -2460,7 +2465,77 @@ async function openDiff(file) {
     $('details-body').replaceChildren(renderDiffDetails(d, detailCtx()));
   } catch (e) { toast(e.message); }
 }
-$('changes-refresh').onclick = loadChanges;
+$('changes-refresh').onclick = () => { loadChanges(); refreshSnap(true); renderTurns(false); };
+
+// ---- by turn: what each turn changed, file by file (changes.js)
+const ct = { collapsed: new Set(), sid: null, selected: null, turns: [], snap: null, snapAt: 0, snapping: false };
+/** The deck's git snapshots for this session's turns (lib/turnsnap.mjs); throttled. */
+async function refreshSnap(force = false) {
+  const id = state.selected; if (!id || ct.snapping || (!force && ct.sid === id && Date.now() - ct.snapAt < 4000)) return;
+  ct.snapping = true;
+  try { const r = await api.get(`/api/sessions/${sid(id)}/turn-changes`); if (state.selected === id) { ct.snap = r; ct.snapAt = Date.now(); renderTurns(false); } }
+  catch { /* no folder / not a repo */ } finally { ct.snapping = false; }
+}
+const changesMode = () => prefs.changesMode || 'turns';
+function paintChangesMode() {
+  const m = changesMode();
+  $('tab-changes').classList.toggle('by-turn', m === 'turns');
+  for (const b of $('changes-mode').children) b.setAttribute('aria-pressed', String(b.dataset.m === m));
+}
+$('changes-mode').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  prefs.changesMode = b.dataset.m; savePrefs(); paintChangesMode();
+  if (b.dataset.m === 'turns') renderTurns(); else loadChanges();
+};
+paintChangesMode();
+function renderTurns(fetchSnap = true) {
+  if (changesMode() !== 'turns' || !state.selected) return;
+  const c = state.cache.get(state.selected); if (!c) return;
+  if (ct.sid !== state.selected) { ct.sid = state.selected; ct.collapsed = new Set(); ct.selected = null; ct.snap = null; ct.snapAt = 0; }
+  if (fetchSnap) refreshSnap();
+  const cwd = state.byId.get(state.selected)?.cwd || c.meta?.cwd || null;
+  ct.turns = turnChanges(c.events, cwd, ct.snap);
+  const root = $('changes-turns'); const top = root.scrollTop;
+  renderTurnList(root, ct.turns, {
+    selected: ct.selected, collapsed: ct.collapsed,
+    onToggle: (n) => { ct.collapsed.has(n) ? ct.collapsed.delete(n) : ct.collapsed.add(n); renderTurns(false); },
+    onFile: (t, f) => openTurnFile(t, f),
+    onShell: (ev) => { ct.selected = `ev:${ev.id}`; renderTurns(false); pickEvent(); showEventDetails(ev); },
+  });
+  root.scrollTop = top;
+}
+async function openTurnFile(turn, file) {
+  const id = state.selected; const key = `tdiff:${turn.n}:${file.path}`;
+  ct.selected = `${turn.n}:${file.path}`; renderTurns(false);
+  pickEvent(); state.detailsKey = key; syncDetailsPane();
+  const ctx0 = { ...detailCtx(), jump: (ev) => { setTab('events'); jumpToSeq(ev.seq); } };
+  const onMode = (m) => { prefs.diffMode = m; savePrefs(); };
+  if (file.git) {
+    const r = await api.get(`/api/sessions/${sid(id)}/turn-diff?turn=${encodeURIComponent(turn.prompt.id)}&file=${encodeURIComponent(file.repoPath)}`).catch((e) => ({ error: e.message }));
+    if (state.detailsKey !== key) return;
+    $('details-body').replaceChildren(r.error ? h('div', { class: 'pad muted' }, r.error) : renderTurnFileDiff({ turn, file, gitDiff: r.diff }, ctx0, prefs.diffMode || 'split', onMode));
+    $('details-body').scrollTop = 0;
+    return;
+  }
+  const edits = await Promise.all(file.edits.map(ev => api.get(`/api/sessions/${sid(id)}/events/${sid(ev.id)}`).then(detail => ({ ev, detail })).catch(() => ({ ev, detail: null }))));
+  if (state.detailsKey !== key) return;
+  const ctx = { ...detailCtx(), jump: (ev) => { setTab('events'); jumpToSeq(ev.seq); } };
+  $('details-body').replaceChildren(renderTurnFileDiff({ turn, file, edits }, ctx, prefs.diffMode || 'split', (m) => { prefs.diffMode = m; savePrefs(); }));
+  $('details-body').scrollTop = 0;
+}
+$('changes-collapse').onclick = () => {
+  const all = ct.turns.every(t => ct.collapsed.has(t.n));
+  ct.collapsed = all ? new Set() : new Set(ct.turns.map(t => t.n)); renderTurns(false);
+};
+$('changes-turns').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+  const rows = [...$('changes-turns').querySelectorAll('.ct-file, .ct-turn')];
+  let i = rows.findIndex(r => r.classList.contains('sel') || r === document.activeElement);
+  if (e.key === 'Enter') { rows[i]?.click(); e.preventDefault(); e.stopPropagation(); return; }
+  i = Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+  rows[i]?.focus(); if (rows[i]?.classList.contains('ct-file')) rows[i].click();
+  e.preventDefault(); e.stopPropagation();
+});
 setInterval(() => { if (state.tab === 'changes' && state.selected && document.visibilityState === 'visible') loadChanges(); }, 10_000);
 
 // ------------------------------------------------------------ shell tab

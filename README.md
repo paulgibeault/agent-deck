@@ -218,6 +218,16 @@ minute, "crash" exits with an error.
   actual size), SVG, PDF, audio/video, markdown rendered with its images and
   relative links working, JSON formatted, `.env` values masked, CSV as a
   table, code and config highlighted. Folders open and close in place.
+- **Changes.** By turn (default): every turn that changed files, newest
+  first, each file with its +/− and a small diffstat. At each turn start and
+  end seen live, the deck snapshots the working tree into a git tree object
+  through a private index (your index, branch and stash are untouched), so a
+  turn's changes are exactly what changed, whether by tools, shell scripts or
+  subagents. Turns from before the deck was watching fall back to the
+  Edit/Write tool calls, with file-editing commands listed without a diff.
+  Clicking a file opens a rich diff in Details: split or unified, syntax
+  highlighted, with the changed words marked. The other view is the working
+  tree vs HEAD, with recent commits.
 - **Details.** Markdown for assistant text; side-by-side diff for Edit;
   highlighted source for Read/Write (highlight.js vendored); command +
   stdout/stderr for Bash; decoded images; subagent card for Agent; JSON for
