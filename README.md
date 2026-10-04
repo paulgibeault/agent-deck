@@ -7,8 +7,9 @@ changed, and run your own commands next to them.
 Sessions started elsewhere (terminal, desktop app, IDE) are observe-only: the
 deck reads what Claude Code already writes under `~/.claude` and never
 touches them. Sessions you start from the deck (**New session**, or `n`) run
-under it, and you can send, queue, interrupt, end and resume them and answer
-their permission prompts. **Read aloud** narrates what sessions say as it
+under it, and you can send, queue and interrupt them and answer their
+permission prompts. Any session that is not running takes a prompt too:
+sending starts it again. **Read aloud** narrates what sessions say as it
 happens. See [PLAN.md](PLAN.md) for the full design.
 
 ## Run
@@ -92,8 +93,9 @@ minute, "crash" exits with an error.
   files, cost and model.
 - **Model picker.** The title bar picks the model new sessions start
   with (Default shows what your Claude settings use, e.g. `opus[1m]`).
-  The New session and Resume dialogs start on it; a different pick there
-  applies to that launch only.
+  The New session dialog starts on it, where a different pick applies to
+  that launch only. A session that is not running starts again on it when
+  you send it a prompt.
 - **Plan usage.** A small ring in the top bar shows how full your tightest
   plan window is (green, amber from 75% or when the pace would run out
   before the reset, red when limited). Hover for each window (5-hour,
@@ -152,8 +154,11 @@ minute, "crash" exits with an error.
   a permission mode (ask me, accept edits, auto, plan only). The deck runs
   `claude -p --input-format stream-json --output-format stream-json
   --permission-prompt-tool stdio`, and the session shows up like any other.
-  Any ended session (the deck's or not) can be continued
-  with the resume (▷) button, which runs `--resume <id>`.
+  There is no starting or stopping a session yourself: send a prompt to
+  any session that is not running (the deck's or not) and the deck resumes
+  it (`--resume <id>`) with that prompt, on the title bar's model and the
+  permission mode it last ran with. A deck process idle for 30 minutes ends
+  by itself; the next prompt starts it again.
 - **Status.** The line just above the prompt box says whose move it is: **CLAUDE**
   (thinking, writing, running a tool, waiting on subagents, with a clock) or
   **YOU** (your turn, Claude asked you a question, or a permission prompt).
@@ -171,9 +176,12 @@ minute, "crash" exits with an error.
   **Send now** (the bolt, ⇧⌘↩) stops the current turn and sends everything
   queued, plus whatever is typed, as one message (with nothing typed it just
   flushes the queue). **Stop** (the square, ⌘.) shows while Claude works:
-  it ends the turn and holds the queue. The power button ends the process
-  (sessions also end when the backend stops). For other sessions the panel
-  is a read-only mirror of the queue. **Attachments:** paste a file or
+  it ends the turn and holds the queue. A faint power button in the header
+  ends the process early if you want it gone. Prompts still queued when the
+  backend stops are kept, and wait for play (▷) when it comes back.
+  Subagents have no prompt box (they take instructions from their parent),
+  and a session running in a terminal or the desktop app can only be
+  watched; the panel says which, and mirrors that session's queue. **Attachments:** paste a file or
   screenshot into the prompt box, drop files on the panel, or use the
   paperclip in the box's corner (the New session dialog takes them too).
   Images go as images (big ones are scaled down to fit the API's 5 MB

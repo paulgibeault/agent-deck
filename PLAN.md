@@ -124,7 +124,16 @@ For **deck-launched** sessions (see §6): compose, **send**, **queue** (ordered,
 editable, drag to reorder, delete = prune), **interrupt** (stop current turn,
 keep queue), and per-item "send now / move to top".
 
-For **foreign** sessions (desktop app / terminal): queue shown read-only from
+**No start/stop for the pilot to manage.** Any top-level session that is not
+running takes a prompt: sending resumes it under the deck (`--resume <id>`)
+with that prompt, on the title bar's model and the permission mode it last
+ran with. A deck process idle for 30 minutes ends by itself; a faint power
+button ends it early. Prompts still queued when the backend stops are saved
+(`~/.agent-deck/agents.json`) and come back held until the pilot presses
+play. Subagents have no prompt box, and the panel says why (they take
+instructions from their parent).
+
+For **foreign** sessions that are still running (desktop app / terminal): queue shown read-only from
 `queue-operation` records; "copy prompt" and "open session" affordances;
 Send is disabled with a tooltip explaining why.
 

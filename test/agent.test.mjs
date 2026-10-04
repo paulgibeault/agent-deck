@@ -127,7 +127,57 @@ test('launch failure surfaces the CLI error', async (t) => {
   assert.equal(s.exit.code, 3);
   assert.match(s.exit.stderr, /crashed on purpose/);
   await assert.rejects(() => agents.launch({ cwd: path.join(cwd, 'nope'), prompt: 'x' }), /not a directory/);
-  assert.throws(() => agents.send(st.id, 'more'), /ended/);
+});
+
+test('sending to a session that is not running resumes it; queued prompts outlive the backend', async (t) => {
+  const store = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-store-')), 'agents.json');
+  const wakeable = (id) => id === 'sub-1' ? { error: 'subagents take their prompts from the parent session' } : { cwd };
+  const agents = new AgentManager({ bin: FAKE, store, wakeable });
+  t.after(() => agents.stopAll());
+  let st = await agents.launch({ cwd, prompt: 'hello', permissionMode: 'acceptEdits' });
+  const id = st.id;
+  await until(agents, id, x => x.status === 'idle');
+  agents.stop(id);
+  await until(agents, id, x => x.status === 'exited');
+
+  // A plain send starts it again, with the mode it last ran with and the model passed in.
+  const item = await agents.send(id, 'are you back?', undefined, { model: 'haiku' });
+  assert.equal(item.text, 'are you back?');
+  st = await until(agents, id, x => x.alive && x.status === 'idle');
+  assert.equal(st.resumed, true);
+  assert.equal(st.permissionMode, 'acceptEdits');
+  assert.equal(st.model, 'haiku');
+  await assert.rejects(async () => agents.send('sub-1', 'x'), /parent session/);
+
+  // Queue behind a slow turn, then the backend goes away: the queue is saved.
+  agents.send(id, 'slow one');
+  agents.send(id, 'queued a');
+  agents.send(id, 'queued b');
+  await until(agents, id, x => x.status === 'busy' && x.queue.length === 2);
+  agents.flush(); agents.stopAll();
+  await until(agents, id, x => x.status === 'exited');
+
+  // A new manager (the restarted backend) holds them until play.
+  const again = new AgentManager({ bin: FAKE, store, wakeable });
+  t.after(() => again.stopAll());
+  st = again.publicState(id);
+  assert.deepEqual(st.queue.map(x => x.text), ['queued a', 'queued b']);
+  assert.equal(st.held, true);
+  assert.equal(st.alive, false);
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(again.publicState(id).alive, false, 'nothing starts on its own');
+  // Play starts it with the first; the second follows when that turn ends.
+  await again.queueOp(id, { op: 'resume' });
+  st = await until(again, id, x => x.alive && x.status === 'idle' && !x.queue.length);
+  assert.equal(st.turns, 2);
+
+  // An idle process ends by itself; that is not an error.
+  const quick = new AgentManager({ bin: FAKE, wakeable, idleMs: 150 });
+  t.after(() => quick.stopAll());
+  const q = await quick.launch({ cwd, prompt: 'hi' });
+  st = await until(quick, q.id, x => x.status === 'exited');
+  assert.equal(st.endedIdle, true);
+  assert.equal(st.exit.code, 0);
 });
 
 test('missing binary rejects launch', async () => {

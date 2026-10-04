@@ -1099,8 +1099,7 @@ function renderHeader() {
   top.append(h('span', { class: 'spacer' }));
   // Where, which model, tokens and cost: one hover away rather than a line of figures under the brief.
   top.append(detailsBtn());
-  if (d?.alive) top.append(ib('i-power', 'End the claude process (you can resume it later)', stopSession));
-  else if (!isAgent && !s.alive) top.append(ib('i-play', 'Resume in the deck', () => openLaunch({ resumeId: id })));
+  if (d?.alive) top.append(ib('i-power', 'End the claude process now. It ends by itself after 30 minutes idle, and the next prompt starts it again.', stopSession, { cls: 'subtle' }));
   if (!isAgent) top.append(ib('i-copy', 'Copy resume command', (e) => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); flashDone(e.currentTarget); }));
   top.append(win);
 
@@ -1222,9 +1221,12 @@ function statusOf(s, b, phase) {
   if (deckOf(s.id)?.exit && phase === 'ended') {
     const x = deckOf(s.id).exit;
     const bad = x.code !== 0 && x.code !== null || (x.signal && x.signal !== 'SIGTERM');
-    return { sig: bad ? 'error' : 'ended', who: 'ended', head: bad ? `claude exited ${x.signal || `with code ${x.code}`}` : 'Ended from the deck', text: bad && x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
+    if (bad) return { sig: 'error', who: 'ended', head: `claude exited ${x.signal || `with code ${x.code}`}`, text: x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
   }
-  return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded' };
+  const last = g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded';
+  // A top-level session that is not running just waits for the next prompt, which starts it again.
+  if (phase === 'ended' && s.kind === 'session') return { sig, who: 'you', head: 'Your turn', text: last };
+  return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: last };
 }
 
 function renderNow(st) {
@@ -1414,46 +1416,62 @@ function renderQueue() {
   const s = state.byId.get(id);
   const d = s?.kind === 'session' ? deckOf(id) : null;
   const compose = $('compose'), sendBtn = $('send'), nowBtn = $('send-now'), stopBtn = $('stop');
-  // Only a deck session can take a prompt; for the rest the panel is one line.
-  $('prompt').classList.toggle('readonly', !d?.alive);
+  // Any session the deck can drive takes a prompt; one that is not running
+  // starts again when it is sent. Subagents and sessions running elsewhere
+  // get a line saying why there is no box.
+  const canSend = s?.kind === 'session' && (d?.alive || !s.alive);
+  $('prompt').classList.toggle('readonly', !canSend);
   $('prompt').hidden = !s;
-  if (d?.alive) {
-    const q = d.queue;
-    const idle = d.status === 'idle';
+  $('ro-why').replaceChildren(...(canSend || !s ? [] : roWhy(s)));
+  if (canSend) {
+    const q = d?.queue || [];
+    const running = !!d?.alive;
+    const idle = !running || d.status === 'idle';
     const rows = q.map((item, i) => h('li', { dataset: { qid: item.id } }, h('span', { class: 'muted' }, `${i + 1}.`),
       item.attachments?.length ? h('span', { class: 'q-att', title: item.attachments.map(a => a.name).join('\n') }, svgUse('i-clip', 11), String(item.attachments.length)) : null,
       h('span', { class: 'q editable', title: 'Click to edit', tabindex: '0', role: 'button', 'aria-label': `Edit queued prompt: ${oneLine(item.text, 80)}`, onclick: (e) => editQueued(item, e.currentTarget), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); editQueued(item, e.currentTarget); } } }, item.text.replace(/\s+/g, ' ')),
-      ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || null }),
+      ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || !running || null }),
       ib('i-up', 'Move up', () => queueOp('up', item.id), { size: 12, disabled: i === 0 || null }),
       ib('i-down', 'Move down', () => queueOp('down', item.id), { size: 12, disabled: i === q.length - 1 || null }),
       ib('i-x', 'Remove from the queue', () => queueOp('remove', item.id), { size: 12 })));
-    if (d.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, 'Queue held after interrupt. Nothing goes out until you resume or send.'), ib('i-play', 'Resume the queue', () => queueOp('resume'), { size: 13 })));
+    if (d?.held && q.length) rows.unshift(h('li', { class: 'held' }, h('span', { class: 'q' }, running ? 'Queue held after interrupt. Nothing goes out until you resume or send.' : 'Kept from before the backend restarted. Nothing goes out until you press play.'), ib('i-play', running ? 'Resume the queue' : 'Play: send these now', () => queueOp('resume'), { size: 13 })));
     // An open editor is left alone; the list catches up when it closes.
     if (!(state.qEdit && $('queue').contains(state.qEdit.el))) $('queue').replaceChildren(...rows);
     // One send button: it sends when Claude is idle and queues otherwise.
     // The bolt cuts in: interrupt the turn and send this prompt next.
-    const queues = !idle || q.length > 0 || d.held;
+    const starting = running && d.status === 'starting';
+    const queues = running && (!idle || q.length > 0 || d.held);
     compose.disabled = false;
-    compose.placeholder = queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
+    compose.placeholder = starting ? 'Starting… · ⌘↩ queues it' : queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
     sendBtn.disabled = false;
     sendBtn.classList.toggle('queues', queues);
     sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
     sendBtn.setAttribute('aria-label', queues ? 'Queue prompt' : 'Send');
-    nowBtn.hidden = idle && !q.length && !d.held;
-    nowBtn.disabled = !!d.interrupting;
-    nowBtn.title = d.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
+    nowBtn.hidden = idle && !q.length && !d?.held;
+    nowBtn.disabled = !!d?.interrupting;
+    nowBtn.title = d?.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
     // Stop: only while Claude is working. Ends the turn and holds the queue.
     stopBtn.hidden = idle;
-    stopBtn.disabled = !!d.interrupting;
-    stopBtn.title = d.interrupting ? 'Stopping…' : `Stop the current turn (⌘.)${q.length ? '; the queue is held until you resume or send' : ''}`;
+    stopBtn.disabled = !!d?.interrupting;
+    stopBtn.title = d?.interrupting ? 'Stopping…' : `Stop the current turn (⌘.)${q.length ? '; the queue is held until you resume or send' : ''}`;
     return;
   }
   const q = c?.meta?.queue || [];
   $('queue').replaceChildren(...q.map((item, i) => h('li', {}, h('span', { class: 'muted' }, `${i + 1}.`), h('span', { class: 'q', title: item.content }, item.content.replace(/\s+/g, ' ')),
     ib('i-copy', 'Copy', (e) => { navigator.clipboard?.writeText(item.content); flashDone(e.currentTarget); }, { size: 12 }))));
   compose.disabled = true; sendBtn.disabled = true; sendBtn.classList.remove('queues'); nowBtn.hidden = true; stopBtn.hidden = true;
-  compose.placeholder = s?.alive ? 'Launched outside the deck, so it is observe-only here.' : 'This session has ended. Resume it in the deck to send prompts.';
-  sendBtn.title = s?.alive ? 'This session was launched outside the deck; the deck can only observe it.' : 'Resume the session in the deck first';
+  compose.placeholder = '';
+  sendBtn.title = '';
+}
+/** Why a session has no prompt box, with a way to where prompts do go. */
+function roWhy(s) {
+  if (s.kind === 'agent') {
+    const parent = state.byId.get(s.parentId);
+    return [svgUse('i-info', 13), h('span', {}, 'Subagents take their instructions from the session that started them, so there is no prompt box here.'),
+      parent ? h('button', { type: 'button', class: 'linkish', onclick: () => select(s.parentId) }, `Open ${parent.title || 'the parent session'}`) : null];
+  }
+  const where = s.entrypoint === 'claude-desktop' ? 'the Claude desktop app' : /vscode|jetbrains|ide/i.test(s.entrypoint || '') ? 'an editor' : 'a terminal';
+  return [svgUse('i-eye', 13), h('span', {}, `Running in ${where}, so the deck can only watch. Send prompts there; once it ends you can continue it here.`)];
 }
 function focusCompose() { if (!$('compose').disabled) $('compose').focus({ preventScroll: true }); }
 
@@ -1539,7 +1557,7 @@ async function sendPrompt(now = false) {
   if (!text.trim() && !attachments.length && !(now && deckOf(id)?.queue?.length)) { $('compose').focus(); return; }
   $('send').disabled = true; $('send-now').disabled = true;
   try {
-    await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined });
+    await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined, model: prefs.launchModel || undefined });
     $('compose').value = ''; composeFiles.clear(); setLive(true, true);
     narration.hold(false);
   }
@@ -1552,7 +1570,7 @@ $('stop').onclick = interruptSession;
 $('compose').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendPrompt(e.shiftKey); } });
 
 async function queueOp(op, itemId, text) {
-  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId, text }); return true; }
+  try { await api.post(`/api/sessions/${sid(state.selected)}/queue`, { op, itemId, text, model: prefs.launchModel || undefined }); return true; }
   catch (e) { if (op !== 'editing') toast(`Queue: ${e.message}`); return false; }
 }
 
@@ -1603,15 +1621,14 @@ async function stopSession() {
   const d = deckOf(s.id);
   const busy = d && d.status !== 'idle';
   if (busy || d?.queue.length) {
-    const ok = await confirmDialog('End this session?', `${busy ? 'Claude is in the middle of a turn, which will be cut off. ' : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}You can resume the session later.`, 'End session');
+    const ok = await confirmDialog('End the claude process?', `${busy ? 'Claude is in the middle of a turn, which will be cut off. ' : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}The next prompt you send starts it again.`, 'End process');
     if (!ok) return;
   }
-  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Session ended'); }
+  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Process ended'); }
   catch (e) { toast(`End failed: ${e.message}`); }
 }
 
-// The launch dialog: a new session, or an ended one resumed under the deck.
-let launchCtx = null;
+// The launch dialog: a new session under the deck.
 // The model new sessions start with: picked in the title bar, preselected in
 // the launch dialog (where a different pick applies to that launch only).
 const MODELS = [['', 'Default'], ['opus', 'Opus'], ['opus[1m]', 'Opus 1M'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
@@ -1632,25 +1649,19 @@ $('tb-model').addEventListener('change', (e) => { prefs.launchModel = e.target.v
 renderModelPicker();
 api.get('/api/config').then(r => { cliModel = r.cliModel; renderModelPicker(); }).catch(() => {});
 
-function openLaunch({ resumeId } = {}) {
+function openLaunch() {
   const dlg = $('new-session');
   if (dlg.open) return;
-  const resume = resumeId ? state.byId.get(resumeId) : null;
-  launchCtx = { resumeId: resume ? resumeId : null };
   const cwds = [...new Set([...state.snapshot.active, ...state.snapshot.recent].map(s => s.cwd).filter(Boolean))].slice(0, 20);
   $('ns-cwds').replaceChildren(...cwds.map(c => h('option', { value: c })));
-  $('ns-t').textContent = resume ? 'Resume in the deck' : 'New session';
-  $('ns-sub').textContent = resume ? `Continues “${oneLine(resume.title, 60)}” under the deck. Your prompt is the next turn.` : 'Runs claude under the deck, so you can send, queue, interrupt and answer permission prompts from here.';
-  $('ns-cwd').value = resume ? resume.cwd : prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
-  $('ns-cwd').readOnly = !!resume;
-  $('ns-name-w').hidden = !!resume;
+  $('ns-cwd').value = prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
   $('ns-name').value = '';
   modelOptions($('ns-model'));
   $('ns-model').value = prefs.launchModel || '';
   $('ns-perm').value = prefs.launchPerm || 'default';
   $('ns-err').hidden = true;
   $('ns-go').disabled = false;
-  $('ns-go').textContent = resume ? 'Resume' : 'Start session';
+  $('ns-go').textContent = 'Start session';
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
 }
@@ -1711,10 +1722,8 @@ $('ns-form').addEventListener('submit', async (e) => {
   $('ns-go').disabled = true; $('ns-err').hidden = true;
   $('ns-go').textContent = 'Starting…';
   try {
-    const st = launchCtx?.resumeId
-      ? await api.post(`/api/sessions/${sid(launchCtx.resumeId)}/resume`, body)
-      : await api.post('/api/launch', body);
-    if (!launchCtx?.resumeId) prefs.launchCwd = body.cwd;
+    const st = await api.post('/api/launch', body);
+    prefs.launchCwd = body.cwd;
     prefs.launchPerm = body.permissionMode; savePrefs();
     state.deck.set(st.id, st);
     $('ns-prompt').value = ''; launchFiles.clear();
@@ -1728,7 +1737,7 @@ $('ns-form').addEventListener('submit', async (e) => {
       ? 'The deck backend is older than this page and cannot launch sessions. Restart it (stop the server and run npm start, or quit and relaunch the app), then try again.'
       : err.message;
     $('ns-err').hidden = false;
-    $('ns-go').disabled = false; $('ns-go').textContent = launchCtx?.resumeId ? 'Resume' : 'Start session';
+    $('ns-go').disabled = false; $('ns-go').textContent = 'Start session';
   }
 });
 function openLaunched(id) {

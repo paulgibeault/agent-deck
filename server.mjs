@@ -58,7 +58,17 @@ narrator.onRateLimit = (info) => usage.update(info, 'the deck\'s own model calls
 const briefs = new BriefService({ index, narrator, enabled: NARRATOR }).start();
 briefs.isHidden = (id) => deck.hidden.has(id);
 const snapshot = () => index.snapshot(deck.hidden);
-const agents = new AgentManager();
+// Sending to a session that is not running resumes it under the deck,
+// unless it is a subagent or runs somewhere else (a terminal, the desktop app).
+const agents = new AgentManager({
+  store: path.join(deck.dir, 'agents.json'),
+  wakeable: (id) => {
+    if (!index.files.has(id)) return { error: index.cwdOf(id) ? 'subagents take their prompts from the parent session' : 'unknown session' };
+    if (index.registry.get(id)?.alive && !agents.running(id)) return { error: 'this session is running outside the deck (a terminal or the desktop app); send it prompts there' };
+    const cwd = index.cwdOf(id);
+    return cwd ? { cwd } : { error: 'the session\'s folder is not known' };
+  },
+});
 const tts = new AzureTts({ dir: deck.dir });
 index.external = () => agents.registryEntries();
 index.deckState = (id) => agents.publicState(id);
@@ -238,23 +248,17 @@ async function route(req, res, url) {
   }
 
   let m;
-  if ((m = /^\/api\/sessions\/([^/]+)\/(send|send-now|queue|interrupt|permission|stop|resume)$/.exec(p)) && req.method === 'POST') {
+  if ((m = /^\/api\/sessions\/([^/]+)\/(send|send-now|queue|interrupt|permission|stop)$/.exec(p)) && req.method === 'POST') {
     const id = decodeURIComponent(m[1]);
     const body = await readBody(req, PROMPT_BODY_LIMIT);
     try {
       switch (m[2]) {
-        case 'send': return send(res, 200, { item: agents.send(id, body.text, body.attachments) });
-        case 'send-now': return send(res, 200, { item: agents.sendNow(id, body.text, body.attachments) });
-        case 'queue': agents.queueOp(id, body); break;
+        case 'send': return send(res, 200, { item: await agents.send(id, body.text, body.attachments, { model: body.model }) });
+        case 'send-now': return send(res, 200, { item: await agents.sendNow(id, body.text, body.attachments, { model: body.model }) });
+        case 'queue': await agents.queueOp(id, body); break;
         case 'interrupt': return send(res, 200, { interrupted: agents.interrupt(id) });
         case 'permission': agents.answer(id, body.requestId, body.decision, body.message); break;
         case 'stop': return send(res, 200, { stopped: agents.stop(id) });
-        case 'resume': {
-          const cwd = index.cwdOf(id);
-          if (!cwd) return send(res, 404, { error: 'unknown session' });
-          if (index.registry.get(id)?.alive) return send(res, 409, { error: 'session is still running outside the deck' });
-          return send(res, 200, await agents.launch({ cwd, resume: id, prompt: body.prompt, attachments: body.attachments, model: body.model || undefined, permissionMode: body.permissionMode || 'default' }));
-        }
       }
       return send(res, 200, { ok: true, state: agents.publicState(id) });
     } catch (e) { return send(res, e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { error: e.message }); }
@@ -399,7 +403,7 @@ server.on('error', (e) => {
   console.error(`agent-deck: port ${PORT} is already in use (is the deck already running?)`);
   process.exit(1);
 });
-function shutdown() { agents.stopAll(); index.stop(); server.close(); process.exit(0); }
+function shutdown() { agents.flush(); agents.stopAll(); index.stop(); server.close(); process.exit(0); }
 
 /**
  * Replace this process with a fresh one on the same port and arguments.
@@ -408,7 +412,7 @@ function shutdown() { agents.stopAll(); index.stop(); server.close(); process.ex
  */
 function restart() {
   console.log(`--- ${new Date().toString()} restart requested from the deck`);
-  agents.stopAll(); index.stop();
+  agents.flush(); agents.stopAll(); index.stop();
   for (const c of clients) c.end();
   const log = fs.openSync(path.join(deck.dir, 'server.log'), 'a');
   const relaunch = () => {
