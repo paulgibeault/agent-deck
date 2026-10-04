@@ -351,9 +351,33 @@ voices then appear under Voice. More in Microsoft's
   - **Events list:** the call that started a task carries a `background`
     button. Task updates appear as `Bg` rows rather than as your prompts.
   - **Read aloud:** "Background finished" can be narrated (off by default).
-  - **Limits:** the deck can't stop a task itself, since it belongs to the
-    Claude process. For deck sessions the details offer "Ask Claude to stop
-    it".
+  - **Stop:** a running command's details show its pid and a **Stop it**
+    button (SIGTERM to the command and everything it started). Deck sessions
+    also offer "Ask Claude to stop it".
+- **Processes** (`p`, or the pulse icon above the rail). A task manager for
+  the agents on this machine. One `ps` reads the host, and each process is
+  tied back to what the deck knows: the deck's server, every live session's
+  `claude`, the Bash calls and background tasks it is running (matched by the
+  exact command Claude Code wraps in `eval '…'`), Shell tab runs, MCP servers
+  and the deck's own `claude -p` calls. Subagents appear dimmed under their
+  session; they run inside its process. Commands that outlived their session
+  are flagged **detached**.
+  - **List:** a tree with CPU, memory and uptime. It shows the deck and its
+    agents, or every process on the host (the deck's are tinted). Search by
+    name, pid, command or session; ↑/↓ move, ←/→ collapse and expand.
+  - **Details:** Overview (command, state, CPU and memory with sparklines,
+    folder, user, process group, lineage and children), Agent (its session,
+    task or call, one click away), Files and Network (from `lsof`), and
+    Environment (secret-looking values masked until you show them).
+  - **Controls:** pause/resume, terminate, force kill, plus interrupt and
+    hang-up from a menu. A toggle sends the signal to everything below the
+    process too. Anything that ends a process asks first. The server refuses
+    pid 1, the deck itself and its ancestors, and checks the process's start
+    time so a reused pid is never signalled. A deck session's Terminate goes
+    through the deck's own stop.
+  - **Pids link here:** the session card and session details, the Background
+    tab and task details, and a running Bash call's details.
+  - It polls every 2s only while open; macOS and Linux.
 - **Shell.** Pilot's command runner: pick a cwd (defaults to the selected
   session's), run a command, see streamed stdout/stderr, exit code and
   duration, kill long runs. History with ↑/↓.
@@ -373,10 +397,12 @@ lib/deckstate.mjs     hidden sessions, delete trash
 lib/gitinfo.mjs       status / diff / log
 lib/shell.mjs         pilot shell runner
 lib/agent.mjs         deck-launched sessions (stream-json control)
+lib/procs.mjs         process view: ps/lsof, tying processes to sessions, signals
 lib/tts.mjs           Read aloud: Azure neural voices + audio cache
 lib/kokoro.mjs        Read aloud: Kokoro voices generated on this machine
 public/narration.js   Read aloud player: voices, queue, pane, highlights
 public/speech.js      Read aloud queue + text rules (pure, tested)
+public/procs.js       the process view dialog
 public/               index.html, app.js, events.js, styles.css, vendor/
 design/               Claude Design canvas source for the current look
 test/                 node --test; fixtures/ holds a sanitized transcript

@@ -46,7 +46,7 @@ export function fileKind(name, dir = false) {
   return BY_EXT[ext] || (langFor(b) ? 'code' : ext ? 'text' : 'text');
 }
 const MEDIA = new Set(['image', 'svg', 'pdf', 'audio', 'video']);
-export const glyph = (kind, open = false) => h('span', { class: `fi fk-${KINDS[kind].fam}` }, svgUse(kind === 'dir' && open ? 'i-folder-open' : KINDS[kind].icon, 15));
+export const glyph = (kind, open = false) => h('span', { class: `fi fk-${KINDS[kind].fam}` }, svgUse(kind === 'dir' && open ? 'i-folder-open' : KINDS[kind].icon, 15, KINDS[kind].label));
 const rawUrl = (abs) => `/api/file/raw?path=${encodeURIComponent(abs)}`;
 const GIT = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', U: 'untracked' };
 
@@ -190,7 +190,7 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
       style: `--d:${r.depth}`, dataset: { i },
       title: e.dir ? e.path || e.name : [e.path, e.size != null ? fmtTokens(e.size) + 'B' : '', e.mtime ? 'modified ' + ago(Date.now() - e.mtime) + ' ago' : ''].filter(Boolean).join(' · '),
     });
-    row.append(h('span', { class: 'ind' }), h('span', { class: 'twist' }, e.dir ? svgUse('i-right', 9) : null), glyph(kind, r.open));
+    row.append(h('span', { class: 'ind' }), h('span', { class: 'twist' }, e.dir ? svgUse('i-right', 9, r.open ? 'Collapse the folder' : 'Expand the folder') : null), glyph(kind, r.open));
     const name = h('span', { class: 'fname' }, e.name);
     if (e.link) name.append(h('span', { class: 'flink', title: 'symbolic link' }, ' ↪'));
     row.append(name, h('span', { class: 'fsp' }));
@@ -387,7 +387,7 @@ function markdownView(text, file, ctx, { outline = true } = {}) {
   const heads = [...doc.querySelectorAll('h1[id], h2[id], h3[id]')];
   if (outline && heads.length >= 4) {
     const top = Math.min(...heads.map(x => +x.tagName[1]));
-    wrap.append(h('details', { class: 'md-outline' }, h('summary', {}, svgUse('i-list', 12), h('span', {}, 'Outline'), h('span', { class: 'n' }, heads.length)),
+    wrap.append(h('details', { class: 'md-outline' }, h('summary', { title: 'Jump to a heading' }, svgUse('i-list', 12), h('span', {}, 'Outline'), h('span', { class: 'n' }, heads.length)),
       h('nav', {}, ...heads.map(x => h('a', { href: '#', dataset: { anchor: x.id }, class: `lv${+x.tagName[1] - top}` }, x.textContent)))));
   }
   wrap.append(doc);

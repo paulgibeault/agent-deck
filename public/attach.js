@@ -121,7 +121,7 @@ export function attachable({ input, tray, clip, file, drop, toast }) {
   }
   function moreList(anchor) {
     pop.replaceChildren(h('div', { class: 'att-list' }, ...list.map((a, i) => h('div', { class: 'att-li' },
-      a.url ? h('img', { src: a.url, alt: '' }) : svgUse('i-file', 14), h('span', { class: 'att-n' }, a.name), h('span', { class: 'att-sz' }, kb(a.size)),
+      a.url ? h('img', { src: a.url, alt: '' }) : svgUse('i-file', 14, 'Attached file'), h('span', { class: 'att-n' }, a.name), h('span', { class: 'att-sz' }, kb(a.size)),
       h('button', { type: 'button', class: 'ib', 'aria-label': `Remove ${a.name}`, title: 'Remove', onclick: () => { remove(i); list.length ? moreList(anchor) : pop.hidePopover?.(); } }, svgUse('i-x', 10))))));
     place(anchor);
   }
