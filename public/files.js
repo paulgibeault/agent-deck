@@ -83,7 +83,7 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
   const st = {
     sid: null, root: null, cwd: null, expanded: new Set(), cache: new Map(), loading: new Map(),
     selected: null, rows: [], all: null, query: '', mode: 'tree', ignored: false,
-    touched: new Map(), touchedDirs: new Set(), outside: [], results: [],
+    touched: new Map(), touchedDirs: new Set(), outside: [], results: [], tClosed: new Set(),
   };
   const key = () => `deck.files:${st.cwd}`;
   const save = () => { try { localStorage.setItem(key(), JSON.stringify({ expanded: [...st.expanded], selected: st.selected, mode: st.mode, ignored: st.ignored })); } catch { /* full */ } };
@@ -150,7 +150,7 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
       }
       const walk = (dir, depth) => {
         const es = [...kids.get(dir).values()].sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, undefined, { numeric: true }));
-        for (const e of es) { rows.push({ e, depth, open: e.dir }); if (e.dir) walk(e.path, depth + 1); }
+        for (const e of es) { const open = e.dir && !st.tClosed.has(e.path); rows.push({ e, depth, open }); if (open) walk(e.path, depth + 1); }
       };
       walk('', 0);
       if (st.outside.length) {
@@ -255,11 +255,21 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
     if (!e.dir) onOpen?.({ rel: e.outside ? null : e.path, abs: e.outside ? e.path : abs(e.path), entry: e });
   }
   async function toggle(path, force) {
+    if (st.mode === 'touched') {
+      // The touched view starts fully open; it remembers what you closed.
+      const open = force ?? st.tClosed.has(path);
+      open ? st.tClosed.delete(path) : st.tClosed.add(path);
+      return render();
+    }
     const open = force ?? !st.expanded.has(path);
     if (open) { st.expanded.add(path); await loadDir(path); } else st.expanded.delete(path);
     save(); render();
   }
-  function collapseAll() { st.expanded.clear(); save(); render(); }
+  function collapseAll() {
+    if (st.mode === 'touched') for (const r of st.rows) { if (r.e?.dir) st.tClosed.add(r.e.path); }
+    else st.expanded.clear();
+    save(); render();
+  }
   /** Expand down to `rel`, select it, show it. */
   async function reveal(rel, { open = false } = {}) {
     if (st.mode !== 'tree') { st.mode = 'tree'; }
@@ -291,7 +301,7 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
     const row = ev.target.closest('.frow[data-i]'); if (!row) return;
     const r = st.rows[+row.dataset.i];
     // A folder click opens or closes it in place; a file shows in Details.
-    if (r.e.dir) { if (st.mode === 'tree') toggle(r.e.path); select(r.e.path); }
+    if (r.e.dir) { toggle(r.e.path); select(r.e.path); }
     else select(r.e.path, { open: true, now: true });
   });
   list.addEventListener('dblclick', (ev) => {
@@ -315,11 +325,11 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
       case 'Home': move(0); break;
       case 'End': move(items.length - 1); break;
       case 'ArrowRight':
-        if (cur?.e.dir && !cur.open && st.mode === 'tree') toggle(cur.e.path, true);
+        if (cur?.e.dir && !cur.open) toggle(cur.e.path, true);
         else if (cur?.e.dir) move(k + 1);
         break;
       case 'ArrowLeft':
-        if (cur?.e.dir && cur.open && st.mode === 'tree') toggle(cur.e.path, false);
+        if (cur?.e.dir && cur.open) toggle(cur.e.path, false);
         else if (cur) { const parent = cur.e.path.includes('/') ? cur.e.path.slice(0, cur.e.path.lastIndexOf('/')) : null; if (parent) select(parent, { open: true }); }
         break;
       case 'Enter':
