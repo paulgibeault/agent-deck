@@ -2043,7 +2043,8 @@ const glyph = (f) => h('span', { class: `tic f-${f.fam}` }, svgUse(f.icon, 15));
 function paintKind() {
   const on = FILTERS.filter(f => state.kinds.has(f.k));
   const all = allKinds();
-  $('kind-ico').replaceChildren(...(all ? [glyph(FILTER_ALL)] : on.slice(0, 3).map(glyph)), !all && on.length > 3 ? h('span', { class: 'kb-more' }, `+${on.length - 3}`) : null);
+  const more = !all && on.length > 3 ? [h('span', { class: 'kb-more' }, `+${on.length - 3}`)] : [];
+  $('kind-ico').replaceChildren(...(all ? [glyph(FILTER_ALL)] : on.slice(0, 3).map(glyph)), ...more);
   const btn = $('kind-btn'); btn.classList.toggle('on', !all);
   btn.title = `Showing: ${kindsLabel()}`; btn.setAttribute('aria-label', btn.title);
 }
