@@ -520,8 +520,12 @@ function renderReadAloud(st) {
     : playing ? 'Pause (Space)' : 'Pause: queue narration until you press play (Space)';
   const nb = $('ra-next');
   nb.disabled = !st.item && !st.queued;
-  nb.querySelector('.ra-n').textContent = st.queued || '';
   nb.title = nb.ariaLabel = st.queued ? `Next (]) · ${st.queued} queued` : 'Next (])';
+  const bn = $('bell').querySelector('.bell-n');
+  bn.hidden = !st.unheard;
+  bn.textContent = st.unheard > 99 ? '99+' : String(st.unheard || '');
+  $('bell').title = $('bell').ariaLabel = `Narration history${st.unheard ? ` · ${st.unheard} unheard` : ''} (b)`;
+  if ($('bell-pop').matches(':popover-open')) renderBellList();
   const now = $('ra-now');
   now.hidden = !st.item;
   now.classList.toggle('playing', playing);
@@ -529,6 +533,75 @@ function renderReadAloud(st) {
 }
 $('ra-play').onclick = () => narration.toggle();
 $('ra-next').onclick = () => narration.skip();
+
+// The bell: every narration event, newest first. A dot marks what is still
+// queued to be read; a row opens its event (play it from the details pane).
+const bell = { q: '', unheardOnly: false, i: 0, ids: [] };
+function bellText(e) {
+  const t = String(e.text || '').replace(/[#*_`>]+/g, '').replace(/\s+/g, ' ').trim();
+  if (e.kind === 'done') return 'Finished';
+  if (e.kind === 'needs') return `${e.permission ? 'Needs your permission' : 'Asking'}${t ? `: ${t}` : ''}`;
+  if (e.kind === 'error') return `Error${t ? `: ${t}` : ''}`;
+  return t;
+}
+function renderBell() {
+  const pop = $('bell-pop');
+  const input = h('input', { type: 'search', placeholder: 'Search narration', value: bell.q, spellcheck: 'false', 'aria-label': 'Search narration',
+    oninput: (e) => { bell.q = e.target.value; bell.i = 0; renderBellList(); },
+    onkeydown: (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bell.i = Math.max(0, Math.min(bell.ids.length - 1, bell.i + (e.key === 'ArrowDown' ? 1 : -1))); renderBellList(); }
+      else if (e.key === 'Enter') { e.preventDefault(); openBellEntry(bell.ids[bell.i]); }
+    } });
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' },
+    h('button', { type: 'button', 'aria-pressed': String(!bell.unheardOnly), onclick: () => { bell.unheardOnly = false; renderBell(); } }, 'All'),
+    h('button', { type: 'button', 'aria-pressed': String(bell.unheardOnly), onclick: () => { bell.unheardOnly = true; renderBell(); } }, 'Unheard'));
+  pop.replaceChildren(
+    h('div', { class: 'bell-h' }, h('label', { class: 'search grow' }, svgUse('i-search', 13), input), seg),
+    h('ul', { class: 'bell-list', role: 'listbox', 'aria-label': 'Narration history' }),
+    h('div', { class: 'bell-f' }, h('span', { class: 'muted bell-count' }), h('span', { class: 'spacer' }),
+      h('button', { type: 'button', class: 'linkish', onclick: () => narration.markAllHeard() }, 'Mark all heard'),
+      h('button', { type: 'button', class: 'linkish', onclick: async () => { if (await confirmDialog('Clear the narration history?', 'The list empties. Nothing queued is affected.', 'Clear')) narration.clearHistory(); } }, 'Clear')));
+  renderBellList();
+  return input;
+}
+function renderBellList() {
+  const pop = $('bell-pop');
+  const list = pop.querySelector('.bell-list');
+  if (!list) return;
+  const { entries, unheard } = narration.history();
+  const q = bell.q.trim().toLowerCase();
+  const shown = entries.filter(e => (!bell.unheardOnly || unheard.has(e.id))
+    && (!q || `${e.title} ${narration.kindLabel(e.kind)} ${e.text}`.toLowerCase().includes(q)));
+  bell.ids = shown.map(e => e.id);
+  bell.i = Math.min(bell.i, Math.max(0, shown.length - 1));
+  const now = Date.now();
+  list.replaceChildren(...shown.slice(0, 200).map((e, i) => h('li', { class: `bell-row${i === bell.i ? ' sel' : ''}`, role: 'option', 'aria-selected': String(i === bell.i), dataset: { id: e.id },
+      onclick: () => openBellEntry(e.id), onmousemove: () => { if (bell.i !== i) { bell.i = i; list.querySelector('.sel')?.classList.remove('sel'); list.children[i]?.classList.add('sel'); } } },
+    h('span', { class: `bell-dot${unheard.has(e.id) ? ' on' : ''}`, title: unheard.has(e.id) ? 'Not read yet' : null }),
+    h('span', { class: 'bell-main' },
+      h('span', { class: 'bell-top' }, h('span', { class: `chip narr-k k-${e.kind}` }, narration.kindLabel(e.kind)), h('b', {}, e.title), h('span', { class: 'spacer' }), h('span', { class: 'muted bell-ago', title: new Date(e.at).toLocaleString() }, ago(now - e.at))),
+      h('span', { class: 'bell-t' }, oneLine(bellText(e), 220))))));
+  if (!shown.length) list.append(h('li', { class: 'bell-empty muted' }, entries.length ? 'Nothing matches.' : 'Narration events show up here as sessions speak.'));
+  list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+  pop.querySelector('.bell-count').textContent = `${entries.length} ${entries.length === 1 ? 'event' : 'events'}${unheard.size ? ` · ${unheard.size} unheard` : ''}`;
+}
+async function openBellEntry(id) {
+  const e = narration.history().entries.find(x => x.id === id);
+  if (!e?.sessionId) return;
+  $('bell-pop').hidePopover();
+  if (!state.byId.has(e.sessionId) && !state.cache.has(e.sessionId)) { toast('That session is no longer listed'); return; }
+  await select(e.sessionId);
+  const ev = e.eventId && findEvent(e.sessionId, e.eventId);
+  if (ev) jumpToSeq(ev.seq);
+}
+$('bell-pop').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const r = $('bell').getBoundingClientRect();
+  $('bell-pop').style.top = `${r.bottom + 6}px`;
+  $('bell-pop').style.left = `${Math.max(8, r.left - 8)}px`;
+  bell.i = 0;
+  renderBell().focus();
+});
 $('ra-now').onclick = () => jumpToNarration();
 $('ra-pop').addEventListener('toggle', (e) => {
   if (e.newState !== 'open') return;
@@ -1847,11 +1920,12 @@ document.addEventListener('keydown', (e) => {
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') { if (e.key === 'Escape') e.target.blur(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (document.querySelector('dialog[open]') || $('ra-pop').matches(':popover-open')) return;
+  if (document.querySelector('dialog[open]') || document.querySelector('[popover]:popover-open')) return;
   // Read aloud works everywhere, the overview included.
   if (e.key === ' ') { e.preventDefault(); narration.toggle(); return; }
   if (e.key === ']') { e.preventDefault(); narration.skip(); return; }
   if (e.key === 'j') { e.preventDefault(); jumpToNarration(); return; }
+  if (e.key === 'b') { e.preventDefault(); $('bell-pop').showPopover(); return; }
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
   if (e.key === 'h') { e.preventDefault(); openHistory(); return; }

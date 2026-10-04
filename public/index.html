@@ -51,6 +51,7 @@
   <symbol id="i-speaker-off" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2h2.3L8 3.5v9L4.8 9.8H2.5z"/><path d="M10.5 6.2l3.4 3.6M13.9 6.2l-3.4 3.6"/></g></symbol>
   <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
   <symbol id="i-next" viewBox="0 0 16 16"><path d="M2.5 4v8l5-4zM8 4v8l5-4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 16 16"><path d="M4 11.5V7.2a4 4 0 0 1 8 0v4.3l1.2 1.3H2.8zM6.6 14a1.5 1.5 0 0 0 2.8 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-logo" viewBox="0 0 20 20"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--logo-bg)" stroke="var(--ok)"/><path d="M6 7h8M6 10h5M6 13h7" stroke="var(--ok)" stroke-width="1.6" stroke-linecap="round"/></symbol>
 </svg>
 
@@ -60,16 +61,18 @@
 <header id="titlebar" class="titlebar">
   <button id="conn" type="button" class="conn" aria-label="Server: offline" title="Server offline"><span class="cdot"></span></button>
   <button id="home" class="tb-title" type="button" title="Overview (Esc)">Agent Deck</button>
+  <button id="bell" type="button" class="bell" popovertarget="bell-pop" aria-label="Narration history (b)" title="Narration history (b)"><svg width="15" height="15"><use href="#i-bell"/></svg><span class="bell-n" hidden></span></button>
   <span class="spacer"></span>
   <label class="tb-model" title="Model new sessions start with"><span class="sr">Model for new sessions</span><select id="tb-model"></select></label>
   <span class="ra-tb">
     <button id="ra-btn" type="button" class="ra-btn" popovertarget="ra-pop" aria-label="Read aloud settings" title="Read aloud"><svg width="15" height="15"><use href="#i-speaker"/></svg></button>
     <button id="ra-play" type="button" class="ra-ctl" aria-label="Pause (Space)" title="Pause (Space)"><svg width="13" height="13"><use href="#i-pause"/></svg></button>
-    <button id="ra-next" type="button" class="ra-ctl" aria-label="Next (])" title="Next (])" disabled><svg width="13" height="13"><use href="#i-next"/></svg><span class="ra-n"></span></button>
+    <button id="ra-next" type="button" class="ra-ctl" aria-label="Next (])" title="Next (])" disabled><svg width="13" height="13"><use href="#i-next"/></svg></button>
   </span>
   <button id="quota" type="button" class="quota" aria-label="Plan usage" aria-describedby="hovercard"><svg class="qring" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="qt" cx="8" cy="8" r="6"/><circle class="qa" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 8 8)"/></svg><span class="qpct"></span></button>
 </header>
 <div id="ra-pop" class="ra-pop" popover></div>
+<div id="bell-pop" class="bell-pop" popover></div>
 <div id="deck">
   <aside id="sessions" class="pane rail" aria-label="Sessions">
     <header class="rail-h">
@@ -278,6 +281,7 @@
       <dt><kbd>]</kbd></dt><dd>read aloud: next item</dd>
       <dt><kbd>j</kbd></dt><dd>open what is being read aloud</dd>
       <dt><kbd>r</kbd></dt><dd>read the selected event (or the brief) aloud</dd>
+      <dt><kbd>b</kbd></dt><dd>narration history: search, ↑/↓, Enter opens</dd>
       <dt><kbd>/</kbd></dt><dd>filter events</dd>
       <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Events, Files, Changes, Shell</dd>
       <dt><kbd>n</kbd></dt><dd>new session</dd>

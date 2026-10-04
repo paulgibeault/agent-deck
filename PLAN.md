@@ -419,6 +419,31 @@ clearly marked and show a small warning when they fall back.
   gesture. Until then, the speaker icon shows "click to enable" and holds the
   queue.
 
+### 7.6a Narration history (the bell)
+
+**The bell** sits at the left of the title bar, after the deck's name. Its
+badge counts unheard items, meaning items still waiting in the queue; it
+updates as the queue moves. Clicking the bell (or `b`) opens the history,
+newest first.
+
+- **Rows:** a dot while unheard, the kind chip, session title, the text,
+  and how long ago.
+- **Searching:** matches title, kind and text. **All / Unheard** filter the
+  list.
+- **Opening:** ↑/↓ and `Enter` (or a click) open the event in its session.
+  It is played from there, with the details pane's Read aloud button.
+- **Footer:** **Mark all heard** empties the queue without playing, and
+  **Clear** empties the list.
+
+Every narration event of an enabled kind is logged, whatever the scope, so
+the bell works as an inbox even with narration off. Subagent events are
+logged only when included. An item skipped by "skip to the latest", or
+cleared by stop, is simply heard; it carries no special marker.
+
+Storage: `localStorage`, capped at 500 entries with the text clipped to
+4,000 characters. Only the speaking window writes it; other windows follow
+through the `storage` event. Server-side history can come later.
+
 ### 7.7 Files
 
 | File | Holds |

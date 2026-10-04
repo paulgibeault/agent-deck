@@ -228,8 +228,12 @@ minute, "crash" exits with an error.
     leave the field.
   - Media keys and AirPods play, pause and skip.
 
+  The bell at the left of the title bar keeps every narration event, even
+  with narration off. Its badge counts what is still queued. Open it with a
+  click or `b`; search, then `Enter` opens an event in its session.
+
   Keys: `Space` play / pause, `]` next, `j` open what is being read, `r` read
-  the selection.
+  the selection, `b` the bell.
 - **Shell.** Pilot's command runner: pick a cwd (defaults to the selected
   session's), run a command, see streamed stdout/stderr, exit code and
   duration, kill long runs. History with ↑/↓.
