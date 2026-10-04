@@ -973,8 +973,6 @@ table.bg-tbl .bg-act { white-space: normal; max-width: 260px; font-size: 11.5px;
 .fv-table th, .fv-table td { padding: 4px 10px; border-bottom: 1px solid var(--line); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fv-table tr:hover td { background: var(--hover); }
 .fv-table .n { color: var(--muted); text-align: right; font-size: 11px; }
-.fv-mix { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
-.fv-mix .chip { gap: 4px; }
 .md li.task { list-style: none; margin-left: -18px; }
 .md li.task input { margin: 0 6px 0 0; vertical-align: -1px; }
 .md del { color: var(--muted); }
