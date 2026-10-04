@@ -419,8 +419,8 @@ function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null, 
   const head = h('div', { class: 'dhead' });
   const row = h('div', { class: 'dh-row' }, tag, ...chips.filter(Boolean), h('span', { class: 'spacer' }));
   if (nav) {
-    row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '-1' }, 'aria-label': 'Previous event (k)', title: 'Previous event (k)' }, svgUse('i-up', 12)));
-    row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '1' }, 'aria-label': 'Next event (j)', title: 'Next event (j)' }, svgUse('i-down', 12)));
+    row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '-1' }, 'aria-label': 'Previous event (↑)', title: 'Previous event (↑)' }, svgUse('i-up', 12)));
+    row.append(h('button', { class: 'icon-btn sm', type: 'button', dataset: { nav: '1' }, 'aria-label': 'Next event (↓)', title: 'Next event (↓)' }, svgUse('i-down', 12)));
   }
   if (raw) row.append(raw);
   row.append(...actions.filter(Boolean));
@@ -479,7 +479,7 @@ export function renderDetails(ev, detail, ctx) {
   const loading = truncated ? h('span', { class: 'chip' }, 'loading full…') : null;
 
   if (ev.kind === 'text') {
-    body.append(section('Assistant', { actions: [copyBtn(ev.text)], ask: evSpec(null, 'this message') }, h('div', { class: 'md', html: markdown(ev.text) })));
+    body.append(section('Assistant', { actions: [ctx.readAloud ? ib('i-speaker', 'Read aloud (r)', () => ctx.readAloud(ev), { size: 13 }) : null, copyBtn(ev.text)], ask: evSpec(null, 'this message') }, h('div', { class: 'md', html: markdown(ev.text) })));
   } else if (ev.kind === 'thinking') {
     body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
   } else if (ev.kind === 'prompt') {
