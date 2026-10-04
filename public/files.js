@@ -46,7 +46,7 @@ export function fileKind(name, dir = false) {
   return BY_EXT[ext] || (langFor(b) ? 'code' : ext ? 'text' : 'text');
 }
 const MEDIA = new Set(['image', 'svg', 'pdf', 'audio', 'video']);
-const glyph = (kind, open = false) => h('span', { class: `fi fk-${KINDS[kind].fam}` }, svgUse(kind === 'dir' && open ? 'i-folder-open' : KINDS[kind].icon, 15));
+export const glyph = (kind, open = false) => h('span', { class: `fi fk-${KINDS[kind].fam}` }, svgUse(kind === 'dir' && open ? 'i-folder-open' : KINDS[kind].icon, 15));
 const rawUrl = (abs) => `/api/file/raw?path=${encodeURIComponent(abs)}`;
 const GIT = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', U: 'untracked' };
 
@@ -352,7 +352,7 @@ const trimNl = (s) => s.endsWith('\n') ? s.slice(0, -1) : s;
 const lineCount = (s) => s ? s.split('\n').length - (s.endsWith('\n') ? 1 : 0) : 0;
 
 /** A two-way view switch (Rendered / Source …) for the details header. */
-function viewSwitch(views, initial, onPick) {
+export function viewSwitch(views, initial, onPick) {
   const seg = h('div', { class: 'seg sm', role: 'group', 'aria-label': 'View' });
   for (const [k, label] of views) seg.append(h('button', { type: 'button', 'aria-pressed': String(k === initial), dataset: { v: k }, onclick: () => { for (const b of seg.children) b.setAttribute('aria-pressed', String(b.dataset.v === k)); onPick(k); } }, label));
   return seg;

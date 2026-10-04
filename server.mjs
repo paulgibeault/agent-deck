@@ -13,6 +13,7 @@ import { SessionIndex } from './lib/sessions.mjs';
 import { ShellRunner } from './lib/shell.mjs';
 import * as gitinfo from './lib/gitinfo.mjs';
 import * as filetree from './lib/filetree.mjs';
+import { TurnSnapshots } from './lib/turnsnap.mjs';
 import { Narrator } from './lib/narrator.mjs';
 import { UsageTracker, readUsageReport, parseUsageReport } from './lib/usage.mjs';
 import { Attention } from './lib/attention.mjs';
@@ -92,7 +93,13 @@ attention.on('attention', (entry) => broadcast('attention', entry));
 // goes quiet), and a change is announced once it settles, so look every second.
 setInterval(() => attention.observe(snapshot().active), 1000).unref();
 index.on('sessions', scheduleSnapshot);
+// Turn boundaries seen live snapshot the session's working tree (lib/turnsnap.mjs).
+const snaps = new TurnSnapshots({ dir: deck.dir });
 index.on('events', ({ sessionId, appended, updated }) => {
+  if (appended.length && index.files.has(sessionId)) {
+    const cwd = index.cwdOf(sessionId);
+    if (cwd && appended.some(e => e.kind === 'prompt' || e.kind === 'turn_end')) snaps.observe(sessionId, cwd, appended).catch(() => {});
+  }
   if (appended.length) broadcast('event.batch', { sessionId, events: appended });
   for (const ev of updated) broadcast('event.update', { sessionId, event: ev });
 });
@@ -323,6 +330,17 @@ async function route(req, res, url) {
     const file = q.get('file');
     if (!cwd || !file) return send(res, 400, { error: 'cwd and file required' });
     return send(res, 200, await gitinfo.fileDiff(cwd, file));
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/turn-changes$/.exec(p))) {
+    const id = decodeURIComponent(m[1]); const cwd = index.cwdOf(id);
+    if (!cwd) return send(res, 404, { error: 'no folder for this session' });
+    return send(res, 200, await snaps.changes(id, cwd));
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/turn-diff$/.exec(p))) {
+    const id = decodeURIComponent(m[1]); const cwd = index.cwdOf(id);
+    if (!cwd || !q.get('turn') || !q.get('file')) return send(res, 400, { error: 'turn and file required' });
+    const r = await snaps.diff(id, cwd, q.get('turn'), q.get('file'));
+    return send(res, r.error ? 404 : 200, r);
   }
   if ((m = /^\/api\/sessions\/([^/]+)\/tree$/.exec(p))) {
     const cwd = index.cwdOf(decodeURIComponent(m[1]));

@@ -431,36 +431,96 @@ export function parseUnified(text) {
   return ops;
 }
 
-/** Side-by-side table from ops. Pairs runs of del/add. */
-export function renderSideBySide(ops, { lang = null, startA = 1, startB = 1 } = {}) {
-  const table = h('table', { class: 'sbs' });
+// Word-level changes within a paired removed/added line: char ranges on each
+// side, or null when the line changed wholesale (then marks add nothing).
+const TOK = /\w+|\s+|[^\w\s]/g;
+export function wordRanges(a, b) {
+  const ta = a.match(TOK) || [], tb = b.match(TOK) || [];
+  const n = ta.length, m = tb.length;
+  if (!n || !m || n * m > 120_000) return null;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = ta[i] === tb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ra = [], rb = []; let i = 0, j = 0, pa = 0, pb = 0;
+  const push = (arr, s, e) => { const last = arr[arr.length - 1]; if (last && last[1] === s) last[1] = e; else arr.push([s, e]); };
+  while (i < n || j < m) {
+    if (i < n && j < m && ta[i] === tb[j]) { pa += ta[i++].length; pb += tb[j++].length; }
+    else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) { push(rb, pb, pb + tb[j].length); pb += tb[j++].length; }
+    else { push(ra, pa, pa + ta[i].length); pa += ta[i++].length; }
+  }
+  const changed = (rs, len) => rs.reduce((t, [x, y]) => t + y - x, 0) / Math.max(1, len);
+  if (changed(ra, a.length) > 0.7 && changed(rb, b.length) > 0.7) return null;
+  return [ra, rb];
+}
+/** Wrap char ranges of an element's text in <mark>, across highlight spans. */
+function markRanges(el, ranges) {
+  if (!ranges?.length) return;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  let off = 0;
+  for (const node of nodes) {
+    const t = node.nodeValue, start = off, end = off + t.length; off = end;
+    const cuts = ranges.filter(([x, y]) => y > start && x < end).map(([x, y]) => [Math.max(x, start) - start, Math.min(y, end) - start]);
+    if (!cuts.length) continue;
+    const frag = document.createDocumentFragment(); let p = 0;
+    for (const [x, y] of cuts) { if (x > p) frag.append(t.slice(p, x)); frag.append(h('mark', { class: 'wd' }, t.slice(x, y))); p = y; }
+    if (p < t.length) frag.append(t.slice(p));
+    node.replaceWith(frag);
+  }
+}
+function diffLine(text, lang, ranges) {
+  const el = h('span', { class: 'lt' });
+  if (lang && window.hljs?.getLanguage?.(lang) && text.length < 2000) {
+    try { el.innerHTML = window.hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch { el.textContent = text; }
+  } else el.textContent = text;
+  markRanges(el, ranges);
+  return el;
+}
+
+/**
+ * A rich diff from ops: `split` (side by side) or `unified`, syntax
+ * highlighted, with the changed words marked inside each changed line.
+ */
+export function renderDiff(ops, { lang = null, mode = 'split', startA = 1, startB = 1 } = {}) {
+  const uni = mode === 'unified';
+  const table = h('table', { class: uni ? 'udiff' : 'sbs' });
   let an = startA, bn = startB;
-  const cell = (cls, num, text) => h('td', { class: cls }, num != null ? h('span', { class: 'ln' }, String(num)) : null, h('span', { class: 'lt' }, text ?? ''));
+  const num = (n) => h('span', { class: 'ln' }, n == null ? '' : String(n));
+  const sbsCell = (cls, n, text, r) => h('td', { class: cls }, num(n), cls === 'empty' ? null : diffLine(text ?? '', lang, r));
+  const uniRow = (cls, a, b, text, r) => h('tr', { class: cls }, h('td', { class: 'ln' }, a ?? ''), h('td', { class: 'ln' }, b ?? ''),
+    h('td', { class: 'sg' }, cls === 'add' ? '+' : cls === 'del' ? '−' : ''), h('td', { class: 'tx' }, diffLine(text ?? '', lang, r)));
   let k = 0;
   while (k < ops.length) {
     const op = ops[k];
-    if (op.t === 'hunk') { table.append(h('tr', { class: 'hunk' }, h('td', { colspan: 2 }, op.text))); an = op.an ?? an; bn = op.bn ?? bn; k++; continue; }
+    if (op.t === 'hunk') {
+      const hm = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@\s*(.*)$/.exec(op.text);
+      const label = hm ? `Line ${hm[3]}${hm[5] ? ' · ' + hm[5] : ''}` : op.text;
+      table.append(h('tr', { class: 'hunk' }, h('td', { colspan: uni ? 4 : 2 }, label))); k++; continue;
+    }
     if (op.t === 'eq') {
-      const a = op.an ?? an++, b = op.bn ?? bn++; if (op.an != null) { an = op.an + 1; bn = op.bn + 1; }
-      table.append(h('tr', {}, cell('eq', a, op.a), cell('eq', b, op.b))); k++; continue;
+      const a = op.an ?? an, b = op.bn ?? bn; an = a + 1; bn = b + 1;
+      table.append(uni ? uniRow('eq', a, b, op.a) : h('tr', {}, sbsCell('eq', a, op.a), sbsCell('eq', b, op.b))); k++; continue;
     }
     const dels = [], adds = [];
     while (k < ops.length && ops[k].t === 'del') dels.push(ops[k++]);
     while (k < ops.length && ops[k].t === 'add') adds.push(ops[k++]);
-    const n = Math.max(dels.length, adds.length);
-    for (let x = 0; x < n; x++) {
-      const d = dels[x], a = adds[x];
-      let dn = null, bnn = null;
-      if (d) { dn = d.an ?? an++; if (d.an != null) an = d.an + 1; }
-      if (a) { bnn = a.bn ?? bn++; if (a.bn != null) bn = a.bn + 1; }
-      table.append(h('tr', {}, d ? cell('del', dn, d.a) : cell('empty'), a ? cell('add', bnn, a.b) : cell('empty')));
+    const pairs = Math.min(dels.length, adds.length);
+    const wr = []; for (let x = 0; x < pairs; x++) wr.push(wordRanges(dels[x].a, adds[x].b));
+    const dn = dels.map(d => { const v = d.an ?? an; an = v + 1; return v; });
+    const bnn = adds.map(a => { const v = a.bn ?? bn; bn = v + 1; return v; });
+    if (uni) {
+      dels.forEach((d, x) => table.append(uniRow('del', dn[x], null, d.a, wr[x]?.[0])));
+      adds.forEach((a, x) => table.append(uniRow('add', null, bnn[x], a.b, wr[x]?.[1])));
+    } else {
+      for (let x = 0; x < Math.max(dels.length, adds.length); x++) {
+        const d = dels[x], a = adds[x];
+        table.append(h('tr', {}, d ? sbsCell('del', dn[x], d.a, wr[x]?.[0]) : sbsCell('empty'), a ? sbsCell('add', bnn[x], a.b, wr[x]?.[1]) : sbsCell('empty')));
+      }
     }
-  }
-  if (lang && window.hljs) {
-    table.querySelectorAll('td .lt').forEach(el => { try { if (el.textContent.length < 2000) el.innerHTML = window.hljs.highlight(el.textContent, { language: lang }).value; } catch { /* ignore */ } });
   }
   return h('div', { class: 'sbs-wrap' }, table);
 }
+/** Side-by-side table from ops (kept for existing callers). */
+export const renderSideBySide = (ops, opts = {}) => renderDiff(ops, { ...opts, mode: 'split' });
 
 // ------------------------------------------------------------ details
 export const copyBtn = (text, label = 'Copy') => ib('i-copy', label, (e) => { navigator.clipboard?.writeText(typeof text === 'function' ? text() : text); flashDone(e.currentTarget); }, { size: 13 });

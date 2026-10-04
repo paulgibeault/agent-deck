@@ -201,9 +201,16 @@
       </section>
 
       <section id="tab-changes" class="tab">
-        <div class="toolbar"><span id="changes-head" class="changes-head"></span><span class="spacer"></span>
+        <div class="toolbar">
+          <div class="seg icons" role="group" aria-label="Changes view" id="changes-mode">
+            <button type="button" data-m="turns" aria-pressed="true" aria-label="By turn: what each turn changed" title="By turn: what each turn changed"><svg width="14" height="14"><use href="#i-history"/></svg></button>
+            <button type="button" data-m="tree" aria-pressed="false" aria-label="Working tree: uncommitted changes vs HEAD" title="Working tree: uncommitted changes vs HEAD"><svg width="14" height="14"><use href="#i-gitlook"/></svg></button>
+          </div>
+          <span id="changes-head" class="changes-head"></span><span class="spacer"></span>
+          <button id="changes-collapse" type="button" class="ib" aria-label="Collapse all turns" title="Collapse all turns"><svg width="15" height="15"><use href="#i-collapse"/></svg></button>
           <button type="button" class="ask-ico lg" data-ask-list="changes" aria-label="Ask about these changes" title="Ask about these changes"><svg width="13" height="13"><use href="#i-star"/></svg></button>
           <button id="changes-refresh" class="icon-btn" aria-label="Refresh changes"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></div>
+        <div id="changes-turns" class="ct-list" tabindex="0" aria-label="Changes by turn"></div>
         <div id="changes" class="table-wrap"></div>
       </section>
 
