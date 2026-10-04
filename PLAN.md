@@ -124,7 +124,16 @@ For **deck-launched** sessions (see §6): compose, **send**, **queue** (ordered,
 editable, drag to reorder, delete = prune), **interrupt** (stop current turn,
 keep queue), and per-item "send now / move to top".
 
-For **foreign** sessions (desktop app / terminal): queue shown read-only from
+**No start/stop for the pilot to manage.** Any top-level session that is not
+running takes a prompt: sending resumes it under the deck (`--resume <id>`)
+with that prompt, on the title bar's model and the permission mode it last
+ran with. A deck process idle for 30 minutes ends by itself; a faint power
+button ends it early. Prompts still queued when the backend stops are saved
+(`~/.agent-deck/agents.json`) and come back held until the pilot presses
+play. Subagents have no prompt box, and the panel says why (they take
+instructions from their parent).
+
+For **foreign** sessions that are still running (desktop app / terminal): queue shown read-only from
 `queue-operation` records; "copy prompt" and "open session" affordances;
 Send is disabled with a tooltip explaining why.
 
@@ -140,6 +149,27 @@ Send is disabled with a tooltip explaining why.
 - Virtualized list — transcripts reach MBs and keep growing.
 - Follow-tail toggle; keyboard: ↓/↑ move, `Enter` opens details,
   `l` toggles follow.
+
+### 4.3a Background tab
+
+Background tasks come from the transcript (lib/transcript.mjs, `meta.tasks`).
+
+- **Start:** a Bash call with `backgroundTaskId` in its result (run in the
+  background, or moved there after `timedOutAfterMs`), a Monitor (`taskId`,
+  `timeoutMs`), or a background Agent (`isAsync`, `agentId`, `outputFile`).
+- **Reports:** `<task-notification>` blocks carry Monitor `<event>`s and a
+  final `<status>` with a summary that holds the exit code. They arrive by
+  queue-operation, by queued-command attachment and as the delivered user
+  message (`origin.kind: task-notification`); each is counted once and is
+  never treated as the pilot's prompt.
+- **Stops:** `TaskStop` marks a task stopped.
+
+The session view shows a strip of running tasks, and the Background tab
+lists them all. A task's details tail its output file, read through
+`/api/sessions/:id/tasks/:taskId/output`. That endpoint serves only the path
+the transcript recorded for that task, and only under `tasks/`. A task the
+transcript calls running in a session whose process is gone is shown as
+ended with it.
 
 ### 4.4 Files tab
 

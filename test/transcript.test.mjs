@@ -261,3 +261,60 @@ test('inference: one per API response, on its first event, with switches and cac
   assert.equal(s.events.at(-1).inference.synthetic, true);
   assert.equal(s.meta.model, 'claude-opus-5-5', 'a synthetic message is not a model switch');
 });
+
+// ------------------------------------------------------------ background tasks
+import { parseTaskNotification } from '../lib/transcript.mjs';
+
+test('background tasks: started, reported on, finished; notifications are not prompts', () => {
+  const s = new SessionState('bg');
+  const T = (n) => `2026-10-03T10:00:${String(n).padStart(2, '0')}.000Z`;
+  const use = (id, name, input, n) => ({ type: 'assistant', uuid: `a-${id}`, timestamp: T(n), message: { id: `m-${id}`, role: 'assistant', model: 'm', content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id, text, toolUseResult, n) => ({ type: 'user', uuid: `r-${id}`, timestamp: T(n), toolUseResult, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+  const note = (body) => `<task-notification>\n${body}\n</task-notification>`;
+  const out = '/private/tmp/claude-501/-p/s/tasks/b1.output';
+  // A command that hit the 2-minute limit, a deliberate one, a Monitor, a background Agent.
+  s.ingest(use('tu1', 'Bash', { command: 'npm test', description: 'Run the tests' }, 1));
+  s.ingest(result('tu1', `Command did not complete within its 120s timeout and was moved to the background (ID: b1). Output is being written to: ${out}. You will be notified.`, { backgroundTaskId: 'b1', timedOutAfterMs: 120000 }, 3));
+  s.ingest(use('tu2', 'Bash', { command: 'gh pr checks --watch', description: 'Watch CI', run_in_background: true }, 4));
+  s.ingest(result('tu2', 'Command running in background with ID: b2. Output is being written to: /tmp/x/tasks/b2.output. You will be notified.', { backgroundTaskId: 'b2' }, 4));
+  s.ingest(use('tu3', 'Monitor', { description: 'CI status', command: 'while true; do …; done' }, 5));
+  s.ingest(result('tu3', 'Monitor started (task m1, expires in 20m)', { taskId: 'm1', timeoutMs: 1200000 }, 5));
+  s.ingest(use('tu4', 'Agent', { description: 'Survey the docs', prompt: 'p', run_in_background: true }, 6));
+  s.ingest(result('tu4', 'Async agent launched', { isAsync: true, status: 'async_launched', agentId: 'ag1', outputFile: '/tmp/x/tasks/ag1.output' }, 6));
+  let ts = Object.fromEntries(s.publicMeta().tasks.map(t => [t.id, t]));
+  assert.deepEqual(Object.keys(ts).sort(), ['ag1', 'b1', 'b2', 'm1']);
+  assert.deepEqual([ts.b1.kind, ts.b1.status, ts.b1.outputFile, ts.b1.timedOutAfterMs, ts.b1.startedTs], ['command', 'running', out, 120000, T(1)]);
+  assert.equal(ts.m1.kind, 'monitor');
+  assert.equal(ts.m1.expiresTs, '2026-10-03T10:20:05.000Z');
+  assert.equal(ts.ag1.kind, 'agent');
+
+  // A Monitor event, seen first as a queue operation and then delivered: counted once, never a prompt.
+  const ev = note('<task-id>m1</task-id>\n<summary>Monitor event: "CI status"</summary>\n<event>fleet / test: IN_PROGRESS</event>');
+  s.ingest({ type: 'queue-operation', operation: 'enqueue', timestamp: T(7), content: ev });
+  s.ingest({ type: 'attachment', timestamp: T(7), attachment: { type: 'queued_command', prompt: ev } });
+  s.ingest({ type: 'queue-operation', operation: 'remove', timestamp: T(8), content: ev });
+  s.ingest({ type: 'user', uuid: 'n1', timestamp: T(8), origin: { kind: 'task-notification' }, message: { role: 'user', content: ev } });
+  // The command finishes; then Claude stops the monitor.
+  const done = note(`<task-id>b1</task-id>\n<tool-use-id>tu1</tool-use-id>\n<output-file>${out}</output-file>\n<status>failed</status>\n<summary>Background command "Run the tests" failed (exit code 1)</summary>`);
+  s.ingest({ type: 'user', uuid: 'n2', timestamp: T(9), origin: { kind: 'task-notification' }, message: { role: 'user', content: done } });
+  s.ingest(use('tu5', 'TaskStop', { task_id: 'm1' }, 10));
+  s.ingest(result('tu5', 'stopped', { ok: true }, 10));
+  ts = Object.fromEntries(s.publicMeta().tasks.map(t => [t.id, t]));
+  assert.deepEqual(ts.m1.events.map(e => e.text), ['fleet / test: IN_PROGRESS']);
+  assert.equal(ts.m1.status, 'stopped');
+  assert.equal(ts.m1.stopRequestedTs, T(10));
+  assert.deepEqual([ts.b1.status, ts.b1.exitCode, ts.b1.endedTs], ['failed', 1, T(9)]);
+  assert.equal(ts.b2.status, 'running');
+  const taskEvents = s.events.filter(e => e.subtype === 'task');
+  assert.deepEqual(taskEvents.map(e => [e.taskId, e.status, e.event]), [['m1', null, 'fleet / test: IN_PROGRESS'], ['b1', 'failed', null]]);
+  assert.equal(s.events.filter(e => e.kind === 'prompt').length, 0, 'no notification shows as the pilot\'s prompt');
+  assert.equal(s.publicMeta().lastPrompt, null);
+  assert.deepEqual(s.publicMeta().queue, [], 'notifications are not queued prompts');
+  assert.equal(s.events.filter(e => e.kind === 'queue').length, 0);
+});
+
+test('parseTaskNotification reads every field and the exit code', () => {
+  const n = parseTaskNotification('<task-notification><task-id>x</task-id><tool-use-id>t</tool-use-id><output-file>/o</output-file><status>completed</status><summary>Background command "a" completed (exit code 0)</summary></task-notification>');
+  assert.deepEqual(n, { taskId: 'x', toolUseId: 't', outputFile: '/o', status: 'completed', summary: 'Background command "a" completed (exit code 0)', event: null, exitCode: 0 });
+  assert.equal(parseTaskNotification('hello'), null);
+});

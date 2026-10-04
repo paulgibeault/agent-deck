@@ -39,6 +39,10 @@ out({ type: 'system', subtype: 'init', session_id: id, cwd, model, permissionMod
 const waiting = new Map();   // request_id -> resolve
 let interrupt = null;
 let busy = Promise.resolve();
+// Turns run one after another, so a turn can still be waiting to start when
+// its interrupt arrives (Send now writes both at once). Like the real CLI,
+// that interrupt applies to the turn that is starting, not to nothing.
+let pending = 0, earlyInterrupt = false;
 
 let buf = '';
 process.stdin.on('data', (d) => {
@@ -51,8 +55,8 @@ process.stdin.on('data', (d) => {
     if (msg.type === 'control_response') waiting.get(msg.response.request_id)?.(msg.response.response);
     else if (msg.type === 'control_request' && msg.request.subtype === 'interrupt') {
       out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: {} } });
-      interrupt?.();
-    } else if (msg.type === 'user') busy = busy.then(() => turn(msg.message.content));
+      if (interrupt) interrupt(); else if (pending) earlyInterrupt = true;
+    } else if (msg.type === 'user') { pending++; busy = busy.then(() => turn(msg.message.content)).finally(() => { pending--; }); }
   }
 });
 process.stdin.on('end', () => busy.then(() => process.exit(0)));
@@ -90,9 +94,10 @@ async function turn(content) {
   }
   let interrupted = false;
   if (/slow/.test(text)) {
-    interrupted = await new Promise((resolve) => { interrupt = () => resolve(true); setTimeout(() => resolve(false), 60_000); });
+    interrupted = earlyInterrupt || await new Promise((resolve) => { interrupt = () => resolve(true); setTimeout(() => resolve(false), 60_000); });
     interrupt = null;
   } else await sleep(400);
+  earlyInterrupt = false;
   if (interrupted) record({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } });
   else if (reply) record({ type: 'assistant', message: { model, id: `msg_${randomUUID().slice(0, 8)}`, role: 'assistant', content: [{ type: 'text', text: reply }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } } });
   cost += 0.001;
