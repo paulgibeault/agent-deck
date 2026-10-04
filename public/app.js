@@ -1,7 +1,10 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
-import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
+import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
+import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
+import { createFilesView, renderFileView } from './files.js';
+import { turnChanges, renderTurnList, renderTurnFileDiff } from './changes.js';
 import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
@@ -37,7 +40,7 @@ const state = {
   picked: false,              // the user picked an event to look at (scrolling back up does not resume live)
   cursor: null,               // selected event id
   rows: [], offsets: [], total: 0,
-  filter: '', kind: 'all', showThinking: prefs.showThinking !== false,
+  filter: '', kinds: initKinds(),
   treeFilter: '',
   subsOpen: new Set(), subsAll: new Set(),
   files: null, changes: null,
@@ -1833,29 +1836,50 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
+// A Bash command's category depends only on its input, so it's safe to keep.
+const catOf = (ev) => ev._cat || (ev._cat = filterCat(ev));
 function evMatches(ev, q) {
   if (!q) return true;
-  const hay = ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary} ${JSON.stringify(ev.tool.input).slice(0, 2000)}` : `${ev.kind} ${ev.text || ''} ${ev.subtype || ''}`;
+  const hay = (ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary} ${JSON.stringify(ev.tool.input).slice(0, 2000)}` : `${ev.kind} ${ev.text || ''} ${ev.subtype || ''}`) + ' ' + tagFor(ev).label;
   return hay.toLowerCase().includes(q);
 }
 function keepKind(ev) {
-  if (!state.showThinking && ev.kind === 'thinking') return false;
-  switch (state.kind) {
-    case 'tools': return ev.kind === 'tool' || ev.kind === 'prompt';
-    case 'messages': return ev.kind === 'text' || ev.kind === 'prompt';
-    case 'errors': return isErr(ev);
-    default: return true;
-  }
+  return allKinds() || state.kinds.has(catOf(ev)) || (state.kinds.has('errors') && isErr(ev));
 }
-/** Turn numbering and per-turn totals, chronological. */
+/**
+ * Turn numbering and per-turn totals, chronological. Also marks each finished
+ * turn's last message as its answer, and folds the queue's bookkeeping: a
+ * message that was delivered shows as its prompt (with the wait), so only
+ * still-waiting and withdrawn messages keep a row of their own (`hidden`).
+ */
 function turnInfo(events, live) {
-  const info = new Map(); let n = 0; let cur = null;
+  const info = new Map(); let n = 0; let cur = null; let lastText = null;
+  const hidden = new Set(); const waiting = []; let wait = null; let lastTs = null;
   for (const ev of events) {
-    if (ev.kind === 'prompt') { n++; cur = { n, start: ev.ts, count: 0, prompt: ev }; info.set(ev.id, cur); }
+    if (ev.kind !== 'prompt' && ev.ts) lastTs = ev.ts;
+    if (ev.kind === 'queue') {
+      if (ev.op === 'enqueue') waiting.push(ev);
+      else {
+        const i = ev.text ? waiting.findIndex(q => q.text === ev.text) : -1;
+        const q = i >= 0 ? waiting.splice(i, 1)[0] : waiting.shift();
+        if (q) hidden.add(q.id);
+        if (ev.op === 'dequeue') { hidden.add(ev.id); wait = q?.ts && ev.ts ? Date.parse(ev.ts) - Date.parse(q.ts) : null; }
+      }
+      continue;
+    }
+    if (ev.kind === 'prompt') {
+      // A new prompt closes a turn that never logged its end (terminal sessions).
+      if (lastText) lastText.answer = true;
+      if (cur && !cur.done) cur.done = { count: cur.count, dur: cur.start && lastTs ? Date.parse(lastTs) - Date.parse(cur.start) : null };
+      n++; cur = { n, start: ev.ts, count: 0, prompt: ev, queuedMs: wait }; info.set(ev.id, cur); lastText = null; wait = null;
+    }
+    else if (ev.kind === 'text') { lastText = ev; if (cur) cur.count++; }
     else if (ev.kind === 'turn_end') {
+      if (lastText) lastText.answer = true;
+      lastText = null;
       if (cur) {
         const dur = cur.start && ev.ts ? Date.parse(ev.ts) - Date.parse(cur.start) : null;
         cur.done = { count: cur.count, dur };
@@ -1864,6 +1888,9 @@ function turnInfo(events, live) {
       }
     } else if (cur && ev.kind !== 'thinking') cur.count++;
   }
+  // An idle session's last message is its answer, logged end or not.
+  if (lastText && !live && events.at(-1) === lastText) lastText.answer = true;
+  info.hidden = hidden;
   for (const v of info.values()) {
     if (!v.prompt) continue;
     const t = fmtTime(v.prompt.ts);
@@ -1878,11 +1905,17 @@ function buildRows() {
   const q = state.filter.toLowerCase();
   const s = state.byId.get(state.selected);
   const turns = turnInfo(c.events, phaseOf(s) === 'working');
+  // Under a kind filter a prompt stays as context only for turns with a match
+  // (rows run newest first, so a turn's events arrive before its prompt).
+  const narrowed = !allKinds() && !state.kinds.has('messages');
+  let hits = 0;
   const push = (ev, depth, turn = null) => {
-    if (ev.kind === 'turn_end' && state.kind !== 'all' && state.kind !== 'tools') return;
+    if (turns.hidden.has(ev.id)) return;
+    if (ev.kind === 'turn_end' && !allKinds()) return;
+    if (ev.kind === 'prompt' && narrowed) { if (!hits) return; hits = 0; rows.push({ ev, depth, turn }); return; }
     if (ev.kind !== 'prompt' && ev.kind !== 'turn_end' && !keepKind(ev)) return;
-    if (ev.kind === 'prompt' && state.kind === 'errors') return;
     if (!evMatches(ev, q)) return;
+    hits++;
     rows.push({ ev, depth, turn });
   };
   // Newest first. Inline subagent events sit directly under their Agent row.
@@ -1899,8 +1932,26 @@ function buildRows() {
   for (let i = 0; i < rows.length; i++) { offsets[i] = y; y += rowHeight(rows[i].ev); }
   state.rows = rows; state.offsets = offsets; state.total = y;
   $('events-count').textContent = rows.length;
-  const errs = c.events.reduce((n, ev) => n + (isErr(ev) ? 1 : 0), 0);
-  $('err-count').textContent = errs || '';
+  const counts = { errors: 0 };
+  for (const ev of c.events) {
+    if (turns.hidden.has(ev.id) || ev.kind === 'turn_end') continue;
+    if (isErr(ev)) counts.errors++;
+    const k = catOf(ev); counts[k] = (counts[k] || 0) + 1;
+  }
+  state.kindCounts = counts;
+  // The red mark is a "just failed" signal, not a tally: it shows only while
+  // the newest event is an error (thinking and turn ends don't count), and
+  // goes away on its own once the agent moves on. Errors stay in the filter.
+  let fresh = 0;
+  for (let i = c.events.length - 1; i >= 0; i--) {
+    const ev = c.events[i];
+    if (turns.hidden.has(ev.id) || ev.kind === 'turn_end' || ev.kind === 'thinking') continue;
+    if (!isErr(ev)) break;
+    fresh++;
+  }
+  $('err-count').textContent = fresh || '';
+  $('err-count').title = fresh ? (fresh > 1 ? `The last ${fresh} events failed` : 'The last event failed') : '';
+  if ($('kind-pop').matches(':popover-open')) renderKindPop();
 }
 const vlist = $('vlist'), vspacer = $('vspacer'), vrows = $('vrows');
 function rowIndexAt(y) {
@@ -1913,7 +1964,7 @@ function renderRows(jump = false) {
   vspacer.style.height = `${state.total + 12}px`;
   if (jump || state.live) vlist.scrollTop = 0; // newest rows live at the top
   if (!n) {
-    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || state.kind !== 'all' ? 'No events match.' : 'No events yet.') : 'Loading…'));
+    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || !allKinds() ? 'No events match.' : 'No events yet.') : 'Loading…'));
     return;
   }
   const first = rowIndexAt(Math.max(0, vlist.scrollTop - 200));
@@ -1967,17 +2018,74 @@ function setLive(on, quiet = false) {
   if (on && !quiet) { vlist.scrollTop = 0; followLive(); renderRows(); }
 }
 function pickEvent() { state.picked = true; setLive(false); }
-function setKind(k) {
-  state.kind = k;
-  for (const b of $('kind-seg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.k === k));
-  setTab('events');
+// The kind filter: a glyph button opening a multi-select of glyphs (names in
+// tooltips, counts beside them). From "all", picking a glyph shows just that
+// kind; after that each pick adds or removes one. Empty means all again.
+function initKinds() {
+  const ks = FILTERS.map(f => f.k);
+  const saved = Array.isArray(prefs.evKinds) ? prefs.evKinds.filter(k => ks.includes(k)) : null;
+  return new Set(saved?.length ? saved : prefs.showThinking === false ? ks.filter(k => k !== 'thinking') : ks);
+}
+const allKinds = () => FILTERS.every(f => state.kinds.has(f.k));
+const kindsLabel = () => allKinds() ? FILTER_ALL.label : FILTERS.filter(f => state.kinds.has(f.k)).map(f => f.label).join(', ');
+function setKinds(ks) {
+  state.kinds = new Set(ks.length ? ks : FILTERS.map(f => f.k));
+  prefs.evKinds = allKinds() ? null : [...state.kinds]; savePrefs();
+  paintKind();
+  if ($('kind-pop').matches(':popover-open')) renderKindPop();
   scheduleRows(true);
 }
+function pickKind(k) {
+  if (k === 'all') return setKinds([]);
+  if (allKinds()) return setKinds([k]);
+  const ks = new Set(state.kinds); ks.has(k) ? ks.delete(k) : ks.add(k);
+  setKinds([...ks]);
+}
+const glyph = (f) => h('span', { class: `tic f-${f.fam}` }, svgUse(f.icon, 15));
+function paintKind() {
+  const on = FILTERS.filter(f => state.kinds.has(f.k));
+  const all = allKinds();
+  const more = !all && on.length > 3 ? [h('span', { class: 'kb-more' }, `+${on.length - 3}`)] : [];
+  $('kind-ico').replaceChildren(...(all ? [glyph(FILTER_ALL)] : on.slice(0, 3).map(glyph)), ...more);
+  const btn = $('kind-btn'); btn.classList.toggle('on', !all);
+  btn.title = `Showing: ${kindsLabel()}`; btn.setAttribute('aria-label', btn.title);
+}
+function renderKindPop() {
+  const n = state.kindCounts || {};
+  const all = allKinds();
+  const item = (f, k, checked, count) => h('button', {
+    type: 'button', role: 'menuitemcheckbox', class: `kp-item${k === 'all' ? ' kp-all' : ''}`, 'aria-checked': String(checked), dataset: { k },
+    title: f.label, 'aria-label': `${f.label}${count ? ', ' + count : ''}`,
+  }, glyph(f), h('span', { class: 'kp-n' }, count ? fmtTokens(count) : ''));
+  const total = FILTERS.reduce((t, f) => t + (f.k === 'errors' ? 0 : n[f.k] || 0), 0);
+  $('kind-pop').classList.toggle('some', !all);
+  $('kind-pop').replaceChildren(item(FILTER_ALL, 'all', all, total), h('span', { class: 'kp-sep', role: 'separator' }),
+    ...FILTERS.filter(f => n[f.k] || state.kinds.has(f.k) && !all).map(f => item(f, f.k, !all && state.kinds.has(f.k), n[f.k])));
+  return $('kind-pop');
+}
+$('kind-pop').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const r = $('kind-btn').getBoundingClientRect();
+  const pop = renderKindPop();
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.left = `${Math.max(8, r.left + r.width / 2 - pop.offsetWidth / 2)}px`;
+  pop.querySelector('.kp-item')?.focus();
+});
+$('kind-pop').addEventListener('click', (e) => {
+  const b = e.target.closest('.kp-item'); if (!b) return;
+  pickKind(b.dataset.k);
+  $('kind-pop').querySelector(`[data-k="${b.dataset.k}"]`)?.focus();
+});
+$('kind-pop').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = [...$('kind-pop').querySelectorAll('.kp-item')];
+  const i = items.indexOf(document.activeElement);
+  items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+});
+paintKind();
 $('follow').onclick = () => setLive(true);
 $('ev-filter').oninput = (e) => { state.filter = e.target.value; scheduleRows(); };
-$('kind-seg').onclick = (e) => { const b = e.target.closest('button'); if (b) setKind(b.dataset.k); };
-$('show-thinking').setAttribute('aria-pressed', String(state.showThinking));
-$('show-thinking').onclick = () => { state.showThinking = !state.showThinking; prefs.showThinking = state.showThinking; savePrefs(); $('show-thinking').setAttribute('aria-pressed', String(state.showThinking)); scheduleRows(); };
 
 function scrollToRow(i) {
   const top = state.offsets[i]; const hgt = rowHeight(state.rows[i].ev);
@@ -2000,7 +2108,7 @@ function moveCursor(delta) {
 function jumpToSeq(seq) {
   const c = state.cache.get(state.selected); if (!c) return;
   const ev = c.events.find(e => e.seq === seq); if (!ev) { toast('That event is not loaded'); return; }
-  if (state.kind !== 'all' || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKind('all'); buildRows(); }
+  if (!allKinds() || state.filter) { state.filter = ''; $('ev-filter').value = ''; setKinds([]); buildRows(); }
   setTab('events'); pickEvent();
   const i = state.rows.findIndex(r => r.ev.id === ev.id);
   state.cursor = ev.id;
@@ -2214,14 +2322,19 @@ function askList(key, btn) {
   switch (key) {
     case 'events': {
       const lines = state.rows.slice(0, 400).map(({ ev }) => `${fmtTime(ev.ts)} ${tagFor(ev).label} ${ev.kind === 'tool' ? ev.tool.summary + (ev.tool.isError ? ' [error]' : '') : oneLine(ev.text || '', 200)}`);
-      spec = { kind: 'text', label: `Events (${state.kind}${state.filter ? `, filter "${state.filter}"` : ''})`, text: lines.join('\n'), what: 'these events' }; ring = { type: 'sel', sel: '#vlist' }; break;
+      spec = { kind: 'text', label: `Events (${kindsLabel()}${state.filter ? `, filter "${state.filter}"` : ''})`, text: lines.join('\n'), what: 'these events' }; ring = { type: 'sel', sel: '#vlist' }; break;
     }
     case 'files': {
       const cwd = state.byId.get(state.selected)?.cwd;
-      spec = { kind: 'text', label: 'Files touched', text: (state.files || []).map(f => `${relPath(f.path, cwd)} reads=${f.reads} writes=${f.writes} last=${f.lastTs || ''}`).join('\n'), what: 'these files' }; ring = { type: 'sel', sel: '#files' }; break;
+      const shown = [...$('files').querySelectorAll('.frow[aria-level]')].map(r => '  '.repeat(+r.getAttribute('aria-level') - 1) + r.querySelector('.fname').textContent + (r.classList.contains('dir') ? '/' : ''));
+      spec = { kind: 'text', label: `Files in ${basename(cwd || '')}`, text: `Folder tree as shown:\n${shown.join('\n')}\n\nFiles this session touched:\n${(state.files || []).map(f => `${relPath(f.path, cwd)} reads=${f.reads} writes=${f.writes} last=${f.lastTs || ''}`).join('\n')}`, what: 'these files' }; ring = { type: 'sel', sel: '#files' }; break;
     }
     case 'changes': {
       const c = state.changes;
+      if (changesMode() === 'turns') {
+        spec = { kind: 'text', label: 'Changes by turn', text: ct.turns.map(t => `Turn ${t.n}: ${oneLine(t.prompt?.text || '', 120)} (+${t.add} -${t.del})\n${t.files.map(f => `  ${f.rel} +${f.add} -${f.del}${f.created ? ' (new)' : ''}${f.edits.length > 1 ? ` x${f.edits.length}` : ''}`).join('\n')}${t.shell.length ? `\n  + ${t.shell.length} edit(s) by shell command` : ''}`).join('\n') || '(no changes)', what: 'these changes' };
+        ring = { type: 'sel', sel: '#changes-turns' }; break;
+      }
       spec = { kind: 'text', label: 'Git changes', text: c?.repo ? `branch ${c.branch} ahead ${c.ahead ?? '?'} behind ${c.behind ?? '?'}\n${c.files.map(f => `${f.untracked ? '??' : (f.x + f.y).trim()} ${f.path} +${f.added ?? 0} -${f.deleted ?? 0}`).join('\n')}\nrecent commits:\n${c.commits.map(k => `${k.short} ${k.subject}`).join('\n')}` : 'not a git repository', what: 'these changes' };
       ring = { type: 'sel', sel: '#changes' }; break;
     }
@@ -2257,48 +2370,57 @@ function setTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === `tab-${name}`));
   if (name === 'events') renderRows();
   if (name === 'files' && state.selected) loadFiles();
-  if (name === 'changes' && state.selected) loadChanges();
+  if (name === 'changes' && state.selected) { loadChanges(); renderTurns(); }
   if (name === 'shell') $('sh-cmd').focus();
   if (name === 'bg') renderBackground();
 }
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab-b'); if (b) setTab(b.dataset.tab); });
 
 // ------------------------------------------------------------ files tab
+// A tree of the session's folder (files.js); folders open and close in place,
+// picking a file shows it in the details pane. The session's own reads/writes mark the tree.
+const files = createFilesView({
+  list: $('files'), crumbs: $('files-crumbs'), find: $('files-find'), api,
+  onOpen: ({ rel, abs, entry }) => openFile(abs, null, { rel, git: entry?.git, size: entry?.size, mtime: entry?.mtime }),
+  openEditor: (p, line) => api.openEditor(p, line),
+  onCount: (n) => { $('files-count').textContent = n || ''; },
+});
 async function loadFiles() {
   const id = state.selected; if (!id) return;
+  const cwd = state.byId.get(id)?.cwd || state.cache.get(id)?.meta?.cwd || null;
   try {
-    const r = await api.get(`/api/sessions/${sid(id)}/files`);
+    const r = await api.get(`/api/sessions/${sid(id)}/files`).catch(() => ({ files: [] }));
     if (state.selected !== id) return;
-    state.files = r.files; renderFiles();
+    state.files = r.files;
+    await files.show(id, cwd, r.files || []);
+    paintFilesToggles();
   } catch (e) { $('files').replaceChildren(h('div', { class: 'pad muted' }, e.message)); }
 }
-function renderFiles() {
-  const files = state.files || []; const cwd = state.byId.get(state.selected)?.cwd;
-  $('files-count').textContent = files.length || '';
-  const now = Date.now();
-  const table = h('table', { class: 'list' }, h('thead', {}, h('tr', {}, h('th', {}, 'File'), h('th', {}, 'Reads'), h('th', {}, 'Writes'), h('th', {}, 'Last'), h('th', {}, ''))));
-  const tb = h('tbody');
-  for (const f of files) {
-    const age = f.lastTs ? now - Date.parse(f.lastTs) : null;
-    const hot = age != null && age < 10 * 60_000;
-    tb.append(h('tr', { onclick: (e) => { tb.querySelectorAll('tr').forEach(r => r.classList.remove('selected')); e.currentTarget.classList.add('selected'); openFile(f.path); } },
-      h('td', { title: f.path }, hot ? h('span', { class: 'hot', title: 'touched in the last 10 minutes' }, '● ') : null, relPath(f.path, cwd)),
-      h('td', { class: 'num' }, f.reads || ''), h('td', { class: 'num' }, f.writes || ''),
-      h('td', { class: 'num', title: f.lastTs || '' }, f.lastTs ? ago(age) + ' ago' : ''),
-      h('td', {}, ib('i-open', 'Open in editor', (e) => { e.stopPropagation(); api.openEditor(f.path, 1); }, { size: 13 }))));
-  }
-  table.append(tb);
-  $('files').replaceChildren(files.length ? table : h('div', { class: 'pad muted' }, 'No files touched yet.'));
-}
-async function openFile(path, line = null) {
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico|pdf|mp3|wav|ogg|m4a|flac|mp4|webm|mov)$/i;
+async function openFile(path, line = null, info = {}) {
   pickEvent(); state.detailsKey = `file:${path}`; syncDetailsPane();
+  const ctx = { ...detailCtx(), root: files.root, openPath: (p) => openPathFromLink(p) };
+  const rel = info.rel ?? (files.root && path.startsWith(files.root + '/') ? path.slice(files.root.length + 1) : null);
   try {
-    const f = await api.get(`/api/file?path=${encodeURIComponent(path)}`);
+    const f = await api.get(`/api/file?path=${encodeURIComponent(path)}${MEDIA_EXT.test(path) ? '&meta=1' : ''}`);
     if (state.detailsKey !== `file:${path}`) return;
-    $('details-body').replaceChildren(renderFileDetails(f, detailCtx(), line));
-  } catch (e) { $('details-body').replaceChildren(renderFileDetails({ path, error: e.message }, detailCtx())); }
+    $('details-body').replaceChildren(renderFileView({ ...info, ...f, abs: path, rel }, ctx));
+  } catch (e) { $('details-body').replaceChildren(renderFileView({ abs: path, rel, error: e.message }, ctx)); }
+  $('details-body').scrollTop = 0;
 }
-$('files-refresh').onclick = loadFiles;
+/** A relative link in rendered markdown: reveal it in the tree when it's inside. */
+function openPathFromLink(p) {
+  if (files.root && p.startsWith(files.root + '/')) { setTab('files'); files.reveal(p.slice(files.root.length + 1), { open: true }); }
+  else openFile(p);
+}
+function paintFilesToggles() {
+  $('files-touched').setAttribute('aria-pressed', String(files.mode === 'touched'));
+  $('files-ignored').setAttribute('aria-pressed', String(files.ignored));
+}
+$('files-touched').onclick = () => { files.setMode(files.mode === 'touched' ? 'tree' : 'touched'); paintFilesToggles(); };
+$('files-ignored').onclick = () => { files.setIgnored(!files.ignored); paintFilesToggles(); };
+$('files-collapse').onclick = () => files.collapseAll();
+$('files-refresh').onclick = () => { loadFiles(); files.refresh(); };
 
 // ------------------------------------------------------------ changes tab
 async function loadChanges() {
@@ -2343,7 +2465,77 @@ async function openDiff(file) {
     $('details-body').replaceChildren(renderDiffDetails(d, detailCtx()));
   } catch (e) { toast(e.message); }
 }
-$('changes-refresh').onclick = loadChanges;
+$('changes-refresh').onclick = () => { loadChanges(); refreshSnap(true); renderTurns(false); };
+
+// ---- by turn: what each turn changed, file by file (changes.js)
+const ct = { collapsed: new Set(), sid: null, selected: null, turns: [], snap: null, snapAt: 0, snapping: false };
+/** The deck's git snapshots for this session's turns (lib/turnsnap.mjs); throttled. */
+async function refreshSnap(force = false) {
+  const id = state.selected; if (!id || ct.snapping || (!force && ct.sid === id && Date.now() - ct.snapAt < 4000)) return;
+  ct.snapping = true;
+  try { const r = await api.get(`/api/sessions/${sid(id)}/turn-changes`); if (state.selected === id) { ct.snap = r; ct.snapAt = Date.now(); renderTurns(false); } }
+  catch { /* no folder / not a repo */ } finally { ct.snapping = false; }
+}
+const changesMode = () => prefs.changesMode || 'turns';
+function paintChangesMode() {
+  const m = changesMode();
+  $('tab-changes').classList.toggle('by-turn', m === 'turns');
+  for (const b of $('changes-mode').children) b.setAttribute('aria-pressed', String(b.dataset.m === m));
+}
+$('changes-mode').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  prefs.changesMode = b.dataset.m; savePrefs(); paintChangesMode();
+  if (b.dataset.m === 'turns') renderTurns(); else loadChanges();
+};
+paintChangesMode();
+function renderTurns(fetchSnap = true) {
+  if (changesMode() !== 'turns' || !state.selected) return;
+  const c = state.cache.get(state.selected); if (!c) return;
+  if (ct.sid !== state.selected) { ct.sid = state.selected; ct.collapsed = new Set(); ct.selected = null; ct.snap = null; ct.snapAt = 0; }
+  if (fetchSnap) refreshSnap();
+  const cwd = state.byId.get(state.selected)?.cwd || c.meta?.cwd || null;
+  ct.turns = turnChanges(c.events, cwd, ct.snap);
+  const root = $('changes-turns'); const top = root.scrollTop;
+  renderTurnList(root, ct.turns, {
+    selected: ct.selected, collapsed: ct.collapsed,
+    onToggle: (n) => { ct.collapsed.has(n) ? ct.collapsed.delete(n) : ct.collapsed.add(n); renderTurns(false); },
+    onFile: (t, f) => openTurnFile(t, f),
+    onShell: (ev) => { ct.selected = `ev:${ev.id}`; renderTurns(false); pickEvent(); showEventDetails(ev); },
+  });
+  root.scrollTop = top;
+}
+async function openTurnFile(turn, file) {
+  const id = state.selected; const key = `tdiff:${turn.n}:${file.path}`;
+  ct.selected = `${turn.n}:${file.path}`; renderTurns(false);
+  pickEvent(); state.detailsKey = key; syncDetailsPane();
+  const ctx0 = { ...detailCtx(), jump: (ev) => { setTab('events'); jumpToSeq(ev.seq); } };
+  const onMode = (m) => { prefs.diffMode = m; savePrefs(); };
+  if (file.git) {
+    const r = await api.get(`/api/sessions/${sid(id)}/turn-diff?turn=${encodeURIComponent(turn.prompt.id)}&file=${encodeURIComponent(file.repoPath)}`).catch((e) => ({ error: e.message }));
+    if (state.detailsKey !== key) return;
+    $('details-body').replaceChildren(r.error ? h('div', { class: 'pad muted' }, r.error) : renderTurnFileDiff({ turn, file, gitDiff: r.diff }, ctx0, prefs.diffMode || 'split', onMode));
+    $('details-body').scrollTop = 0;
+    return;
+  }
+  const edits = await Promise.all(file.edits.map(ev => api.get(`/api/sessions/${sid(id)}/events/${sid(ev.id)}`).then(detail => ({ ev, detail })).catch(() => ({ ev, detail: null }))));
+  if (state.detailsKey !== key) return;
+  const ctx = { ...detailCtx(), jump: (ev) => { setTab('events'); jumpToSeq(ev.seq); } };
+  $('details-body').replaceChildren(renderTurnFileDiff({ turn, file, edits }, ctx, prefs.diffMode || 'split', (m) => { prefs.diffMode = m; savePrefs(); }));
+  $('details-body').scrollTop = 0;
+}
+$('changes-collapse').onclick = () => {
+  const all = ct.turns.every(t => ct.collapsed.has(t.n));
+  ct.collapsed = all ? new Set() : new Set(ct.turns.map(t => t.n)); renderTurns(false);
+};
+$('changes-turns').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+  const rows = [...$('changes-turns').querySelectorAll('.ct-file, .ct-turn')];
+  let i = rows.findIndex(r => r.classList.contains('sel') || r === document.activeElement);
+  if (e.key === 'Enter') { rows[i]?.click(); e.preventDefault(); e.stopPropagation(); return; }
+  i = Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+  rows[i]?.focus(); if (rows[i]?.classList.contains('ct-file')) rows[i].click();
+  e.preventDefault(); e.stopPropagation();
+});
 setInterval(() => { if (state.tab === 'changes' && state.selected && document.visibilityState === 'visible') loadChanges(); }, 10_000);
 
 // ------------------------------------------------------------ shell tab
