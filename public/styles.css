@@ -835,3 +835,27 @@ select.field { font-family: var(--sans); padding-right: 6px; }
 /* Ending the process is rarely needed: present, but quiet. */
 .ib.subtle { opacity: .45; }
 .ib.subtle:hover, .ib.subtle:focus-visible { opacity: 1; }
+
+/* ---------------------------------------------------------- background tasks */
+.bgslot:empty { display: none; }
+.bgslot { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 6px 0 0; font-size: 12px; }
+.bg-k { display: inline-flex; align-items: center; gap: 5px; color: var(--fg2); font-weight: 500; }
+.bg-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 46%; height: 24px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 12px; background: var(--bg1); color: var(--fg2); font-size: 12px; cursor: pointer; }
+.bg-chip:hover { border-color: var(--info); color: var(--fg); }
+.bg-dot { flex: none; width: 6px; height: 6px; border-radius: 3px; background: var(--ok); animation: breathe 2.4s ease-in-out infinite; }
+.bg-t { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.bg-dur { font: 11px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.bg-ev { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 220px; }
+.bgc { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; color: var(--ok-fg); font-size: 10.5px; }
+.count.live { color: var(--ok-fg); }
+table.bg-tbl { font-family: var(--sans); }
+table.bg-tbl td { vertical-align: top; }
+table.bg-tbl .bg-what { white-space: normal; max-width: 0; width: 45%; }
+table.bg-tbl .bg-cmd { font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+table.bg-tbl .bg-act { white-space: normal; max-width: 260px; font-size: 11.5px; }
+.bg-empty { padding: 16px; }
+.bg-out { max-height: 50vh; overflow: auto; }
+.bg-events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; max-height: 30vh; overflow: auto; }
+.bg-events li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
+.bg-sum { margin: 0; }
+.bg-stop { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }

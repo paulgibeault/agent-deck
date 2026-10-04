@@ -242,6 +242,24 @@ minute, "crash" exits with an error.
 
   Keys: `Space` play / pause, `]` next, `j` open what is being read, `r` read
   the selection, `b` the bell.
+- **Background.** Commands Claude runs in the background (or that hit the
+  2-minute limit and were moved there), Monitors and background agents.
+  - **Strip:** while any run, a strip under the status line lists them with
+    a clock and the latest Monitor event.
+  - **Markers:** the rail shows ⧗ and a count, and the overview says how
+    many are running.
+  - **Background tab** (`5`): every task with its state, exit code, kind,
+    command, when it started, how long it ran and the latest event. Filter by
+    text, or by running or finished.
+  - **Details:** a task's details show its command (copy, run in Shell), a
+    Monitor's events, the result, and the live end of its output file. It
+    refreshes every 2s while it runs.
+  - **Events list:** the call that started a task carries a `background`
+    button. Task updates appear as `Bg` rows rather than as your prompts.
+  - **Read aloud:** "Background finished" can be narrated (off by default).
+  - **Limits:** the deck can't stop a task itself, since it belongs to the
+    Claude process. For deck sessions the details offer "Ask Claude to stop
+    it".
 - **Shell.** Pilot's command runner: pick a cwd (defaults to the selected
   session's), run a command, see streamed stdout/stderr, exit code and
   duration, kill long runs. History with ↑/↓.

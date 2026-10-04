@@ -18,9 +18,10 @@ export const KINDS = [
   ['error', 'Errors', 'A session hit an error'],
   ['done', 'Finished', 'A session handed back'],
   ['brief', 'Brief updated', 'A new brief summary'],
+  ['background', 'Background finished', 'A background command, Monitor or agent ended'],
 ];
 const KIND_LABEL = Object.fromEntries(KINDS.map(([k, l]) => [k, l]));
-const DEFAULTS = { scope: 'all', subagents: false, voice: '', rate: 1.1, events: { said: true, needs: false, error: false, done: false, brief: false }, length: 'full', latest: true };
+const DEFAULTS = { scope: 'all', subagents: false, voice: '', rate: 1.1, events: { said: true, needs: false, error: false, done: false, brief: false, background: false }, length: 'full', latest: true };
 const SHORT_CHARS = 600;
 const LINGER_MS = 1500;
 const BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, dt, dd';
