@@ -1,6 +1,7 @@
 // public/attach.js — files that ride along with a prompt. A prompt box gets a
 // paperclip, takes pasted files and dropped ones, and shows what is attached
-// in a small tray above the text. Images go as images (big ones are scaled
+// as small thumbnails pinned in the box's bottom-right corner (the box never
+// moves; text may run under them, and they fade while you type there). Images go as images (big ones are scaled
 // down to fit the API's limit), PDFs as documents, anything that reads as
 // text is inlined. lib/agent.mjs turns them into content blocks.
 import { h, svgUse } from './events.js';
@@ -83,20 +84,54 @@ export function attachable({ input, tray, clip, file, drop, toast }) {
   let pending = 0;
   const enabled = () => !input.disabled;
 
+  // Up to three chips; past that, two and a "+n" that lists the rest.
+  const SLOTS = 3;
+  const chip = (a, i) => {
+    const x = h('button', { type: 'button', class: 'att-x', 'aria-label': `Remove ${a.name}`, title: 'Remove', onclick: (e) => { e.stopPropagation(); remove(i); } }, svgUse('i-x', 9));
+    const tip = `${a.name} · ${kb(a.size)}`;
+    if (a.url) return h('button', { type: 'button', class: 'att att-img', title: `${tip} · click to enlarge`, 'aria-label': tip, onclick: (e) => preview(a, e.currentTarget) }, h('img', { src: a.url, alt: '' }), x);
+    const pdf = a.mediaType === 'application/pdf';
+    return h('span', { class: `att att-file${pdf ? ' pdf' : ''}`, title: tip, tabindex: '0', 'aria-label': tip }, svgUse('i-file', 15), h('span', { class: 'att-ext' }, pdf ? 'PDF' : (a.name.split('.').pop() || 'txt').slice(0, 4)), x);
+  };
   function render() {
     tray.hidden = !list.length && !pending;
-    tray.replaceChildren(...list.map((a, i) => {
-      const x = h('button', { type: 'button', class: 'att-x', 'aria-label': `Remove ${a.name}`, title: 'Remove', onclick: () => remove(i) }, svgUse('i-x', 10));
-      const tip = `${a.name} · ${kb(a.size)}`;
-      return a.url
-        ? h('span', { class: 'att att-img', title: tip }, h('img', { src: a.url, alt: a.name }), x)
-        : h('span', { class: 'att att-file', title: tip }, svgUse('i-clip', 11), h('span', { class: 'att-n' }, a.name), x);
-    }), ...(pending ? [h('span', { class: 'att att-wait muted' }, 'reading…')] : []));
+    const shown = list.length > SLOTS ? list.slice(-(SLOTS - 1)) : list;
+    const offset = list.length - shown.length;
+    const more = offset ? [h('button', { type: 'button', class: 'att att-more', title: `${offset} more`, 'aria-label': `${offset} more attachments`, onclick: (e) => moreList(e.currentTarget) }, `+${offset}`)] : [];
+    tray.replaceChildren(...more, ...shown.map((a, k) => chip(a, offset + k)), ...(pending ? [h('span', { class: 'att att-wait', title: 'reading…' }, h('i'), h('i'), h('i'))] : []));
   }
+  // One floating panel per box for the enlarged image and the "+n" list.
+  const pop = h('div', { class: 'att-pop', popover: 'auto' });
+  document.body.append(pop);
+  const place = (anchor) => {
+    pop.showPopover?.();
+    const r = anchor.getBoundingClientRect(); const pr = pop.getBoundingClientRect();
+    pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pr.width - 8, r.right - pr.width))}px`;
+    pop.style.top = `${Math.max(8, r.top - pr.height - 8)}px`;
+  };
+  function preview(a, anchor) {
+    pop.replaceChildren(h('img', { src: a.url, alt: a.name }), h('div', { class: 'att-cap' }, `${a.name} · ${kb(a.size)}`));
+    place(anchor);
+  }
+  function moreList(anchor) {
+    pop.replaceChildren(h('div', { class: 'att-list' }, ...list.map((a, i) => h('div', { class: 'att-li' },
+      a.url ? h('img', { src: a.url, alt: '' }) : svgUse('i-file', 14), h('span', { class: 'att-n' }, a.name), h('span', { class: 'att-sz' }, kb(a.size)),
+      h('button', { type: 'button', class: 'ib', 'aria-label': `Remove ${a.name}`, title: 'Remove', onclick: () => { remove(i); list.length ? moreList(anchor) : pop.hidePopover?.(); } }, svgUse('i-x', 10))))));
+    place(anchor);
+  }
+  // Text that reaches the corner: the chips step back while you type.
+  let fadeTimer = null;
+  input.addEventListener('input', () => {
+    if (tray.hidden) return;
+    const crowded = input.scrollHeight > input.clientHeight - tray.offsetHeight - 4 || input.scrollTop > 0;
+    if (!crowded) return;
+    tray.classList.add('dim');
+    clearTimeout(fadeTimer); fadeTimer = setTimeout(() => tray.classList.remove('dim'), 1200);
+  });
   function remove(i) {
     const [a] = list.splice(i, 1);
     if (a?.url) URL.revokeObjectURL(a.url);
-    render(); input.focus();
+    render(); if (!pop.matches?.(':popover-open')) input.focus();
   }
 
   async function add(files) {

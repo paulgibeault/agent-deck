@@ -143,13 +143,13 @@
         <ul id="queue" class="queue"></ul>
         <div id="nowslot" class="nowslot"></div>
         <div id="bgslot" class="bgslot"></div>
-        <div id="compose-files" class="att-tray" hidden></div>
         <div class="compose">
           <div class="compose-box">
             <div class="ta-wrap">
               <textarea id="compose" rows="2" placeholder="Sending is for sessions the deck launches. This one is observe-only." disabled></textarea>
               <button id="compose-clip" type="button" class="ib clip" aria-label="Attach files" title="Attach images, PDFs or text files. You can also paste or drop them here."><svg width="13" height="13"><use href="#i-clip"/></svg></button>
               <input id="compose-file" type="file" multiple hidden>
+              <div id="compose-files" class="att-tray" hidden></div>
             </div>
           </div>
           <div class="compose-actions">
@@ -295,11 +295,11 @@
     <datalist id="ns-cwds"></datalist>
     <label class="ns-l" for="ns-prompt">First prompt</label>
     <div id="ns-prompt-box" class="compose-box">
-      <div id="ns-files" class="att-tray" hidden></div>
       <div class="ta-wrap">
         <textarea id="ns-prompt" class="ns-prompt" rows="4" placeholder="What should Claude do? (⌘↩ to start)"></textarea>
         <button id="ns-clip" type="button" class="ib clip" aria-label="Attach files" title="Attach images, PDFs or text files. You can also paste or drop them here."><svg width="13" height="13"><use href="#i-clip"/></svg></button>
         <input id="ns-file" type="file" multiple hidden>
+        <div id="ns-files" class="att-tray" hidden></div>
       </div>
     </div>
     <div class="ns-row">
