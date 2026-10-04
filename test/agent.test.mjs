@@ -69,14 +69,21 @@ test('launch, queue, permission, interrupt, stop', async (t) => {
   agents.queueOp(id, { op: 'edit', itemId: e.id, text: 'new wording' });
   s = await until(agents, id, x => x.status === 'idle' && !x.queue.length && !x.editing);
 
-  // Send now cuts the running turn short and goes ahead of what is queued.
+  // Send now cuts the running turn short and sends everything queued, plus the new prompt, as one message.
   agents.send(id, 'slow one');
-  agents.send(id, 'queued');
+  agents.send(id, 'queued one');
+  agents.send(id, 'queued two');
   agents.sendNow(id, 'urgent');
-  s = await until(agents, id, x => x.status === 'busy' && x.queue.length === 1 && !x.interrupting);
-  assert.deepEqual(s.queue.map(x => x.text), ['queued']);
+  s = await until(agents, id, x => x.status === 'busy' && !x.queue.length && !x.interrupting);
   assert.equal(s.held, false);
   s = await until(agents, id, x => x.status === 'idle' && !x.queue.length);
+  // With nothing typed, Send now sends what is queued; with nothing at all, it refuses.
+  agents.send(id, 'slow one');
+  agents.send(id, 'only the queue');
+  agents.sendNow(id, '');
+  s = await until(agents, id, x => x.status === 'busy' && !x.queue.length && !x.interrupting);
+  s = await until(agents, id, x => x.status === 'idle' && !x.queue.length);
+  assert.throws(() => agents.sendNow(id, '  '), /nothing to send/);
 
   // Permission prompt waits for the pilot.
   agents.send(id, 'needs permission');
@@ -92,6 +99,8 @@ test('launch, queue, permission, interrupt, stop', async (t) => {
   assert.match(lines, /will not ask again/);
   assert.match(lines, /"content":"new wording"/);
   assert.doesNotMatch(lines, /"content":"old wording"/);
+  assert.match(lines, /"content":"queued one\\n\\nqueued two\\n\\nurgent"/);
+  assert.match(lines, /"content":"only the queue"/);
 
   // The index sees it as a live, idle session.
   const index = new SessionIndex({ claudeDir });

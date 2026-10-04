@@ -3,6 +3,7 @@ import { renderRow, renderDetails, renderFileDetails, renderDiffDetails, inferen
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { attachable, guardWindowDrops } from './attach.js';
+import { createNarration } from './narration.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -104,8 +105,8 @@ function connect() {
   es.addEventListener('attention', (e) => { const a = JSON.parse(e.data); state.attention.log = [...state.attention.log, a].slice(-100); narrate(a); });
   es.addEventListener('usage', (e) => { state.usage = JSON.parse(e.data); state.usage._at = Date.now(); if (state.usage.narrator) state.narrator = { ...state.narrator, ...state.usage.narrator }; renderQuota(); });
   es.addEventListener('briefs.snapshot', (e) => { const all = JSON.parse(e.data); for (const [id, b] of Object.entries(all)) state.briefs.set(id, b); refreshBriefViews(); });
-  es.addEventListener('brief.update', (e) => { const b = JSON.parse(e.data); if (b.narrator) state.narrator = { ...state.narrator, ...b.narrator }; state.briefs.set(b.id, b); refreshBriefViews(b.id); });
-  es.addEventListener('event.batch', (e) => { const { sessionId, events } = JSON.parse(e.data); onEvents(sessionId, events); });
+  es.addEventListener('brief.update', (e) => { const b = JSON.parse(e.data); if (b.narrator) state.narrator = { ...state.narrator, ...b.narrator }; narrateBrief(b); state.briefs.set(b.id, b); refreshBriefViews(b.id); });
+  es.addEventListener('event.batch', (e) => { const { sessionId, events } = JSON.parse(e.data); narrateEvents(sessionId, events); onEvents(sessionId, events); });
   es.addEventListener('event.update', (e) => { const { sessionId, event } = JSON.parse(e.data); onUpdate(sessionId, event); });
   es.addEventListener('session.update', (e) => onSession(JSON.parse(e.data)));
   es.addEventListener('deck.update', (e) => onDeck(JSON.parse(e.data)));
@@ -443,9 +444,9 @@ function renderTree() {
 }
 // ------------------------------------------------------------ needs you
 // The server turns signal changes into entries with a sentence to speak
-// (lib/attention.mjs). Narration reads them out; for now the sentence goes to
-// a polite live region, so a screen reader already announces when a session
-// needs you or finishes. Spoken narration plugs in here.
+// (lib/attention.mjs). The sentence goes to a polite live region, so a screen
+// reader announces when a session needs you or finishes, and the entry goes
+// to read aloud, which decides by its settings whether to speak it.
 function narrate(entry) {
   if (entry.initial) return;
   const worth = entry.needsYou || (entry.signal === 'done' && entry.from === 'working');
@@ -453,7 +454,170 @@ function narrate(entry) {
   const el = $('announcer');
   el.textContent = '';
   requestAnimationFrame(() => { el.textContent = entry.say; });
+  const kind = entry.signal === 'input' ? 'needs' : entry.signal === 'error' ? 'error' : 'done';
+  narration.auto({ id: `att:${entry.id}:${entry.at}`, sessionId: entry.id, kind, permission: entry.need?.kind === 'permission', markdown: kind === 'done' ? '' : entry.need?.text || '' });
 }
+
+// ------------------------------------------------------------ read aloud
+// The player is public/narration.js (PLAN.md §7); here are only the hooks:
+// live events in, the title bar controls, Read aloud buttons, the speaker
+// under the prompt box, and holding the queue while the pilot types.
+const titleFor = (id) => state.byId.get(id)?.title || state.cache.get(id)?.summary?.title || 'A session';
+const narration = createNarration({
+  prefs, savePrefs, api, host: $('deck'),
+  isSubagent: (id) => state.byId.get(id)?.kind === 'agent',
+  inScope: (id) => id === state.selected || state.byId.get(id)?.parentId === state.selected,
+  titleOf: titleFor,
+  onChange: renderReadAloud,
+  onJump: jumpToNarration,
+  onWarn: (msg) => toast(msg),
+});
+/** Live events only: catch-up and session loads go through onEvents, never here. */
+function narrateEvents(sessionId, events) {
+  for (const ev of events) if (ev.kind === 'text' && ev.text?.trim()) narration.auto({ id: `${sessionId}:${ev.id}`, sessionId, eventId: ev.id, kind: 'said', markdown: ev.text });
+}
+function narrateBrief(b) {
+  const prev = state.briefs.get(b.id);
+  if (b.brief?.summary && b.updatedAt && b.updatedAt !== prev?.updatedAt) narration.auto({ id: `brief:${b.id}:${b.updatedAt}`, sessionId: b.id, kind: 'brief', markdown: b.brief.summary });
+}
+function briefMarkdown(id) {
+  const cur = state.briefs.get(id)?.brief;
+  if (!cur) { const last = state.cache.get(id)?.brief?.lastText; return last ? `Last said: ${last}` : ''; }
+  const parts = [cur.summary || ''];
+  if (cur.done?.length) parts.push('**Done so far**', cur.done.map(x => `- ${x}`).join('\n'));
+  if (cur.next) parts.push(`**Next:** ${cur.next}`);
+  if (cur.watch?.text) parts.push(`**Watch:** ${cur.watch.text}`);
+  return parts.filter(Boolean).join('\n\n');
+}
+function readBrief(id) { const md = briefMarkdown(id); if (md) narration.read({ sessionId: id, kind: 'brief', markdown: md }); }
+function readEvent(ev) {
+  if (!ev || !['text', 'prompt', 'thinking'].includes(ev.kind) || !ev.text) return false;
+  narration.read({ sessionId: ev.sessionId, eventId: ev.id, kind: 'said', markdown: ev.text });
+  return true;
+}
+async function jumpToNarration() {
+  const it = narration.current();
+  if (!it?.sessionId) return;
+  await select(it.sessionId);
+  const ev = it.eventId && findEvent(it.sessionId, it.eventId);
+  if (ev) jumpToSeq(ev.seq);
+}
+function renderReadAloud(st) {
+  const btn = $('ra-btn');
+  btn.classList.toggle('off', !st.on);
+  btn.classList.toggle('speaking', st.state === 'playing');
+  btn.classList.toggle('blocked', st.state === 'blocked');
+  btn.querySelector('use').setAttribute('href', st.on ? '#i-speaker' : '#i-speaker-off');
+  btn.title = st.state === 'blocked' ? 'Read aloud: click anywhere to let the deck speak' : !st.on ? 'Read aloud: off' : !st.leader ? 'Read aloud: another deck window is speaking' : 'Read aloud';
+  // Play/pause is always there: pausing with nothing playing makes new items wait in the queue.
+  const paused = st.state === 'paused' || st.state === 'blocked';
+  const playing = st.state === 'playing';
+  const pb = $('ra-play');
+  pb.classList.toggle('paused', paused);
+  pb.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+  pb.title = pb.ariaLabel = paused ? `Play${st.queued ? ` · ${st.queued} queued` : ''} (Space)`
+    : st.state === 'held' ? 'Pause · held while you type (Space)'
+    : playing ? 'Pause (Space)' : 'Pause: queue narration until you press play (Space)';
+  const nb = $('ra-next');
+  nb.disabled = !st.item && !st.queued;
+  nb.title = nb.ariaLabel = st.queued ? `Next (]) · ${st.queued} queued` : 'Next (])';
+  const bn = $('bell').querySelector('.bell-n');
+  bn.hidden = !st.unheard;
+  bn.textContent = st.unheard > 99 ? '99+' : String(st.unheard || '');
+  $('bell').title = $('bell').ariaLabel = `Narration history${st.unheard ? ` · ${st.unheard} unheard` : ''} (b)`;
+  if ($('bell-pop').matches(':popover-open')) renderBellList();
+  const now = $('ra-now');
+  now.hidden = !st.item;
+  now.classList.toggle('playing', playing);
+  if (st.item) { now.querySelector('.ra-now-t').textContent = `${playing ? 'Reading' : 'Paused'}: ${st.item.title}`; now.title = 'Open this in the session (j)'; }
+}
+$('ra-play').onclick = () => narration.toggle();
+$('ra-next').onclick = () => narration.skip();
+
+// The bell: every narration event, newest first. A dot marks what is still
+// queued to be read; a row opens its event (play it from the details pane).
+const bell = { q: '', unheardOnly: false, i: 0, ids: [] };
+function bellText(e) {
+  const t = String(e.text || '').replace(/[#*_`>]+/g, '').replace(/\s+/g, ' ').trim();
+  if (e.kind === 'done') return 'Finished';
+  if (e.kind === 'needs') return `${e.permission ? 'Needs your permission' : 'Asking'}${t ? `: ${t}` : ''}`;
+  if (e.kind === 'error') return `Error${t ? `: ${t}` : ''}`;
+  return t;
+}
+function renderBell() {
+  const pop = $('bell-pop');
+  const input = h('input', { type: 'search', placeholder: 'Search narration', value: bell.q, spellcheck: 'false', 'aria-label': 'Search narration',
+    oninput: (e) => { bell.q = e.target.value; bell.i = 0; renderBellList(); },
+    onkeydown: (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bell.i = Math.max(0, Math.min(bell.ids.length - 1, bell.i + (e.key === 'ArrowDown' ? 1 : -1))); renderBellList(); }
+      else if (e.key === 'Enter') { e.preventDefault(); openBellEntry(bell.ids[bell.i]); }
+    } });
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' },
+    h('button', { type: 'button', 'aria-pressed': String(!bell.unheardOnly), onclick: () => { bell.unheardOnly = false; renderBell(); } }, 'All'),
+    h('button', { type: 'button', 'aria-pressed': String(bell.unheardOnly), onclick: () => { bell.unheardOnly = true; renderBell(); } }, 'Unheard'));
+  pop.replaceChildren(
+    h('div', { class: 'bell-h' }, h('label', { class: 'search grow' }, svgUse('i-search', 13), input), seg),
+    h('ul', { class: 'bell-list', role: 'listbox', 'aria-label': 'Narration history' }),
+    h('div', { class: 'bell-f' }, h('span', { class: 'muted bell-count' }), h('span', { class: 'spacer' }),
+      h('button', { type: 'button', class: 'linkish', onclick: () => narration.markAllHeard() }, 'Mark all heard'),
+      h('button', { type: 'button', class: 'linkish', onclick: async () => { if (await confirmDialog('Clear the narration history?', 'The list empties. Nothing queued is affected.', 'Clear')) narration.clearHistory(); } }, 'Clear')));
+  renderBellList();
+  return input;
+}
+function renderBellList() {
+  const pop = $('bell-pop');
+  const list = pop.querySelector('.bell-list');
+  if (!list) return;
+  const { entries, unheard } = narration.history();
+  const q = bell.q.trim().toLowerCase();
+  const shown = entries.filter(e => (!bell.unheardOnly || unheard.has(e.id))
+    && (!q || `${e.title} ${narration.kindLabel(e.kind)} ${e.text}`.toLowerCase().includes(q)));
+  bell.ids = shown.map(e => e.id);
+  bell.i = Math.min(bell.i, Math.max(0, shown.length - 1));
+  const now = Date.now();
+  list.replaceChildren(...shown.slice(0, 200).map((e, i) => h('li', { class: `bell-row${i === bell.i ? ' sel' : ''}`, role: 'option', 'aria-selected': String(i === bell.i), dataset: { id: e.id },
+      onclick: () => openBellEntry(e.id), onmousemove: () => { if (bell.i !== i) { bell.i = i; list.querySelector('.sel')?.classList.remove('sel'); list.children[i]?.classList.add('sel'); } } },
+    h('span', { class: `bell-dot${unheard.has(e.id) ? ' on' : ''}`, title: unheard.has(e.id) ? 'Not read yet' : null }),
+    h('span', { class: 'bell-main' },
+      h('span', { class: 'bell-top' }, h('span', { class: `chip narr-k k-${e.kind}` }, narration.kindLabel(e.kind)), h('b', {}, e.title), h('span', { class: 'spacer' }), h('span', { class: 'muted bell-ago', title: new Date(e.at).toLocaleString() }, ago(now - e.at))),
+      h('span', { class: 'bell-t' }, oneLine(bellText(e), 220))))));
+  if (!shown.length) list.append(h('li', { class: 'bell-empty muted' }, entries.length ? 'Nothing matches.' : 'Narration events show up here as sessions speak.'));
+  list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+  pop.querySelector('.bell-count').textContent = `${entries.length} ${entries.length === 1 ? 'event' : 'events'}${unheard.size ? ` · ${unheard.size} unheard` : ''}`;
+}
+async function openBellEntry(id) {
+  const e = narration.history().entries.find(x => x.id === id);
+  if (!e?.sessionId) return;
+  $('bell-pop').hidePopover();
+  if (!state.byId.has(e.sessionId) && !state.cache.has(e.sessionId)) { toast('That session is no longer listed'); return; }
+  await select(e.sessionId);
+  const ev = e.eventId && findEvent(e.sessionId, e.eventId);
+  if (ev) jumpToSeq(ev.seq);
+}
+$('bell-pop').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const r = $('bell').getBoundingClientRect();
+  $('bell-pop').style.top = `${r.bottom + 6}px`;
+  $('bell-pop').style.left = `${Math.max(8, r.left - 8)}px`;
+  bell.i = 0;
+  renderBell().focus();
+});
+$('ra-now').onclick = () => jumpToNarration();
+$('ra-pop').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  const pop = $('ra-pop'), r = $('ra-btn').getBoundingClientRect();
+  narration.renderSettings(pop);
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.right = `${Math.max(8, innerWidth - r.right - 8)}px`;
+});
+// New items wait while the pilot types; they play once the prompt is sent or the field is left.
+for (const el of [$('compose'), $('ns-prompt')]) {
+  el.addEventListener('input', () => narration.hold(true));
+  el.addEventListener('blur', () => narration.hold(false));
+}
+$('ask').addEventListener('input', () => narration.hold(true));
+$('ask').addEventListener('focusout', () => narration.hold(false));
+renderReadAloud(narration.status());
 
 // ------------------------------------------------------------ plan quota
 // A small ring in the top bar: how full the tightest plan window is. Quiet
@@ -1104,6 +1268,7 @@ function renderBriefBox(id, s, b) {
       i ? ib('i-latest', 'Latest brief', () => go(0), { size: 13 }) : null));
   }
   if (nb) head.append(ib(prefs.briefCollapsed ? 'i-down' : 'i-up', prefs.briefCollapsed ? 'Expand brief' : 'Collapse brief', () => { prefs.briefCollapsed = !prefs.briefCollapsed; savePrefs(); renderHeader(); }, { size: 13 }));
+  head.append(ib('i-speaker', 'Read the brief aloud (r)', () => readBrief(id), { size: 13 }));
   head.append(h('button', { type: 'button', class: 'ask-ico', 'aria-label': 'Ask about this session', title: 'Ask about this session', onclick: () => openAsk({ kind: 'brief', sessionId: id, label: 'Session brief', what: 'this session' }, { type: 'brief' }) }, starIcon(12)));
   box.append(head);
 
@@ -1269,14 +1434,14 @@ function renderQueue() {
     // The bolt cuts in: interrupt the turn and send this prompt next.
     const queues = !idle || q.length > 0 || d.held;
     compose.disabled = false;
-    compose.placeholder = queues ? 'Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends now' : 'Prompt · ⌘↩ to send';
+    compose.placeholder = queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
     sendBtn.disabled = false;
     sendBtn.classList.toggle('queues', queues);
     sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
     sendBtn.setAttribute('aria-label', queues ? 'Queue prompt' : 'Send');
     nowBtn.hidden = idle && !q.length && !d.held;
     nowBtn.disabled = !!d.interrupting;
-    nowBtn.title = d.interrupting ? 'Stopping…' : 'Send now: stop the current turn and send this prompt (⇧⌘↩)';
+    nowBtn.title = d.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
     // Stop: only while Claude is working. Ends the turn and holds the queue.
     stopBtn.hidden = idle;
     stopBtn.disabled = !!d.interrupting;
@@ -1370,11 +1535,13 @@ async function sendPrompt(now = false) {
   const id = state.selected;
   if (composeFiles.busy()) { toast('Still reading the attachments…'); return; }
   const attachments = composeFiles.payload();
-  if (!text.trim() && !attachments.length) { $('compose').focus(); return; }
+  // Send now with an empty box still sends: it flushes the queue.
+  if (!text.trim() && !attachments.length && !(now && deckOf(id)?.queue?.length)) { $('compose').focus(); return; }
   $('send').disabled = true; $('send-now').disabled = true;
   try {
     await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined });
     $('compose').value = ''; composeFiles.clear(); setLive(true, true);
+    narration.hold(false);
   }
   catch (e) { toast(sendError(e, attachments.length)); }
   finally { if (id === state.selected) renderQueue(); }
@@ -1703,7 +1870,7 @@ function setCursor(id) { state.cursor = id; renderRows(); }
 function setLive(on, quiet = false) {
   state.live = on;
   if (on) state.picked = false;
-  for (const b of [$('follow'), $('details-pin')]) { b.setAttribute('aria-pressed', String(on)); b.title = on ? 'Live: showing the newest event (Space to pause)' : 'Go live: jump to the newest event (Space)'; }
+  for (const b of [$('follow'), $('details-pin')]) { b.setAttribute('aria-pressed', String(on)); b.title = on ? 'Live: showing the newest event (l to pause)' : 'Go live: jump to the newest event (l)'; }
   if (on && !quiet) { vlist.scrollTop = 0; followLive(); renderRows(); }
 }
 function pickEvent() { state.picked = true; setLive(false); }
@@ -1753,16 +1920,22 @@ document.addEventListener('keydown', (e) => {
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') { if (e.key === 'Escape') e.target.blur(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (document.querySelector('dialog[open]')) return;
+  if (document.querySelector('dialog[open]') || document.querySelector('[popover]:popover-open')) return;
+  // Read aloud works everywhere, the overview included.
+  if (e.key === ' ') { e.preventDefault(); narration.toggle(); return; }
+  if (e.key === ']') { e.preventDefault(); narration.skip(); return; }
+  if (e.key === 'j') { e.preventDefault(); jumpToNarration(); return; }
+  if (e.key === 'b') { e.preventDefault(); $('bell-pop').showPopover(); return; }
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
   if (e.key === 'h') { e.preventDefault(); openHistory(); return; }
   if (e.key === '[') { e.preventDefault(); setRailMin(!prefs.railMin); return; }
   if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
-  if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
-  else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
   else if (e.key === 'Enter') { const ev = state.cursor && findEvent(state.selected, state.cursor); if (ev) showEventDetails(ev); }
-  else if (e.key === ' ') { e.preventDefault(); state.live ? pickEvent() : setLive(true); }
+  else if (e.key === 'l') { e.preventDefault(); state.live ? pickEvent() : setLive(true); }
+  else if (e.key === 'r') { e.preventDefault(); if (!readEvent(state.cursor && findEvent(state.selected, state.cursor))) readBrief(state.selected); }
   else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
   else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }
   else if (e.key === '?') $('keys').showModal();
@@ -1788,6 +1961,7 @@ const detailCtx = (ev) => {
     api, selectSession: select, position,
     agentStatus: (id) => state.byId.get(id)?.status || null,
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
+    readAloud: readEvent,
   };
 };
 function syncDetailsPane() { $('deck').classList.toggle('no-details', !state.detailsKey && !state.ask); }
@@ -1905,7 +2079,7 @@ function renderAsk() {
     thread.append(h('div', { class: 'qa-q' }, m.q));
     if (m.pending) thread.append(h('div', { class: 'qa-a' }, h('span', { class: 'spin' })));
     else if (m.err) thread.append(h('div', { class: 'qa-a err' }, m.err));
-    else thread.append(h('div', { class: 'qa-a' }, h('div', { class: 'md', html: markdown(m.a) }), h('div', { class: 'qa-meta' }, [fmtMs(m.ms), m.cost ? fmtUsd(m.cost) : null].filter(Boolean).join(' · '))));
+    else thread.append(h('div', { class: 'qa-a' }, h('div', { class: 'md', html: markdown(m.a) }), h('div', { class: 'qa-meta' }, [fmtMs(m.ms), m.cost ? fmtUsd(m.cost) : null].filter(Boolean).join(' · '), ib('i-speaker', 'Read this answer aloud', () => narration.read({ sessionId: a.sessionId, kind: 'said', markdown: m.a }), { size: 12 }))));
   }
   const input = h('input', { type: 'text', placeholder: `Ask anything about ${a.spec.what || 'this'}…`, 'aria-label': 'Your question' });
   const send = h('button', { type: 'submit', 'aria-label': 'Send question' }, svgUse('i-send', 12));
@@ -1926,6 +2100,7 @@ async function sendAsk(q) {
   const a = state.ask; q = String(q || '').trim();
   if (!a || !q) return;
   const msg = { q, pending: true };
+  narration.hold(false);
   a.thread.push(msg); renderAsk();
   const scope = [a.primary, ...a.extras.filter(x => x.on).map(x => x.item)];
   try {

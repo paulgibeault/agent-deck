@@ -739,3 +739,91 @@ select.field { font-family: var(--sans); padding-right: 6px; }
 .need.sig-error { border-color: color-mix(in srgb, var(--err) 35%, var(--line)); background: color-mix(in srgb, var(--err) 6%, var(--bg1)); }
 .recent-row.ready > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
 @media (prefers-reduced-motion: reduce) { .dot, .mchip { animation: none !important; } }
+
+/* ---------------------------------------------------------- read aloud (PLAN.md §7) */
+#deck { position: relative; }
+.ra-tb { display: inline-flex; align-items: center; gap: 1px; -webkit-app-region: no-drag; app-region: no-drag; }
+.ra-btn, .ra-ctl { display: inline-flex; align-items: center; justify-content: center; gap: 2px; height: 22px; min-width: 24px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.ra-btn:hover, .ra-ctl:hover { color: var(--fg); background: var(--hover); }
+.ra-btn:focus-visible, .ra-ctl:focus-visible, .ra-now:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+.ra-btn.off { opacity: .6; }
+.ra-btn.speaking { color: var(--info); }
+.ra-btn.speaking .sw1, .ra-now.playing .sw1 { animation: ra-wave 1s ease-in-out infinite; }
+.ra-btn.speaking .sw2, .ra-now.playing .sw2 { animation: ra-wave 1s ease-in-out .25s infinite; }
+.ra-btn.blocked, .ra-ctl.paused { color: var(--turn); }
+.ra-ctl:disabled { opacity: .35; cursor: default; background: transparent; }
+.ra-n { font-size: 10.5px; font-variant-numeric: tabular-nums; }
+@keyframes ra-wave { 50% { opacity: .15; } }
+
+.ra-pop { position: fixed; inset: auto; margin: 0; width: 320px; max-height: calc(100vh - 60px); overflow: auto; padding: 14px 16px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg1); color: var(--fg); box-shadow: 0 12px 32px rgba(0, 0, 0, .18); font-size: 12.5px; }
+.ra-pop h3 { margin: 0 0 10px; font-size: 13px; }
+.ra-g { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.ra-l { font-size: 10.5px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ra-l2 { color: var(--fg2); }
+.ra-opt { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.ra-opt input { margin: 0; accent-color: var(--info); }
+.ra-seg { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.ra-row { display: flex; align-items: center; gap: 8px; }
+.ra-row select, .ra-row input[type="text"], .ra-row input[type="password"] { flex: 1; min-width: 0; }
+.ra-row input[type="range"] { flex: 1; accent-color: var(--info); }
+.ra-az summary { cursor: pointer; color: var(--fg2); }
+.ra-az[open] { display: flex; flex-direction: column; gap: 6px; }
+.ra-az p { margin: 0; font-size: 11.5px; }
+.ra-keys { margin: 8px 0 0; font-size: 11px; }
+.ra-keys kbd { font: 10.5px var(--mono); padding: 0 4px; border: 1px solid var(--line2); border-radius: 4px; }
+
+/* The narration pane: its own layer over the details column, so details keeps its state. */
+.narr { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; width: var(--right, 460px); max-width: 100%; display: flex; flex-direction: column;
+  background: var(--bg1); border-left: 1px solid var(--line2); box-shadow: -10px 0 28px rgba(0, 0, 0, .12); transform: translateX(100%); transition: transform 120ms ease-out; }
+.narr.open { transform: none; }
+.narr-h { display: flex; align-items: center; gap: 6px; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--line); }
+.narr-t { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; padding: 0; background: none; color: var(--fg); font: 600 13.5px var(--sans); text-align: left; cursor: pointer; }
+.narr-t:hover { text-decoration: underline; text-underline-offset: 3px; }
+.narr-q { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.narr-k.k-needs { background: color-mix(in srgb, var(--need) 16%, var(--bg1)); color: var(--need-fg); }
+.narr-k.k-error { background: color-mix(in srgb, var(--err) 16%, var(--bg1)); color: var(--err-fg); }
+.narr-k.k-done { background: color-mix(in srgb, var(--ok) 16%, var(--bg1)); color: var(--ok-fg); }
+.narr-wave { display: inline-flex; align-items: center; gap: 2px; height: 14px; flex: none; }
+.narr-wave i { width: 3px; height: 4px; border-radius: 2px; background: var(--info); }
+.narr.playing .narr-wave i { animation: narr-bar .9s ease-in-out infinite; }
+.narr.playing .narr-wave i:nth-child(2) { animation-delay: .15s; }
+.narr.playing .narr-wave i:nth-child(3) { animation-delay: .3s; }
+@keyframes narr-bar { 50% { height: 13px; } }
+.narr-body { flex: 1; min-height: 0; overflow: auto; }
+.narr-body .md { font-size: 14px; line-height: 1.6; cursor: pointer; }
+.narr-body.swap { animation: narr-swap 110ms ease-out; }
+@keyframes narr-swap { from { opacity: .25; } }
+::highlight(narr) { background-color: color-mix(in srgb, var(--info) 16%, transparent); }
+::highlight(narr-word) { background-color: color-mix(in srgb, var(--info) 38%, transparent); }
+@media (prefers-reduced-motion: reduce) { .narr { transition: none; } .narr-body.swap { animation: none; } }
+
+/* Under the prompt box: what is being read; click to open it. */
+.ra-now { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin: 6px 0 0 2px; padding: 2px 6px; border: 0; border-radius: 6px; background: none; color: var(--info); font-size: 11.5px; cursor: pointer; }
+.ra-now:hover { background: var(--hover); }
+.ra-now-t { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ra-now.playing svg { animation: ra-pulse 1.2s ease-in-out infinite; }
+@keyframes ra-pulse { 50% { transform: scale(1.18); } }
+
+/* The bell: narration history (PLAN.md §7.6) */
+.bell { position: relative; display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 24px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; -webkit-app-region: no-drag; app-region: no-drag; }
+.bell:hover { color: var(--fg); background: var(--hover); }
+.bell:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+.bell-n { position: absolute; top: -2px; right: -5px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--info); color: #fff; font: 600 9.5px/15px var(--sans); text-align: center; font-variant-numeric: tabular-nums; }
+.bell-n[hidden] { display: none; }
+.bell-pop { position: fixed; inset: auto; margin: 0; width: 440px; max-height: min(620px, calc(100vh - 60px)); display: none; flex-direction: column; padding: 0; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg1); color: var(--fg); box-shadow: 0 12px 32px rgba(0, 0, 0, .18); font-size: 12.5px; overflow: hidden; }
+.bell-pop:popover-open { display: flex; }
+.bell-h { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--line); }
+.bell-list { list-style: none; margin: 0; padding: 4px; overflow: auto; flex: 1; min-height: 60px; }
+.bell-row { display: flex; gap: 8px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
+.bell-row.sel { background: var(--hover); }
+.bell-dot { flex: none; width: 7px; height: 7px; margin-top: 6px; border-radius: 4px; }
+.bell-dot.on { background: var(--info); }
+.bell-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.bell-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bell-top b { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bell-ago { font-size: 11px; white-space: nowrap; }
+.bell-t { color: var(--fg2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4; }
+.bell-empty { padding: 18px 10px; text-align: center; }
+.bell-f { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 11.5px; }
+.linkish { border: 0; padding: 0; background: none; color: var(--info); font-size: 11.5px; cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
