@@ -1,6 +1,7 @@
 // public/events.js — normalized-event renderers: Events rows + Details pane,
 // plus the small markdown / diff / highlight helpers they share.
 import { modelLabel, priceOf, costOf } from './pricing.js';
+import { classify } from './classify.js';
 
 // ------------------------------------------------------------ formatting
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -39,34 +40,19 @@ export const h = (tag, attrs = {}, ...children) => {
 };
 
 // ------------------------------------------------------------ tags
-// Text tags instead of glyphs: scannable in a dense list, no legend needed.
-const FAMILY = {
-  Bash: 'bash', Read: 'read', Glob: 'read', Grep: 'read', ToolSearch: 'read', LS: 'read',
-  Write: 'edit', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', TodoWrite: 'edit',
-  Agent: 'agent', Task: 'agent', Skill: 'agent', SendMessage: 'agent',
-  WebFetch: 'web', WebSearch: 'web',
-};
+// A bare glyph per kind (see classify.js), tinted by family: the eye finds
+// "a push" or "a test run" by shape and color, the tooltip names it.
 export function tagFor(ev) {
-  switch (ev.kind) {
-    case 'tool': {
-      const n = ev.tool.name;
-      if (n.startsWith('mcp__')) {
-        const short = n.split('__').pop();
-        return { label: short.length > 7 ? short.slice(0, 6) + '…' : short, fam: 'web', title: ev.tool.display };
-      }
-      return { label: n.length > 7 ? n.slice(0, 6) + '…' : n, fam: ev.tool.isError ? 'err' : FAMILY[n] || 'said', title: n };
-    }
-    case 'text': return { label: 'Said', fam: 'said' };
-    case 'thinking': return { label: 'Think', fam: 'muted' };
-    case 'prompt': return { label: 'You', fam: 'you' };
-    case 'queue': return { label: 'Queue', fam: 'muted' };
-    case 'system': return ev.error ? { label: 'Error', fam: 'err' } : ev.subtype === 'task' ? { label: 'Bg', fam: ev.status === 'failed' ? 'err' : 'muted', title: 'Background task' } : { label: 'Note', fam: 'muted' };
-    default: return { label: 'Raw', fam: 'muted' };
-  }
+  const c = classify(ev);
+  return { label: c.label, fam: c.fam, icon: c.icon, title: c.label };
 }
-export function tagEl(ev) {
-  const t = tagFor(ev);
-  return h('span', { class: `tag f-${t.fam}`, title: t.title || null }, t.label);
+const isErrEv = (ev) => (ev.kind === 'tool' && (ev.tool.isError || ev.tool.meta?.interrupted)) || !!ev.error;
+/** The glyph for an event; `label` adds its name beside it (Details header). */
+export function tagEl(ev, { label = false, c = classify(ev) } = {}) {
+  const bad = isErrEv(ev) && c.fam !== 'err';
+  const name = c.label + (bad ? (ev.tool?.meta?.interrupted && !ev.tool.isError ? ' · interrupted' : ' · failed') : '') + (ev.ts ? ' · ' + fmtTime(ev.ts) : '');
+  return h('span', { class: `tic f-${c.fam}${bad ? ' bad' : ''}${label ? ' lab' : ''}`, role: 'img', 'aria-label': name, title: name },
+    svgUse(c.icon, 15), label ? h('span', {}, c.label) : null);
 }
 export const askMini = () => h('button', { class: 'ask-ico ask-mini', type: 'button', dataset: { askRow: '1' }, 'aria-label': 'Ask about this', title: 'Ask about this' }, starIcon(11));
 /** Icon-only button: no box, no label; the label is its tooltip and accessible name. */
@@ -98,14 +84,16 @@ export const rowHeight = (ev) => ROW_HEIGHTS[ev.kind] || ROW_HEIGHTS.default;
  */
 export function renderRow(ev, { depth = 0, selected = false, agentStatus = null, expanded = false, turn = null } = {}) {
   const isErr = (ev.kind === 'tool' && ev.tool.isError) || ev.error;
-  const row = h('div', { class: `row k-${ev.kind}${selected ? ' selected' : ''}${isErr ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
+  const c = classify(ev);
+  const row = h('div', { class: `row k-${ev.kind} f-${c.fam}${ev.answer ? ' answer' : ''}${selected ? ' selected' : ''}${isErr ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
   row.style.setProperty('--depth', depth);
   row.style.height = rowHeight(ev) + 'px';
 
   if (ev.kind === 'prompt') {
     const card = h('div', { class: 'turn-card' });
-    card.append(tagEl(ev), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
-    if (ev.origin && ev.origin !== 'human') card.append(h('span', { class: 'chip' }, ev.origin));
+    card.append(tagEl(ev, { c }), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
+    if (ev.origin && ev.origin !== 'human' && ev.origin !== 'sdk') card.append(h('span', { class: 'chip' }, ev.origin));
+    if (turn?.queuedMs >= 1000) card.append(h('span', { class: 'chip', title: 'Sent while the agent was busy; waited in the queue' }, svgUse('i-history', 10), ` ${fmtMs(turn.queuedMs)}`));
     if (ev.attachments?.length) card.append(h('span', { class: 'chip', title: ev.attachments.map(attLabel).join('\n') }, svgUse('i-clip', 10), ` ${ev.attachments.length}`));
     card.append(h('span', { class: 'meta' }, turn?.meta || fmtTime(ev.ts)), askMini());
     row.append(card);
@@ -116,71 +104,67 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     return row;
   }
 
-  row.append(h('span', { class: 'ts' }, fmtTime(ev.ts)));
-  row.append(h('span', { class: 'tg' }, tagEl(ev)));
-  const body = h('span', { class: 'body' });
+  row.append(h('span', { class: 'tg' }, tagEl(ev, { c })));
+  const body = h('span', { class: 'body' + (c.sans ? ' sans' : '') });
   row.append(body);
   const chips = h('span', { class: 'chips' });
   let dur = null;
+  // An MCP call names its server: the one place a word beats a glyph.
+  if (c.server) body.append(h('b', { class: 'srv' }, c.server));
+  body.append(oneLine(c.text, 260));
+  if (c.sub) body.append(h('span', { class: 'sub' }, c.sub));
+  body.title = [c.text, c.sub].filter(Boolean).join('\n');
 
   switch (ev.kind) {
     case 'tool': {
       const t = ev.tool;
-      const desc = t.name === 'Bash' ? (t.input.description || t.input.command || '') : t.summary;
-      body.title = desc;
-      body.append(t.summary || t.display);
       if (t.name === 'Agent' && t.agentId) {
         chips.append(h('button', { class: 'mini agent-open', dataset: { agent: t.agentId }, title: 'open as session' }, 'open'));
         chips.append(h('button', { class: 'mini agent-toggle', dataset: { agent: t.agentId }, title: 'show subagent events inline' }, expanded ? 'hide inline' : 'inline'));
         if (agentStatus) chips.append(h('span', { class: `chip st-${agentStatus}` }, agentStatus));
       }
       if (t.taskId) chips.append(h('button', { class: 'mini task-open', dataset: { task: t.taskId }, title: 'Open the background task' }, 'background'));
+      const f = c.facts;
+      if (f?.badge) chips.append(h('span', { class: `chip f-${c.fam}`, title: f.title || null }, f.badge));
+      if (f && f.pass != null) {
+        if (f.fail) chips.append(h('span', { class: 'chip err', title: `${f.fail} failed, ${f.pass} passed` }, `${f.fail} failed`));
+        else chips.append(h('span', { class: 'chip ok', title: `${f.pass} passed` }, svgUse('i-check', 10), ` ${f.pass}`));
+      }
       if (t.pending) dur = h('span', { class: 'dur run' }, 'running');
       else {
-        if (t.isError) chips.append(h('span', { class: 'chip err' }, 'error'));
-        else if (t.meta?.interrupted) chips.append(h('span', { class: 'chip err' }, 'interrupted'));
         if (t.result?.images?.length) chips.append(h('span', { class: 'chip' }, `${t.result.images.length} img`));
         if (t.durationMs != null) dur = h('span', { class: 'dur' + (t.isError ? ' bad' : '') }, fmtMs(t.durationMs));
       }
       break;
     }
-    case 'text':
-      body.classList.add('sans');
-      body.append(oneLine(ev.text, 260));
-      break;
-    case 'thinking':
-      body.append(ev.redacted ? 'thinking (redacted)' : !ev.text ? 'thinking (not recorded)' : `thinking · ${fmtTokens(ev.text.length)} chars`);
-      break;
     case 'queue':
-      body.append(`${ev.op}${ev.text ? ': ' + oneLine(ev.text, 160) : ''}`);
-      if (ev.queueDepth != null) chips.append(h('span', { class: 'chip' }, `q${ev.queueDepth}`));
+      if (ev.queueDepth > 1) chips.append(h('span', { class: 'chip', title: 'Messages waiting' }, `${ev.queueDepth} waiting`));
       break;
     case 'system':
-      if (ev.subtype === 'task') {
-        body.append(oneLine(ev.text, 220));
-        if (ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
-        break;
-      }
-      body.append(`${ev.subtype || 'system'} · ${oneLine(ev.text, 200)}`);
+      if (ev.subtype === 'task' && ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
       break;
-    default:
-      body.append(`${ev.subtype || 'raw'} · ${oneLine(ev.text, 200)}`);
   }
   if (chips.childNodes.length) row.append(chips);
-  if (dur) row.append(dur);
   // The model that produced this. The first event of an API response carries
   // its inference details; the rest of that response show the name dimmer.
-  // Hovering either opens the inference card (inferenceCard below).
+  // Hovering either opens the inference card (inferenceCard below). Model,
+  // tokens and Ask float in on hover; a model that's news (switched, cut off)
+  // stays in the row.
+  const hov = h('span', { class: 'hov' });
   const inf = ev.inference;
+  let mdl = null;
   if (inf) {
     const flag = inf.synthetic ? ' syn' : inf.stopReason === 'max_tokens' || inf.stopReason === 'refusal' ? ' warn' : inf.switchedFrom ? ' sw' : '';
-    row.append(h('span', { class: `mdl${flag}`, 'aria-describedby': 'hovercard' },
-      inf.switchedFrom ? '↻ ' : '', modelLabel(inf.model), inf.effort ? h('i', {}, ` ${inf.effort}`) : null));
-  } else if (ev.msgId && ev.model) row.append(h('span', { class: 'mdl cont', 'aria-describedby': 'hovercard' }, modelLabel(ev.model)));
-  const end = h('span', { class: 'end' });
-  if (ev.usage?.output_tokens) end.append(h('span', { class: 'tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, fmtTokens(ev.usage.output_tokens)));
-  end.append(askMini());
-  row.append(end);
+    mdl = h('span', { class: `mdl${flag}`, 'aria-describedby': 'hovercard' },
+      inf.switchedFrom ? '↻ ' : '', modelLabel(inf.model), inf.effort ? h('i', {}, ` ${inf.effort}`) : null);
+    if (flag === ' sw' || flag === ' warn') { row.append(mdl); mdl = null; }
+  } else if (ev.msgId && ev.model) mdl = h('span', { class: 'mdl cont', 'aria-describedby': 'hovercard' }, modelLabel(ev.model));
+  hov.append(askMini());
+  if (ev.usage?.output_tokens) hov.append(h('span', { class: 'tok', title: `in ${fmtTokens(ev.usage.input_tokens)} · cache read ${fmtTokens(ev.usage.cache_read_input_tokens)} · cache write ${fmtTokens(ev.usage.cache_creation_input_tokens)} · out ${fmtTokens(ev.usage.output_tokens)}` }, fmtTokens(ev.usage.output_tokens) + ' tok'));
+  if (mdl) hov.append(mdl);
+  row.append(hov);
+  // Duration: faint, flush right, right of the model.
+  row.append(dur || h('span', { class: 'dur' }));
   return row;
 }
 
@@ -474,7 +458,7 @@ export function renderDetails(ev, detail, ctx) {
   const rawToggle = ib('i-code', 'Raw record', () => root.classList.toggle('show-raw'));
   const tokens = ev.usage?.output_tokens ? `${fmtTokens(ev.usage.output_tokens)} tokens` : null;
   root.append(headerFor({
-    tag: tagEl(ev), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
+    tag: tagEl(ev, { label: true }), chips: [statusChip], title: titleOf(ev), raw: rawToggle,
     meta: [when, ev.kind === 'tool' && t.durationMs != null ? fmtMs(t.durationMs) : null, tokens, ev.model ? ev.model.replace('claude-', '') : null, ctx.position],
   }));
 

@@ -1838,7 +1838,7 @@ function scheduleRows(jump = false) {
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 function evMatches(ev, q) {
   if (!q) return true;
-  const hay = ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary} ${JSON.stringify(ev.tool.input).slice(0, 2000)}` : `${ev.kind} ${ev.text || ''} ${ev.subtype || ''}`;
+  const hay = (ev.kind === 'tool' ? `${ev.tool.display} ${ev.tool.summary} ${JSON.stringify(ev.tool.input).slice(0, 2000)}` : `${ev.kind} ${ev.text || ''} ${ev.subtype || ''}`) + ' ' + tagFor(ev).label;
   return hay.toLowerCase().includes(q);
 }
 function keepKind(ev) {
@@ -1850,12 +1850,37 @@ function keepKind(ev) {
     default: return true;
   }
 }
-/** Turn numbering and per-turn totals, chronological. */
+/**
+ * Turn numbering and per-turn totals, chronological. Also marks each finished
+ * turn's last message as its answer, and folds the queue's bookkeeping: a
+ * message that was delivered shows as its prompt (with the wait), so only
+ * still-waiting and withdrawn messages keep a row of their own (`hidden`).
+ */
 function turnInfo(events, live) {
-  const info = new Map(); let n = 0; let cur = null;
+  const info = new Map(); let n = 0; let cur = null; let lastText = null;
+  const hidden = new Set(); const waiting = []; let wait = null; let lastTs = null;
   for (const ev of events) {
-    if (ev.kind === 'prompt') { n++; cur = { n, start: ev.ts, count: 0, prompt: ev }; info.set(ev.id, cur); }
+    if (ev.kind !== 'prompt' && ev.ts) lastTs = ev.ts;
+    if (ev.kind === 'queue') {
+      if (ev.op === 'enqueue') waiting.push(ev);
+      else {
+        const i = ev.text ? waiting.findIndex(q => q.text === ev.text) : -1;
+        const q = i >= 0 ? waiting.splice(i, 1)[0] : waiting.shift();
+        if (q) hidden.add(q.id);
+        if (ev.op === 'dequeue') { hidden.add(ev.id); wait = q?.ts && ev.ts ? Date.parse(ev.ts) - Date.parse(q.ts) : null; }
+      }
+      continue;
+    }
+    if (ev.kind === 'prompt') {
+      // A new prompt closes a turn that never logged its end (terminal sessions).
+      if (lastText) lastText.answer = true;
+      if (cur && !cur.done) cur.done = { count: cur.count, dur: cur.start && lastTs ? Date.parse(lastTs) - Date.parse(cur.start) : null };
+      n++; cur = { n, start: ev.ts, count: 0, prompt: ev, queuedMs: wait }; info.set(ev.id, cur); lastText = null; wait = null;
+    }
+    else if (ev.kind === 'text') { lastText = ev; if (cur) cur.count++; }
     else if (ev.kind === 'turn_end') {
+      if (lastText) lastText.answer = true;
+      lastText = null;
       if (cur) {
         const dur = cur.start && ev.ts ? Date.parse(ev.ts) - Date.parse(cur.start) : null;
         cur.done = { count: cur.count, dur };
@@ -1864,6 +1889,9 @@ function turnInfo(events, live) {
       }
     } else if (cur && ev.kind !== 'thinking') cur.count++;
   }
+  // An idle session's last message is its answer, logged end or not.
+  if (lastText && !live && events.at(-1) === lastText) lastText.answer = true;
+  info.hidden = hidden;
   for (const v of info.values()) {
     if (!v.prompt) continue;
     const t = fmtTime(v.prompt.ts);
@@ -1879,6 +1907,7 @@ function buildRows() {
   const s = state.byId.get(state.selected);
   const turns = turnInfo(c.events, phaseOf(s) === 'working');
   const push = (ev, depth, turn = null) => {
+    if (turns.hidden.has(ev.id)) return;
     if (ev.kind === 'turn_end' && state.kind !== 'all' && state.kind !== 'tools') return;
     if (ev.kind !== 'prompt' && ev.kind !== 'turn_end' && !keepKind(ev)) return;
     if (ev.kind === 'prompt' && state.kind === 'errors') return;
