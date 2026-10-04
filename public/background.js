@@ -45,7 +45,7 @@ export function renderStrip(tasks, alive, { open, openTab }) {
   if (!running.length) return [];
   const shown = running.slice(0, 3);
   return [
-    h('span', { class: 'bg-k' }, svgUse('i-bg', 12), `${running.length} in background`),
+    h('span', { class: 'bg-k' }, svgUse('i-bg', 12, 'Running in the background'), `${running.length} in background`),
     ...shown.map(t => h('button', { type: 'button', class: 'bg-chip', title: t.command || taskTitle(t), onclick: () => open(t.id) },
       h('span', { class: 'bg-dot' }), h('span', { class: 'bg-t' }, taskTitle(t)), clockEl(t, alive),
       t.lastEventTs ? h('span', { class: 'muted bg-ev', title: t.events.at(-1)?.text || '' }, `· ${oneLine(t.events.at(-1)?.text || '', 40)}`) : null)),
@@ -56,7 +56,7 @@ export function renderStrip(tasks, alive, { open, openTab }) {
 }
 
 /** The Background tab's list. */
-export function renderTable(tasks, alive, { filter = 'all', q = '', selected = null, open }) {
+export function renderTable(tasks, alive, { filter = 'all', q = '', selected = null, open, pidOf = () => null }) {
   const query = q.trim().toLowerCase();
   const rows = tasks
     .filter(t => filter === 'all' || (filter === 'running') === (taskState(t, alive) === 'running'))
@@ -74,10 +74,11 @@ export function renderTable(tasks, alive, { filter = 'all', q = '', selected = n
       h('td', { class: 'bg-what' }, h('div', { class: 'bg-t' }, taskTitle(t)), t.command && t.description ? h('div', { class: 'mono muted bg-cmd' }, oneLine(t.command, 140)) : null),
       h('td', { class: 'num muted', title: t.startedTs ? new Date(t.startedTs).toLocaleString() : '' }, t.startedTs ? `${ago(now - Date.parse(t.startedTs))} ago` : ''),
       h('td', { class: 'num' }, clockEl(t, alive)),
-      h('td', { class: 'muted bg-act' }, activity));
+      h('td', { class: 'num' }, pidOf(t)),
+      h('td', { class: 'muted bg-act', title: activity || null }, activity));
   }));
   return h('table', { class: 'list bg-tbl' },
-    h('thead', {}, h('tr', {}, ...['State', 'Kind', 'Task', 'Started', 'Ran', 'Latest'].map(x => h('th', {}, x)))), tbody);
+    h('thead', {}, h('tr', {}, ...['State', 'Kind', 'Task', 'Started', 'Ran', 'PID', 'Latest'].map(x => h('th', {}, x)))), tbody);
 }
 
 /** The output section: the end of the task's output file. */
@@ -99,7 +100,7 @@ export function renderTaskDetails(t, out, ctx) {
     tag: h('span', { class: 'tag f-muted' }, 'Bg'), chips: [stateChip(t, alive), h('span', { class: 'chip' }, KIND[t.kind] || t.kind)], title: taskTitle(t), nav: false,
     meta: [t.startedTs ? `started ${fmtTime(t.startedTs)}` : null, taskDuration(t, alive) != null ? `${st === 'running' ? 'running' : 'ran'} ${fmtMs(taskDuration(t, alive))}` : null,
       t.timedOutAfterMs ? `moved to the background after ${fmtMs(t.timedOutAfterMs)}` : null,
-      t.expiresTs && st === 'running' ? `expires ${fmtTime(t.expiresTs)}` : null, `id ${t.id}`],
+      t.expiresTs && st === 'running' ? `expires ${fmtTime(t.expiresTs)}` : null, `id ${t.id}`, ctx.pidOf?.(t)],
     actions: [
       t.toolUseId && ctx.openCall ? ib('i-right', 'Jump to the call that started it', () => ctx.openCall(t.toolUseId), { size: 13 }) : null,
       t.agentId && ctx.openAgent ? ib('i-open', 'Open the subagent', () => ctx.openAgent(t.agentId), { size: 13 }) : null,
@@ -120,9 +121,12 @@ export function renderTaskDetails(t, out, ctx) {
   }
   // A Monitor reports through its events; it has no output file of its own.
   if (t.outputFile || t.kind !== 'monitor') body.append(renderOutput(out, t, alive, ctx));
-  if (ctx.askStop && st === 'running') {
-    body.append(h('div', { class: 'bg-stop' }, h('button', { type: 'button', class: 'btn sm', onclick: () => ctx.askStop(t) }, 'Ask Claude to stop it'),
-      h('span', { class: 'muted' }, 'Queues a prompt; the deck cannot stop the task itself.')));
+  const kill = st === 'running' ? ctx.killTask?.(t) : null;
+  if ((ctx.askStop || kill) && st === 'running') {
+    body.append(h('div', { class: 'bg-stop' },
+      kill ? h('button', { type: 'button', class: 'btn sm danger', onclick: kill }, 'Stop it') : null,
+      ctx.askStop ? h('button', { type: 'button', class: 'btn sm', onclick: () => ctx.askStop(t) }, 'Ask Claude to stop it') : null,
+      h('span', { class: 'muted' }, kill ? 'Stop sends SIGTERM to the command and everything it started.' : 'Queues a prompt; the deck has not found the task’s process.')));
   }
   return root;
 }
