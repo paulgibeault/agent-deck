@@ -118,6 +118,32 @@ agent while the deck runs. Stopping one closes it in opencode, and sending
 to it again resumes it with its context. Past opencode sessions are not
 listed yet after a deck restart.
 
+### Backends
+
+Every session shows where its model runs: a glyph on its row in the session
+list, and a chip next to its title (Local, Claude Code, Google, OpenAI). A
+harness's backend follows from its agent (claude → Claude Code, opencode →
+Local, gemini → Google, codex → OpenAI); set `"backend"` (and optionally
+`"backendLabel"`) in its `harnesses.json` entry to say otherwise.
+
+Click the chip to **move the session** to another backend. Agents keep their
+own history, so a move starts a new session on the other agent in the same
+folder. Its first prompt is a handoff built from the transcript, with no
+model call: the place, every prompt, the conversation so far, the files
+touched, and an optional "what next". Queued prompts go along, a deck-run
+original ends, and the two sessions link to each other.
+
+Under the title, a session's place: its folder, the git worktree it is in
+(when it is a linked one), its branch, and the GitHub issues and pull
+requests it worked on: links in the conversation, `gh pr|issue` commands,
+"fixes #N", and the branch's own PR. Titles and states come from `gh` when it
+is installed and signed in.
+
+The status dot at the top left opens the **main menu** (or press `m`):
+backend status, which agent new sessions run on, Claude Code's plan limits,
+and **Restart backend**. The plan-usage ring in the title bar now appears
+only while a window is filling up.
+
 ### Better voices
 
 Read aloud speaks with the browser's voices out of the box. Three ways to
@@ -432,7 +458,9 @@ lib/narrator.mjs      one-shot `claude -p` calls
 lib/digest.mjs        events -> compact text for the model
 lib/ask.mjs           Ask about this: scope resolution + answer
 lib/deckstate.mjs     hidden sessions, delete trash
-lib/gitinfo.mjs       status / diff / log
+lib/gitinfo.mjs       status / diff / log, and a session's place (root, worktree, branch, GitHub repo)
+lib/ghrefs.mjs        GitHub issues and PRs a session worked on; titles via `gh`
+lib/handoff.mjs       the first prompt of a session moved to another backend
 lib/shell.mjs         pilot shell runner
 lib/agent.mjs         deck-launched sessions: queue, wake, idle stop, permissions
 lib/harness/claude.mjs  driver: `claude -p` stream-json

@@ -25,6 +25,8 @@ import { loadHarnesses } from './lib/harnesses.mjs';
 import { AzureTts } from './lib/tts.mjs';
 import { KokoroTts } from './lib/kokoro.mjs';
 import { ProcessMonitor } from './lib/procs.mjs';
+import { handoffPrompt } from './lib/handoff.mjs';
+import { refsFromEvents, GitHubInfo } from './lib/ghrefs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -79,6 +81,9 @@ const tts = new AzureTts({ dir: deck.dir });
 const kokoro = new KokoroTts({ dir: deck.dir });
 index.external = () => agents.registryEntries();
 index.deckState = (id) => agents.publicState(id);
+index.harnessOf = (id) => agents.recordedHarness(id);
+index.lineage = (id) => agents.lineageOf(id);
+const github = new GitHubInfo();
 // The process view: what the deck, its sessions and their tool calls are running.
 const procs = new ProcessMonitor({
   known: () => ({
@@ -293,6 +298,39 @@ async function route(req, res, url) {
       }
       return send(res, 200, { ok: true, state: agents.publicState(id) });
     } catch (e) { return send(res, e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { error: e.message }); }
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/migrate$/.exec(p)) && req.method === 'POST') {
+    const id = decodeURIComponent(m[1]);
+    const { harness, note } = await readBody(req);
+    const entry = index.load(id);
+    const summary = index.summary(id);
+    if (!entry || summary?.kind !== 'session') return send(res, 404, { error: 'unknown session' });
+    if (!summary.cwd) return send(res, 409, { error: 'the session\'s folder is not known' });
+    const list = agents.harnessList();
+    const to = list.find(x => x.name === harness);
+    if (!to) return send(res, 400, { error: `unknown harness: ${harness}` });
+    const from = list.find(x => x.name === summary.harness);
+    const prompt = handoffPrompt({ summary, events: entry.state.events, brief: briefs.publicBrief(id).brief,
+      from: from ? `${from.backend.label} (${from.label})` : summary.harness || 'another agent', to: `${to.backend.label} (${to.label})`,
+      files: entry.state.filesList().map(f => f.path), note: String(note || '') });
+    try {
+      const st = await agents.migrate(id, { harness, prompt, cwd: summary.cwd, name: summary.title });
+      scheduleSnapshot();
+      return send(res, 200, st);
+    } catch (e) { return send(res, e.code === 409 ? 409 : 400, { error: e.message }); }
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/place$/.exec(p)) && req.method === 'GET') {
+    const id = decodeURIComponent(m[1]);
+    const summary = index.summary(id);
+    if (!summary) return send(res, 404, { error: 'unknown session' });
+    const where = summary.cwd ? await gitinfo.place(summary.cwd) : { repo: false, cwd: null };
+    const events = index.load(id)?.state.events || [];
+    const repo = where.github?.repo || null;
+    const refs = refsFromEvents(events, { repo, pr: summary.pr });
+    // gh can be slow: answer with what git and the transcript say, and let the page ask again for titles.
+    const enriched = github.enrich(refs, { repo, branch: where.branch, defaultBranch: where.defaultBranch });
+    const done = await Promise.race([enriched, new Promise(r => setTimeout(r, 1500, null))]);
+    return send(res, 200, { ...where, refs: done || refs.map(({ lastSeq, ...r }) => r), pending: !done });
   }
   if ((m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {
     const id = decodeURIComponent(m[1]);
