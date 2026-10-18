@@ -29,6 +29,7 @@ function ask(method, params) {
   return new Promise(r => waiting.set(id, r));
 }
 
+const HISTORY_AT = Number(process.env.FAKE_ACP_HISTORY_AT) || Date.now();
 const configOptions = (mode = 'build') => [
   { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'fake/model', options: [{ value: 'fake/model', name: 'Fake model' }] },
   { id: 'mode', name: 'Session Mode', category: 'mode', type: 'select', currentValue: mode, options: [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }] },
@@ -56,6 +57,27 @@ const methods = {
     return { configOptions: configOptions() };
   },
   'session/close': ({ sessionId }) => { sessions.delete(sessionId); return {}; },
+  // History: two past sessions, one per page; the first replays two turns.
+  'session/list': ({ cursor }) => {
+    const cwd = process.env.FAKE_ACP_HISTORY_CWD || '/tmp';
+    const at = (h) => new Date(HISTORY_AT - h * 3600_000).toISOString();
+    return cursor ? { sessions: [{ sessionId: 'ses_hist_2', cwd, title: 'New session - 2026-01-01T00:00:00.000Z', updatedAt: at(5) }] }
+      : { sessions: [{ sessionId: 'ses_hist_1', cwd, title: 'Old work', updatedAt: at(1) }], nextCursor: 'page2' };
+  },
+  'session/load': ({ sessionId }) => {
+    if (sessionId !== 'ses_hist_1') throw Object.assign(new Error(`Session not found: ${sessionId}`), { code: -32602 });
+    // opencode-style message ids: msg_ + (ms × 4096, 48 bits) in hex.
+    const id = (minsAgo) => `msg_${((BigInt(HISTORY_AT - 3600_000 - minsAgo * 60_000) * 4096n) % (2n ** 48n)).toString(16).padStart(12, '0')}xyz`;
+    const say = (u) => update(sessionId, u);
+    say({ sessionUpdate: 'user_message_chunk', messageId: id(30), content: { type: 'text', text: 'first question' } });
+    say({ sessionUpdate: 'agent_message_chunk', messageId: id(29), content: { type: 'text', text: 'first ' } });
+    say({ sessionUpdate: 'agent_message_chunk', messageId: id(29), content: { type: 'text', text: 'answer' } });
+    say({ sessionUpdate: 'tool_call', toolCallId: 'hist_call', name: 'bash', kind: 'execute', status: 'pending', locations: [], rawInput: { command: 'ls' } });
+    say({ sessionUpdate: 'tool_call_update', toolCallId: 'hist_call', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'a b' } }] });
+    say({ sessionUpdate: 'user_message_chunk', messageId: id(10), content: { type: 'text', text: 'second question' } });
+    say({ sessionUpdate: 'agent_message_chunk', messageId: id(9), content: { type: 'text', text: 'second answer' } });
+    return { configOptions: configOptions() };
+  },
   'session/prompt': (p) => prompt(p),
 };
 

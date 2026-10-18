@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { SessionIndex } from './lib/sessions.mjs';
+import { SessionIndex, defaultClaudeDir } from './lib/sessions.mjs';
 import { ShellRunner } from './lib/shell.mjs';
 import * as gitinfo from './lib/gitinfo.mjs';
 import * as filetree from './lib/filetree.mjs';
@@ -28,6 +28,7 @@ import { ProcessMonitor } from './lib/procs.mjs';
 import { handoffPrompt, returnPrompt } from './lib/handoff.mjs';
 import { refsFromEvents, GitHubInfo } from './lib/ghrefs.mjs';
 import { DailyUsage } from './lib/daily.mjs';
+import { Journal } from './lib/journal.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -54,9 +55,14 @@ const MIME = {
 };
 
 // ------------------------------------------------------------- services
-const index = new SessionIndex({ recentDays: RECENT_DAYS }).start();
-const shell = new ShellRunner();
 const deck = new DeckState();
+// Sessions with no transcript of their own (ACP agents) get one from the deck,
+// kept as long as Claude Code keeps its own (cleanupPeriodDays, 30 by default).
+const RETENTION_DAYS = claudeRetentionDays();
+const journal = new Journal({ dir: path.join(deck.dir, 'sessions'), retentionDays: RETENTION_DAYS });
+const index = new SessionIndex({ recentDays: RECENT_DAYS, journal }).start();
+index.forgotten = (id) => deck.deleted.has(id);
+const shell = new ShellRunner();
 // The token persists in the deck state dir so the installed app's cookie
 // survives backend restarts. --token / DECK_TOKEN override it.
 const TOKEN = String(arg('token', process.env.DECK_TOKEN || deck.token()));
@@ -74,8 +80,9 @@ const agents = new AgentManager({
   wakeable: (id) => {
     if (!index.files.has(id)) return { error: index.cwdOf(id) ? 'subagents take their prompts from the parent session' : 'unknown session' };
     if (index.registry.get(id)?.alive && !agents.running(id)) return { error: 'this session is running outside the deck (a terminal or the desktop app); send it prompts there' };
-    const cwd = index.cwdOf(id);
-    return cwd ? { cwd } : { error: 'the session\'s folder is not known' };
+    const s = index.summary(id);
+    // A streamed session resumes under the agent it ran on, with the name it had.
+    return s?.cwd ? { cwd: s.cwd, harness: s.stream ? s.harness || undefined : undefined, title: s.stream ? s.title : undefined } : { error: 'the session\'s folder is not known' };
   },
 });
 const tts = new AzureTts({ dir: deck.dir });
@@ -172,12 +179,12 @@ setInterval(() => attention.observe(snapshot().active), 1000).unref();
 index.on('sessions', scheduleSnapshot);
 // Turn boundaries seen live snapshot the session's working tree (lib/turnsnap.mjs).
 const snaps = new TurnSnapshots({ dir: deck.dir });
-index.on('events', ({ sessionId, appended, updated }) => {
-  if (appended.length && index.files.has(sessionId)) {
+index.on('events', ({ sessionId, appended, updated, history }) => {
+  if (appended.length && index.files.has(sessionId) && !history) {
     const cwd = index.cwdOf(sessionId);
     if (cwd && appended.some(e => e.kind === 'prompt' || e.kind === 'turn_end')) snaps.observe(sessionId, cwd, appended).catch(() => {});
   }
-  if (appended.length) broadcast('event.batch', { sessionId, events: appended });
+  if (appended.length) broadcast('event.batch', { sessionId, events: appended, history });
   for (const ev of updated) broadcast('event.update', { sessionId, event: ev });
 });
 index.on('session', (payload) => broadcast('session.update', payload));
@@ -189,7 +196,29 @@ agents.on('change', (st) => {
 });
 agents.on('ratelimit', (info) => usage.update(info, 'a session the deck launched'));
 // ACP sessions have no transcript file; their events come from the driver.
-agents.on('stream', ({ id, cwd, title, events, meta }) => index.pushStream(id, { cwd, title, events, meta }));
+agents.on('stream', ({ id, cwd, title, harness, events, meta }) => index.pushStream(id, { cwd, title, harness, events, meta }));
+
+// ---------------------------------------------------------------- agents' own history
+// Sessions an ACP agent keeps (its own UI's, and the deck's from before it
+// kept journals) are listed from the agent; opening one replays its history
+// from the agent once, into the journal. No model calls.
+let remoteAt = 0, remoteRun = null;
+function refreshRemote(force = false) {
+  if (remoteRun || (!force && Date.now() - remoteAt < 60_000)) return remoteRun;
+  remoteAt = Date.now();
+  remoteRun = Promise.allSettled(Object.entries(agents.drivers).filter(([, d]) => d.listSessions).map(async ([name, d]) => {
+    index.addRemote(name, await d.listSessions(), { retentionDays: RETENTION_DAYS });
+  })).finally(() => { remoteRun = null; });
+  return remoteRun;
+}
+index.importer = async (id) => {
+  const f = index.files.get(id);
+  const driver = agents.drivers[f?.harness];
+  if (!driver?.loadHistory || agents.running(id)) return;
+  const h = await driver.loadHistory(id, { cwd: f.cwd, until: f.mtime });
+  if (h && index.files.get(id)?.remote) index.pushStream(id, { cwd: f.cwd, harness: f.harness, title: f.probe.title, events: h.events, meta: h.meta, history: true });
+};
+setTimeout(() => refreshRemote(true), 3000).unref();
 const usageView = () => ({ limits: usage.snapshot(), error: usageError, narrator: { enabled: NARRATOR, ...narrator.status() } });
 usage.on('usage', () => broadcast('usage', usageView()));
 // `claude -p /usage` reads the plan quota without a model call, so it is free
@@ -258,6 +287,14 @@ function serveStatic(res, rel) {
   });
 }
 
+/** How long Claude Code keeps transcripts (its cleanupPeriodDays setting; 30 days by default). */
+function claudeRetentionDays() {
+  try {
+    const d = JSON.parse(fs.readFileSync(path.join(defaultClaudeDir(), 'settings.json'), 'utf8')).cleanupPeriodDays;
+    return Number.isFinite(d) && d >= 0 ? d : 30;
+  } catch { return 30; }
+}
+
 /** The model the CLI uses when none is passed: the `model` in Claude Code's user settings. */
 function cliModel() {
   try { return JSON.parse(fs.readFileSync(path.join(index.claudeDir, 'settings.json'), 'utf8')).model || null; } catch { return null; }
@@ -315,6 +352,7 @@ async function route(req, res, url) {
   if (p === '/api/config' && req.method === 'GET') return send(res, 200, { cliModel: cliModel(), harnesses: agents.harnessList() });
   if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
   if (p === '/api/usage/today' && req.method === 'GET') return send(res, 200, usageToday());
+  if (p === '/api/history/refresh' && req.method === 'POST') { await refreshRemote(); return send(res, 200, { ok: true }); }
   if (p === '/api/usage/refresh' && req.method === 'POST') {
     await probeQuota();
     return send(res, 200, usageView());
@@ -434,6 +472,8 @@ async function route(req, res, url) {
     const where = index.fileOf(id);
     if (!where) return send(res, 404, { error: 'unknown session' });
     if (index.registry.get(id)?.alive) return send(res, 409, { error: 'session is still running; end it first' });
+    // A streamed session's journal goes to the trash; its agent's list must not bring it back.
+    if (index.files.get(id)?.stream) { journal.close(id); deck.forget(id); }
     const trashedTo = deck.trashSession(id, where);
     index.forget(id);
     briefs.forget(id);
@@ -608,7 +648,7 @@ server.on('error', (e) => {
   process.exit(1);
 });
 // ACP sessions are closed before the agent goes, or it resumes them later with nobody to answer.
-async function shutdown() { agents.flush(); await agents.shutdown(); index.stop(); server.close(); process.exit(0); }
+async function shutdown() { agents.flush(); await agents.shutdown(); journal.flush(); index.stop(); server.close(); process.exit(0); }
 
 /**
  * Replace this process with a fresh one on the same port and arguments.
@@ -617,7 +657,7 @@ async function shutdown() { agents.flush(); await agents.shutdown(); index.stop(
  */
 async function restart() {
   console.log(`--- ${new Date().toString()} restart requested from the deck`);
-  agents.flush(); await agents.shutdown(); index.stop();
+  agents.flush(); await agents.shutdown(); journal.flush(); index.stop();
   for (const c of clients) c.end();
   const log = fs.openSync(path.join(deck.dir, 'server.log'), 'a');
   const relaunch = () => {

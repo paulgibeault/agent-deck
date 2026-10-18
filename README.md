@@ -113,10 +113,21 @@ one entry:
 }
 ```
 
-opencode sessions have no transcript file: their events stream from the
-agent while the deck runs. Stopping one closes it in opencode, and sending
-to it again resumes it with its context. Past opencode sessions are not
-listed yet after a deck restart.
+opencode sessions have no transcript file the deck can read, so the deck
+writes one: everything an ACP session streams is kept in
+`~/.agent-deck/sessions/<agent>/<folder>/<id>.jsonl`, one append-only JSONL
+per session like Claude Code's. These sessions are listed, searchable and
+deletable after a restart like any other, and kept as long as Claude Code
+keeps its own transcripts (its `cleanupPeriodDays`, 30 days by default).
+Stopping one closes it in opencode, and sending to it again resumes it with
+its context.
+
+Sessions opencode knows that the deck has no copy of (started in opencode's
+own UI, or before the deck kept these) are listed from opencode itself
+(`session/list`, when the deck starts and when All sessions opens). Opening
+one replays its history from opencode once (`session/load`, no model call)
+and keeps it. Deleting one here moves the deck's copy to the trash; opencode
+keeps its own.
 
 ### Backends
 
@@ -471,6 +482,7 @@ lib/gitinfo.mjs       status / diff / log, and a session's place (root, worktree
 lib/ghrefs.mjs        GitHub issues and PRs a session worked on; titles via `gh`
 lib/handoff.mjs       the first prompt of a session moved to another backend (or back)
 lib/daily.mjs         today's tokens and cost per backend, read incrementally
+lib/journal.mjs       the deck's own JSONL transcript for ACP sessions
 lib/shell.mjs         pilot shell runner
 lib/agent.mjs         deck-launched sessions: queue, wake, idle stop, permissions
 lib/harness/claude.mjs  driver: `claude -p` stream-json
