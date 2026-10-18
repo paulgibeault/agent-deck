@@ -35,6 +35,7 @@
         "devtoken"
       ],
       "env": {
+        "DECK_LLM": "claude",
         "DECK_CLAUDE_BIN": "test/fixtures/fake-claude.mjs"
       },
       "port": 7779,
@@ -52,6 +53,7 @@
       ],
       "env": {
         "DECK_AGENT_BIN": "test/fixtures/fake-agent.mjs",
+        "DECK_LLM": "claude",
         "DECK_CLAUDE_BIN": "test/fixtures/fake-claude.mjs",
         "CLAUDE_CONFIG_DIR": "/tmp/agent-deck-fake/claude",
         "DECK_STATE_DIR": "/tmp/agent-deck-fake/state"
