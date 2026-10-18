@@ -53,6 +53,14 @@
   <symbol id="i-next" viewBox="0 0 16 16"><path d="M2.5 4v8l5-4zM8 4v8l5-4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
   <symbol id="i-bell" viewBox="0 0 16 16"><path d="M4 11.5V7.2a4 4 0 0 1 8 0v4.3l1.2 1.3H2.8zM6.6 14a1.5 1.5 0 0 0 2.8 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-bg" viewBox="0 0 16 16"><path d="M4.5 2.5h7M4.5 13.5h7M5.5 2.5c0 3 5 3.5 5 5.5s-5 2.5-5 5.5M10.5 2.5c0 3-5 3.5-5 5.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <!-- Backends: where a session's model runs. -->
+  <symbol id="i-be-local" viewBox="0 0 16 16"><path d="M2.5 7.6 8 3l5.5 4.6M4 6.6V13h8V6.6M6.8 13v-3.2h2.4V13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-be-anthropic" viewBox="0 0 16 16"><path d="M8 2v3.6M8 10.4V14M2 8h3.6M10.4 8H14M3.8 3.8l2.5 2.5M9.7 9.7l2.5 2.5M12.2 3.8 9.7 6.3M6.3 9.7l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-be-google" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.5c.6 3.4 3.1 5.9 6.5 6.5-3.4.6-5.9 3.1-6.5 6.5C7.4 11.1 4.9 8.6 1.5 8 4.9 7.4 7.4 4.9 8 1.5z"/></symbol>
+  <symbol id="i-be-openai" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.9l5.3 3.05v6.1L8 14.1l-5.3-3.05v-6.1z"/><circle cx="8" cy="8" r="2"/></g></symbol>
+  <symbol id="i-be-other" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="4" width="8" height="8" rx="1.5"/><path d="M6.5 2v2M9.5 2v2M6.5 12v2M9.5 12v2M2 6.5h2M2 9.5h2M12 6.5h2M12 9.5h2"/></g></symbol>
+  <symbol id="i-worktree" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M1.8 6.3h3.6l1 1.1h5.6v5.8H1.8z"/><path d="M4 4.2h3.2l1 1.1h5.9v5.6" stroke-linecap="round"/></g></symbol>
+  <symbol id="i-move" viewBox="0 0 16 16"><path d="M2.5 8h8.5M8 4.5 11.5 8 8 11.5M13.5 3.5v9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <!-- Events: one glyph per kind; the family color comes from the row. -->
   <symbol id="i-commit" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.75"/><path d="M1.5 8h3.75M10.75 8h3.75"/></g></symbol>
   <symbol id="i-gitlook" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v4M8 10.5v4"/></g></symbol>
@@ -99,7 +107,7 @@
 <div id="hovercard" class="hovercard" role="tooltip" hidden></div>
 <!-- In the installed app this strip is the window's title bar (Window Controls Overlay); in a tab it is a slim top bar. -->
 <header id="titlebar" class="titlebar">
-  <button id="conn" type="button" class="conn" aria-label="Server: offline" title="Server offline"><span class="cdot"></span></button>
+  <button id="conn" type="button" class="conn" aria-haspopup="menu" aria-label="Backend offline · menu (m)" title="Backend offline · menu (m)"><span class="cdot"></span></button>
   <button id="home" class="tb-title" type="button" title="Overview (Esc)">Agent Deck</button>
   <button id="bell" type="button" class="bell" popovertarget="bell-pop" aria-label="Narration history (b)" title="Narration history (b)"><svg width="15" height="15"><use href="#i-bell"/></svg><span class="bell-n" hidden></span></button>
   <span class="spacer"></span>
@@ -112,6 +120,8 @@
   <button id="quota" type="button" class="quota" aria-label="Plan usage" aria-describedby="hovercard"><svg class="qring" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="qt" cx="8" cy="8" r="6"/><circle class="qa" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 8 8)"/></svg><span class="qpct"></span></button>
 </header>
 <div id="ra-pop" class="ra-pop" popover></div>
+<div id="main-menu" class="menu-pop" popover role="menu" aria-label="Main menu"></div>
+<div id="be-pop" class="menu-pop" popover role="menu" aria-label="Backend"></div>
 <div id="bell-pop" class="bell-pop" popover></div>
 <div id="deck">
   <aside id="sessions" class="pane rail" aria-label="Sessions">
@@ -321,6 +331,24 @@
   </form>
 </dialog>
 
+<dialog id="migrate" class="dialog" aria-labelledby="mg-t">
+  <form id="mg-form">
+    <h2 id="mg-t">Move to another backend?</h2>
+    <p id="mg-b" class="ns-sub"></p>
+    <label class="ns-l" for="mg-note">What next <span class="muted">(optional)</span></label>
+    <textarea id="mg-note" class="field ns-prompt" rows="3" placeholder="Leave empty to pick up where it left off (⌘↩ to move)"></textarea>
+    <details id="mg-preview" class="mg-preview">
+      <summary>Handoff <span id="mg-size" class="muted"></span><button type="button" id="mg-reset" class="linkish" hidden>Rebuild</button></summary>
+      <textarea id="mg-prompt" class="field mono" rows="14" spellcheck="false" aria-label="The handoff prompt"></textarea>
+    </details>
+    <p id="mg-err" class="ns-err" role="alert" hidden></p>
+    <div class="dialog-a">
+      <button type="button" id="mg-cancel" class="btn">Cancel</button>
+      <button type="submit" id="mg-go" class="btn primary">Move</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="history" class="dialog wide history" aria-labelledby="hist-t">
   <form method="dialog" class="hist-f">
     <div class="hist-h"><h2 id="hist-t">All sessions</h2><span id="hist-n" class="muted"></span><span class="spacer"></span><button value="cancel" class="icon-btn sm ghost" aria-label="Close" title="Close (Esc)"><svg width="12" height="12"><use href="#i-x"/></svg></button></div>
@@ -369,6 +397,7 @@
       <dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Events, Files, Changes, Shell, Background</dd>
       <dt><kbd>n</kbd></dt><dd>new session</dd>
       <dt><kbd>h</kbd></dt><dd>search all sessions</dd>
+      <dt><kbd>m</kbd></dt><dd>main menu: backend, limits, restart</dd>
       <dt><kbd>p</kbd></dt><dd>processes: ↑/↓ move, ←/→ collapse / expand, / search</dd>
       <dt><kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send the prompt</dd>
       <dt><kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>↩</kbd></dt><dd>send now: stop the current turn and send the prompt with everything queued, as one message</dd>
