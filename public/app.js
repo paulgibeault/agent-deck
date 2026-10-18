@@ -205,6 +205,7 @@ function renderMainMenu() {
     const cur = harnessOf(prefs.launchHarness).name;
     for (const hn of harnesses) items.push(menuItem(backendGlyph(hn, 13), backendText(hn), () => { prefs.launchHarness = hn.name; savePrefs(); renderModelPicker(); }, { checked: hn.name === cur }));
   }
+  items.push(...todayRows());
   // Plan limits apply to Claude Code; a local model has none worth showing here.
   const lim = state.usage?.limits;
   if (harnesses.some(x => x.type === 'claude') || lim) {
@@ -225,7 +226,27 @@ function renderMainMenu() {
     menuItem(svgUse('i-power', 13), 'Restart backend…', confirmRestart, { cls: 'danger', disabled: restarting }));
   $('main-menu').replaceChildren(...items);
 }
-function openMainMenu() { hideCard(true); renderMainMenu(); showMenu($('main-menu'), $('conn')); }
+// What each backend used today (lib/daily.mjs): read from the transcripts when the menu opens.
+let today = null;
+function loadToday() {
+  api.get('/api/usage/today').then((r) => { today = r; if ($('main-menu').matches(':popover-open')) renderMainMenu(); }).catch(() => {});
+}
+function todayRows() {
+  const by = today?.backends || {};
+  const names = [...harnesses.map(x => x.name).filter(n => by[n]), ...Object.keys(by).filter(n => !harnesses.some(x => x.name === n))];
+  if (!names.length) return [];
+  return [menuSec('Today'), ...names.map((n) => {
+    const t = by[n]; const hn = harnessOf(n).name === n ? harnessOf(n) : { name: n, label: n };
+    const be = backendOfHarness(hn);
+    // Local models cost nothing; Claude Code is priced at API list rates, which a plan does not bill.
+    const cost = be.kind === 'local' ? '$0' : t.costUsd ? `~${fmtUsd(t.costUsd)}` : null;
+    const tip = `${plural(t.sessions, 'session')} · ${plural(t.calls, be.kind === 'anthropic' ? 'response' : 'turn')} · ${fmtTokens(t.input)} new input, ${fmtTokens(t.cacheRead)} cached, ${fmtTokens(t.output)} output`
+      + (be.kind === 'anthropic' ? '\nCost at API list rates, an estimate: a plan is not billed per token.' : '') + (t.unpriced ? `\n${t.unpriced} responses from models without a known price.` : '');
+    return h('div', { class: 'mm-u', title: tip }, backendGlyph(hn, 13), h('span', { class: 'mm-t' }, be.label),
+      h('span', { class: 'muted' }, `${fmtTokens(t.input + t.cacheRead + t.cacheWrite)} in · ${fmtTokens(t.output)} out`), cost ? h('b', {}, cost) : null);
+  })];
+}
+function openMainMenu() { hideCard(true); loadToday(); renderMainMenu(); showMenu($('main-menu'), $('conn')); }
 $('conn').addEventListener('click', () => $('main-menu').matches(':popover-open') ? $('main-menu').hidePopover() : openMainMenu());
 // Uptime and reset countdowns move on their own.
 setInterval(() => { if ($('main-menu').matches(':popover-open')) renderMainMenu(); }, 15_000);
@@ -1301,12 +1322,23 @@ function placeOf(id) {
 }
 const GH_ICON = { pr: 'i-pr', issue: 'i-issue' };
 const GH_STATE = { open: 'Open', closed: 'Closed', merged: 'Merged' };
+const REVIEW = { approved: 'Approved', changes_requested: 'Changes requested', review_required: 'Review required' };
+/** "5 passed · 1 failed: lint" for a PR's checks. */
+function checksText(c) {
+  if (!c) return null;
+  return [c.passed ? `${c.passed} passed` : null, c.failed ? `${c.failed} failed${c.failing.length ? `: ${c.failing.slice(0, 4).join(', ')}` : ''}` : null, c.pending ? `${c.pending} running` : null].filter(Boolean).join(' · ');
+}
 function ghChip(r, repo) {
   const num = `${repo && r.repo.toLowerCase() !== repo.toLowerCase() ? r.repo.split('/')[1] : ''}#${r.number}`;
   const what = `${r.kind === 'pr' ? 'Pull request' : 'Issue'} ${num}`;
-  const tip = [r.branch ? `${what} · this branch` : what, r.state ? GH_STATE[r.state] || r.state : null].filter(Boolean).join(' · ') + (r.title ? `\n${r.title}` : '');
-  return h('a', { class: `sh-chip gh st-${r.state || 'unknown'}${r.branch ? ' cur' : ''}`, href: r.url, target: '_blank', rel: 'noopener', title: tip },
-    svgUse(r.state === 'merged' ? 'i-merge' : GH_ICON[r.kind] || 'i-issue', 12), h('span', {}, num));
+  // The branch's own PR also says how its CI and review stand; the dot is its CI.
+  const ci = r.state === 'open' ? r.checks?.state : null;
+  const tip = [[r.branch ? `${what} · this branch` : what, r.draft ? 'Draft' : r.state ? GH_STATE[r.state] || r.state : null].filter(Boolean).join(' · '),
+    r.title, r.checks ? `Checks: ${checksText(r.checks)}` : null, r.review ? `Review: ${REVIEW[r.review] || r.review}` : null].filter(Boolean).join('\n');
+  return h('a', { class: `sh-chip gh st-${r.state || 'unknown'}${r.branch ? ' cur' : ''}${r.draft ? ' draft' : ''}`, href: r.url, target: '_blank', rel: 'noopener', title: tip },
+    svgUse(r.state === 'merged' ? 'i-merge' : GH_ICON[r.kind] || 'i-issue', 12), h('span', {}, num),
+    ci ? h('i', { class: `ci ci-${ci}`, 'aria-label': `CI ${ci}` }) : null,
+    r.review === 'approved' && r.state === 'open' ? svgUse('i-check', 10) : null);
 }
 const GH_SHOWN = 6;
 function placeRow(s, b) {
@@ -1314,7 +1346,8 @@ function placeRow(s, b) {
   const p = s.kind === 'agent' ? null : placeOf(s.id);
   const chip = (icon, text, title, onclick, cls = '') => h(onclick ? 'button' : 'span', { type: onclick ? 'button' : null, class: `sh-chip${cls ? ' ' + cls : ''}`, title, onclick }, svgUse(icon, 12), h('span', {}, text));
   const row = h('div', { class: 'sh-place' });
-  row.append(chip('i-folder', tilde(s.cwd), `Folder: ${s.cwd} · click for its files`, () => setTab('files'), 'fld'));
+  row.append(chip('i-folder', tilde(s.cwd), `Folder: ${s.cwd} · click for its files`, () => setTab('files'), 'fld'),
+    ib('i-open', 'Open the folder in the editor', () => api.openEditor(s.cwd), { cls: 'sh-ed', size: 12 }));
   if (p?.worktree) row.append(chip('i-worktree', `worktree of ${basename(p.worktree.main)}`, `A linked git worktree of ${tilde(p.worktree.main)}`, null));
   // The branch the session recorded; the folder may have moved on since (git's word when it hasn't recorded one).
   const now = p?.branch || (p?.detached ? `detached ${p.detached}` : null);
@@ -1324,6 +1357,11 @@ function placeRow(s, b) {
   const refs = p?.refs || (s.pr?.url ? [{ kind: 'pr', number: s.pr.number, url: s.pr.url, repo: s.pr.repo || '' }] : []);
   const repo = p?.github?.repo || null;
   row.append(...refs.slice(0, GH_SHOWN).map(r => ghChip(r, repo)));
+  // A branch with work on it and no PR yet: GitHub's compare page, ready to open one.
+  const prBranch = p?.prBranch ?? p?.branch;
+  if (repo && prBranch && !p.pending && prBranch !== p.defaultBranch && !refs.some(r => r.branch))
+    row.append(h('a', { class: 'sh-chip new-pr', href: `${p.github.url}/compare/${encodeURIComponent(prBranch)}?expand=1`, target: '_blank', rel: 'noopener',
+      title: `Open a pull request for ${prBranch} on GitHub` }, svgUse('i-plus', 11), h('span', {}, 'PR')));
   if (refs.length > GH_SHOWN) row.append(h('span', { class: 'sh-chip more', title: refs.slice(GH_SHOWN).map(r => `${r.kind === 'pr' ? 'PR' : 'Issue'} #${r.number}${r.title ? ` ${r.title}` : ''}`).join('\n') }, `+${refs.length - GH_SHOWN}`));
   const l = s.lineage;
   if (l?.from) row.append(chip('i-move', `from ${backendOfHarness(harnessOf(l.from.harness)).label}`, `Moved here from “${state.byId.get(l.from.id)?.title || l.from.id}” ${ago(Date.now() - l.from.at)} ago · click to open it`, () => select(l.from.id), 'mv'));
@@ -1380,28 +1418,50 @@ function openBackendMenu(anchor) {
   showMenu($('be-pop'), anchor);
 }
 
-const migrating = { s: null, to: null };
-function openMigrate(s, to) {
-  const d = deckOf(s.id); const be = backendOfHarness(to);
-  migrating.s = s; migrating.to = to;
-  const q = d?.queue?.length || 0;
-  $('mg-t').textContent = `Move to ${be.label}?`;
-  $('mg-b').textContent = `Starts ${to.label} in ${tilde(s.cwd)} with this session’s history as its first prompt: what was asked, the conversation, the files it touched. `
-    + (q ? `${plural(q, 'queued prompt')} go${q === 1 ? 'es' : ''} with it. ` : '')
+const migrating = { s: null, to: null, edited: false, timer: null };
+/** The handoff the move would send, shown (and editable) in the move dialog. */
+async function loadHandoff() {
+  const { s, to } = migrating; if (!s || !to || migrating.edited) return;
+  const want = `${s.id}|${to.name}|${$('mg-note').value}`;
+  migrating.want = want;
+  try {
+    const r = await api.get(`/api/sessions/${sid(s.id)}/handoff?harness=${encodeURIComponent(to.name)}&note=${encodeURIComponent($('mg-note').value)}`);
+    if (migrating.want !== want || migrating.edited) return;
+    $('mg-prompt').value = r.prompt;
+    migrating.resume = r.resume;
+    $('mg-size').textContent = `~${fmtTokens(Math.round(r.prompt.length / 3.5))} tokens`;
+    if (r.resume) $('mg-b').textContent = `Resumes “${r.resumeTitle || 'the original session'}” on ${backendOfHarness(to).label}, where this session came from, and tells it what happened here since. ${migrateTail(s)}`;
+  } catch (e) { $('mg-prompt').value = ''; $('mg-size').textContent = e.message; }
+}
+function migrateTail(s) {
+  const d = deckOf(s.id); const q = d?.queue?.length || 0;
+  return (q ? `${plural(q, 'queued prompt')} go${q === 1 ? 'es' : ''} with it. ` : '')
     + (d?.alive ? `The ${actorOf(s)} session ends.` : s.alive ? `The ${actorOf(s)} session keeps running outside the deck, in the same folder.` : 'This session stays as it is, linked to the new one.');
+}
+function openMigrate(s, to) {
+  const be = backendOfHarness(to);
+  Object.assign(migrating, { s, to, edited: false, resume: null });
+  $('mg-t').textContent = `Move to ${be.label}?`;
+  $('mg-b').textContent = `Starts ${to.label} in ${tilde(s.cwd)} with this session’s history as its first prompt: what was asked, the conversation, the files it touched, what isn’t committed yet and the last test run. ${migrateTail(s)}`;
   $('mg-note').value = ''; $('mg-err').hidden = true;
+  $('mg-prompt').value = ''; $('mg-size').textContent = 'Building…'; $('mg-preview').open = false; $('mg-reset').hidden = true;
+  loadHandoff();
   $('mg-go').disabled = false; $('mg-go').textContent = 'Move';
   $('migrate').showModal();
   $('mg-note').focus();
 }
 $('mg-cancel').onclick = () => $('migrate').close();
+// The note is part of the handoff: rebuild the preview as it changes, until the pilot edits the preview itself.
+$('mg-note').addEventListener('input', () => { clearTimeout(migrating.timer); migrating.timer = setTimeout(loadHandoff, 400); });
+$('mg-prompt').addEventListener('input', () => { migrating.edited = true; $('mg-reset').hidden = false; $('mg-size').textContent = `~${fmtTokens(Math.round($('mg-prompt').value.length / 3.5))} tokens · edited`; });
+$('mg-reset').onclick = (e) => { e.preventDefault(); migrating.edited = false; $('mg-reset').hidden = true; loadHandoff(); };
 $('mg-note').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('mg-form').requestSubmit(); } });
 $('mg-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const { s, to } = migrating; if (!s || !to) return;
   $('mg-go').disabled = true; $('mg-go').textContent = 'Moving…'; $('mg-err').hidden = true;
   try {
-    const st = await api.post(`/api/sessions/${sid(s.id)}/migrate`, { harness: to.name, note: $('mg-note').value });
+    const st = await api.post(`/api/sessions/${sid(s.id)}/migrate`, { harness: to.name, note: $('mg-note').value, prompt: migrating.edited ? $('mg-prompt').value : undefined });
     state.deck.set(st.id, st);
     $('migrate').close();
     toast(`Moved to ${backendOfHarness(to).label}`);
@@ -1529,6 +1589,7 @@ function statusOf0(s, b, phase) {
   const waited = g.need?.since ? ago(Date.now() - Date.parse(g.need.since)) : g.idleMs != null ? ago(g.idleMs) : null;
   if (sig === 'input' && (permLine(s.id) || g.need?.kind === 'permission')) return { sig, who: 'you', icon: 'i-hand', head: 'Needs your permission', text: permLine(s.id)?.replace(/^Wants to use /, '') || g.need.text, right: deckOf(s.id)?.alive ? 'answer below' : waited ? `waiting ${waited}` : '' };
   if (sig === 'input') return { sig, who: 'you', icon: 'i-q', head: `${actor} asked you`, text: (g.need?.text || g.lastText || '') + where, right: waited ? `waiting ${waited}` : '' };
+  if (sig === 'error' && g.need?.kind === 'ci') return { sig, who: 'you', icon: 'i-ci', head: 'CI is red', text: g.need.text, right: '' };
   if (sig === 'error') return { sig, who: phase === 'working' ? 'agent' : 'you', icon: 'i-x', head: phase === 'working' ? 'Hit an error' : 'Stopped on an error', text: g.need?.text || '', right: waited ? `${waited} ago` : '', seq: g.need?.seq };
   if (phase === 'turn') return { sig, who: 'you', icon: 'i-check', head: 'Done · your turn', text: (g.lastPrompt ? `finished: ${g.lastPrompt}` : 'waiting for your next prompt') + where, right: g.idleMs != null ? `idle ${ago(g.idleMs)}` : '' };
   if (phase === 'working') {

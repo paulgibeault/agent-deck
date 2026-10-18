@@ -25,8 +25,9 @@ import { loadHarnesses } from './lib/harnesses.mjs';
 import { AzureTts } from './lib/tts.mjs';
 import { KokoroTts } from './lib/kokoro.mjs';
 import { ProcessMonitor } from './lib/procs.mjs';
-import { handoffPrompt } from './lib/handoff.mjs';
+import { handoffPrompt, returnPrompt } from './lib/handoff.mjs';
 import { refsFromEvents, GitHubInfo } from './lib/ghrefs.mjs';
+import { DailyUsage } from './lib/daily.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -84,6 +85,61 @@ index.deckState = (id) => agents.publicState(id);
 index.harnessOf = (id) => agents.recordedHarness(id);
 index.lineage = (id) => agents.lineageOf(id);
 const github = new GitHubInfo();
+const daily = new DailyUsage();
+/** Today's tokens and estimated cost per harness: Claude Code transcripts (and their subagents), plus streamed sessions. */
+function usageToday() {
+  const now = new Date();
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const files = [], streams = [];
+  for (const f of index.files.values()) {
+    if (f.mtime < day) continue;
+    if (f.stream) {
+      const events = index.loaded.get(f.id)?.state.events;
+      const harness = agents.recordedHarness(f.id) || index.deckState(f.id)?.harness;
+      if (events && harness) streams.push({ sessionId: f.id, harness, events });
+      continue;
+    }
+    files.push({ file: f.file, sessionId: f.id });
+    index.scanAgents(f.id);
+  }
+  for (const a of index.agents.values()) if (a.mtime >= day && a.file) files.push({ file: a.file, sessionId: a.parentId });
+  const r = daily.today(files, streams);
+  // Transcripts on disk are Claude Code's, whatever its harness is called here.
+  const claude = agents.harnessList().find(x => x.type === 'claude')?.name || 'claude';
+  if (claude !== 'claude' && r.backends.claude) { r.backends[claude] = r.backends.claude; delete r.backends.claude; }
+  return r;
+}
+// Red CI on a live session's branch PR counts as needing the pilot. gh is
+// asked every couple of minutes for live sessions only; no model calls.
+const ci = new Map();          // sessionId -> { pr, url, failing }
+const places = new Map();      // cwd -> { at, value }: where a folder is, briefly cached
+async function placeOf(cwd) {
+  const c = places.get(cwd);
+  if (c && Date.now() - c.at < 5 * 60_000) return c.value;
+  const value = await gitinfo.place(cwd);
+  places.set(cwd, { at: Date.now(), value });
+  return value;
+}
+async function watchCi() {
+  const live = index.snapshot().active.filter(s => s.cwd);
+  const changed = [];
+  for (const s of live) {
+    let next = null;
+    const where = await placeOf(s.cwd).catch(() => null);
+    const repo = where?.github?.repo; const branch = where?.branch;
+    if (repo && branch && branch !== where.defaultBranch) {
+      const pr = await github.branchPr(repo, branch);
+      if (pr?.state === 'open' && pr.checks?.state === 'failure') next = { pr: pr.number, url: pr.url, failing: pr.checks.failing };
+    }
+    if (JSON.stringify(next) !== JSON.stringify(ci.get(s.id) || null)) { next ? ci.set(s.id, next) : ci.delete(s.id); changed.push(s.id); }
+  }
+  for (const id of ci.keys()) if (!live.some(s => s.id === id)) { ci.delete(id); changed.push(id); }
+  for (const id of changed) index.refresh(id);
+  if (changed.length) scheduleSnapshot();
+}
+index.ci = (id) => ci.get(id) || null;
+setTimeout(() => watchCi().catch(() => {}), 5000).unref();
+setInterval(() => watchCi().catch(() => {}), 120_000).unref();
 // The process view: what the deck, its sessions and their tool calls are running.
 const procs = new ProcessMonitor({
   known: () => ({
@@ -207,6 +263,30 @@ function cliModel() {
   try { return JSON.parse(fs.readFileSync(path.join(index.claudeDir, 'settings.json'), 'utf8')).model || null; } catch { return null; }
 }
 
+/**
+ * What moving session `id` to `harness` would do: a new session there with a
+ * handoff, or, when the session came from that backend and the session it
+ * came from can still be resumed, that one again with what happened since.
+ */
+async function planMove(id, { harness, note = '' }) {
+  const entry = index.load(id);
+  const summary = index.summary(id);
+  if (!entry || summary?.kind !== 'session') throw Object.assign(new Error('unknown session'), { code: 404 });
+  if (!summary.cwd) throw Object.assign(new Error('the session\'s folder is not known'), { code: 409 });
+  const list = agents.harnessList();
+  const to = list.find(x => x.name === harness);
+  if (!to) throw new Error(`unknown harness: ${harness}`);
+  const from = list.find(x => x.name === summary.harness);
+  const label = (x) => !x ? summary.harness || 'another agent' : x.backend.label === x.label ? x.label : `${x.backend.label} (${x.label})`;
+  const work = await gitinfo.changes(summary.cwd).catch(() => null);
+  const back = agents.lineageOf(id)?.from;
+  if (back && back.harness === harness && !agents.wakeable(back.id).error) {
+    return { summary, resume: back.id, prompt: returnPrompt({ events: entry.state.events, away: label(from), work, note: String(note || '') }) };
+  }
+  return { summary, resume: null, prompt: handoffPrompt({ summary, events: entry.state.events, brief: briefs.publicBrief(id).brief, from: label(from), to: label(to),
+    files: entry.state.filesList().map(f => f.path), work, note: String(note || '') }) };
+}
+
 // --------------------------------------------------------------- routes
 async function route(req, res, url) {
   const p = url.pathname;
@@ -234,6 +314,7 @@ async function route(req, res, url) {
   if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
   if (p === '/api/config' && req.method === 'GET') return send(res, 200, { cliModel: cliModel(), harnesses: agents.harnessList() });
   if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
+  if (p === '/api/usage/today' && req.method === 'GET') return send(res, 200, usageToday());
   if (p === '/api/usage/refresh' && req.method === 'POST') {
     await probeQuota();
     return send(res, 200, usageView());
@@ -299,22 +380,16 @@ async function route(req, res, url) {
       return send(res, 200, { ok: true, state: agents.publicState(id) });
     } catch (e) { return send(res, e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { error: e.message }); }
   }
-  if ((m = /^\/api\/sessions\/([^/]+)\/migrate$/.exec(p)) && req.method === 'POST') {
+  if ((m = /^\/api\/sessions\/([^/]+)\/(migrate|handoff)$/.exec(p)) && (req.method === 'POST' || m[2] === 'handoff')) {
     const id = decodeURIComponent(m[1]);
-    const { harness, note } = await readBody(req);
-    const entry = index.load(id);
-    const summary = index.summary(id);
-    if (!entry || summary?.kind !== 'session') return send(res, 404, { error: 'unknown session' });
-    if (!summary.cwd) return send(res, 409, { error: 'the session\'s folder is not known' });
-    const list = agents.harnessList();
-    const to = list.find(x => x.name === harness);
-    if (!to) return send(res, 400, { error: `unknown harness: ${harness}` });
-    const from = list.find(x => x.name === summary.harness);
-    const prompt = handoffPrompt({ summary, events: entry.state.events, brief: briefs.publicBrief(id).brief,
-      from: from ? `${from.backend.label} (${from.label})` : summary.harness || 'another agent', to: `${to.backend.label} (${to.label})`,
-      files: entry.state.filesList().map(f => f.path), note: String(note || '') });
+    const body = req.method === 'POST' ? await readBody(req, PROMPT_BODY_LIMIT) : { harness: q.get('harness'), note: q.get('note') };
+    let mv;
+    try { mv = await planMove(id, body); } catch (e) { return send(res, e.code || 400, { error: e.message }); }
+    if (m[2] === 'handoff') return send(res, 200, { prompt: mv.prompt, resume: mv.resume, resumeTitle: mv.resume ? index.summary(mv.resume)?.title || null : null });
+    // The pilot may have edited the handoff in the move dialog.
+    const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : mv.prompt;
     try {
-      const st = await agents.migrate(id, { harness, prompt, cwd: summary.cwd, name: summary.title });
+      const st = await agents.migrate(id, { harness: body.harness, prompt, cwd: mv.summary.cwd, name: mv.summary.title, resume: mv.resume });
       scheduleSnapshot();
       return send(res, 200, st);
     } catch (e) { return send(res, e.code === 409 ? 409 : 400, { error: e.message }); }
@@ -327,10 +402,13 @@ async function route(req, res, url) {
     const events = index.load(id)?.state.events || [];
     const repo = where.github?.repo || null;
     const refs = refsFromEvents(events, { repo, pr: summary.pr });
+    // The branch's PR is the one for the branch the session worked on; the folder may have moved on since.
+    const recorded = summary.gitBranch && summary.gitBranch !== 'HEAD' ? summary.gitBranch : null;
+    const prBranch = summary.alive ? where.branch || recorded : recorded || where.branch;
     // gh can be slow: answer with what git and the transcript say, and let the page ask again for titles.
-    const enriched = github.enrich(refs, { repo, branch: where.branch, defaultBranch: where.defaultBranch });
+    const enriched = github.enrich(refs, { repo, branch: prBranch, defaultBranch: where.defaultBranch });
     const done = await Promise.race([enriched, new Promise(r => setTimeout(r, 1500, null))]);
-    return send(res, 200, { ...where, refs: done || refs.map(({ lastSeq, ...r }) => r), pending: !done });
+    return send(res, 200, { ...where, prBranch, refs: done || refs.map(({ lastSeq, ...r }) => r), pending: !done });
   }
   if ((m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {
     const id = decodeURIComponent(m[1]);
