@@ -81,11 +81,40 @@ does this).
 
 Tests: `npm test` (parser, index, brief scheduler, Ask and trash against
 `test/fixtures/session.jsonl`; deck-launched sessions against
-`test/fixtures/fake-agent.mjs`). The `agent-deck-fake-agent` preview config
+`test/fixtures/fake-agent.mjs`; ACP sessions against
+`test/fixtures/fake-acp.mjs`). The `agent-deck-fake-agent` preview config
 runs the whole deck on the fakes with a throwaway `CLAUDE_CONFIG_DIR`, so
 you can try launching without a login or touching `~/.claude`. Its prompt
 words steer it: "permission" asks to run a command, "slow" works for a
 minute, "crash" exits with an error.
+
+### Agents the deck can launch
+
+The New session dialog picks the agent. By default the deck offers
+**opencode on the household model** (the default, driven over the Agent
+Client Protocol: `opencode acp`) and **Claude Code** (`claude -p`). opencode must be installed
+and set up by the open-act client bootstrap, which points it at the model and
+makes edits and commands ask first, so their permission prompts reach the
+deck. Its permission choices: ask me in the deck, allow everything, or plan
+only.
+
+To change the list, write `~/.agent-deck/harnesses.json`; any ACP agent is
+one entry:
+
+```json
+{
+  "default": "opencode",
+  "harnesses": {
+    "claude":   { "type": "claude" },
+    "opencode": { "type": "acp", "bin": "opencode", "args": ["acp"], "label": "opencode · household" }
+  }
+}
+```
+
+opencode sessions have no transcript file: their events stream from the
+agent while the deck runs. Stopping one closes it in opencode, and sending
+to it again resumes it with its context. Past opencode sessions are not
+listed yet after a deck restart.
 
 ### Better voices
 
@@ -403,7 +432,12 @@ lib/ask.mjs           Ask about this: scope resolution + answer
 lib/deckstate.mjs     hidden sessions, delete trash
 lib/gitinfo.mjs       status / diff / log
 lib/shell.mjs         pilot shell runner
-lib/agent.mjs         deck-launched sessions (stream-json control)
+lib/agent.mjs         deck-launched sessions: queue, wake, idle stop, permissions
+lib/harness/claude.mjs  driver: `claude -p` stream-json
+lib/harness/acp.mjs   driver: any ACP agent (opencode), one process for all sessions
+lib/harnesses.mjs     harnesses.json -> drivers
+lib/acp.mjs           ACP client: JSON-RPC 2.0 over stdio
+lib/acp-events.mjs    ACP session/update -> normalized events
 lib/procs.mjs         process view: ps/lsof, tying processes to sessions, signals
 lib/tts.mjs           Read aloud: Azure neural voices + audio cache
 lib/kokoro.mjs        Read aloud: Kokoro voices generated on this machine

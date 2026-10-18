@@ -1849,7 +1849,23 @@ function renderModelPicker() {
 }
 $('tb-model').addEventListener('change', (e) => { prefs.launchModel = e.target.value; savePrefs(); renderModelPicker(); });
 renderModelPicker();
-api.get('/api/config').then(r => { cliModel = r.cliModel; renderModelPicker(); }).catch(() => {});
+// The agents the deck can launch (lib/harnesses.mjs); an older backend only runs Claude Code.
+let harnesses = [{ name: 'claude', label: 'Claude Code', default: true, models: true, modes: ['default', 'acceptEdits', 'auto', 'plan'],
+  modeLabels: { default: 'Ask me in the deck', acceptEdits: 'Accept edits, ask for the rest', auto: 'Auto (classifier decides)', plan: 'Plan only, no changes' } }];
+api.get('/api/config').then(r => { cliModel = r.cliModel; if (r.harnesses?.length) harnesses = r.harnesses; renderModelPicker(); }).catch(() => {});
+const harnessOf = (name) => harnesses.find(x => x.name === name) || harnesses.find(x => x.default) || harnesses[0];
+
+/** Show the launch dialog's fields for one harness: its permission modes, and a model pick only where it takes one. */
+function renderLaunchHarness(name, perm) {
+  const hn = harnessOf(name);
+  $('ns-harness').value = hn.name;
+  $('ns-harness-w').hidden = harnesses.length < 2;
+  $('ns-agent').textContent = hn.label;
+  $('ns-model-w').hidden = !hn.models;
+  $('ns-perm').replaceChildren(...hn.modes.map(m => h('option', { value: m }, hn.modeLabels?.[m] || m)));
+  $('ns-perm').value = hn.modes.includes(perm) ? perm : 'default';
+}
+$('ns-harness').addEventListener('change', (e) => renderLaunchHarness(e.target.value, $('ns-perm').value));
 
 function openLaunch() {
   const dlg = $('new-session');
@@ -1860,7 +1876,8 @@ function openLaunch() {
   $('ns-name').value = '';
   modelOptions($('ns-model'));
   $('ns-model').value = prefs.launchModel || '';
-  $('ns-perm').value = prefs.launchPerm || 'default';
+  $('ns-harness').replaceChildren(...harnesses.map(x => h('option', { value: x.name }, x.label)));
+  renderLaunchHarness(prefs.launchHarness, prefs.launchPerm);
   $('ns-err').hidden = true;
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
@@ -1916,7 +1933,8 @@ const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), cli
 $('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
 $('ns-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: $('ns-model').value, permissionMode: $('ns-perm').value, name: $('ns-name').value.trim() };
+  const hn = harnessOf($('ns-harness').value);
+  const body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: hn.models ? $('ns-model').value : '', permissionMode: $('ns-perm').value, name: $('ns-name').value.trim(), harness: hn.name };
   if (launchFiles.busy()) { toast('Still reading the attachments…'); return; }
   const files = launchFiles.payload();
   if (files.length) body.attachments = files;
@@ -1926,7 +1944,7 @@ $('ns-form').addEventListener('submit', async (e) => {
   try {
     const st = await api.post('/api/launch', body);
     prefs.launchCwd = body.cwd;
-    prefs.launchPerm = body.permissionMode; savePrefs();
+    prefs.launchPerm = body.permissionMode; prefs.launchHarness = body.harness; savePrefs();
     state.deck.set(st.id, st);
     $('ns-prompt').value = ''; launchFiles.clear();
     $('new-session').close();

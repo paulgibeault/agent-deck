@@ -21,6 +21,7 @@ import { BriefService } from './lib/briefs.mjs';
 import { ask } from './lib/ask.mjs';
 import { DeckState } from './lib/deckstate.mjs';
 import { AgentManager } from './lib/agent.mjs';
+import { loadHarnesses } from './lib/harnesses.mjs';
 import { AzureTts } from './lib/tts.mjs';
 import { KokoroTts } from './lib/kokoro.mjs';
 import { ProcessMonitor } from './lib/procs.mjs';
@@ -65,6 +66,7 @@ const snapshot = () => index.snapshot(deck.hidden);
 // Sending to a session that is not running resumes it under the deck,
 // unless it is a subagent or runs somewhere else (a terminal, the desktop app).
 const agents = new AgentManager({
+  ...loadHarnesses(deck.dir),
   store: path.join(deck.dir, 'agents.json'),
   wakeable: (id) => {
     if (!index.files.has(id)) return { error: index.cwdOf(id) ? 'subagents take their prompts from the parent session' : 'unknown session' };
@@ -125,6 +127,8 @@ agents.on('change', (st) => {
   scheduleSnapshot();
 });
 agents.on('ratelimit', (info) => usage.update(info, 'a session the deck launched'));
+// ACP sessions have no transcript file; their events come from the driver.
+agents.on('stream', ({ id, cwd, title, events, meta }) => index.pushStream(id, { cwd, title, events, meta }));
 const usageView = () => ({ limits: usage.snapshot(), error: usageError, narrator: { enabled: NARRATOR, ...narrator.status() } });
 usage.on('usage', () => broadcast('usage', usageView()));
 // `claude -p /usage` reads the plan quota without a model call, so it is free
@@ -223,7 +227,7 @@ async function route(req, res, url) {
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
   if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
-  if (p === '/api/config' && req.method === 'GET') return send(res, 200, { cliModel: cliModel() });
+  if (p === '/api/config' && req.method === 'GET') return send(res, 200, { cliModel: cliModel(), harnesses: agents.harnessList() });
   if (p === '/api/usage' && req.method === 'GET') return send(res, 200, usageView());
   if (p === '/api/usage/refresh' && req.method === 'POST') {
     await probeQuota();
@@ -267,9 +271,9 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/launch' && req.method === 'POST') {
-    const { cwd, prompt, attachments, model, permissionMode, name } = await readBody(req, PROMPT_BODY_LIMIT);
+    const { cwd, prompt, attachments, model, permissionMode, name, harness } = await readBody(req, PROMPT_BODY_LIMIT);
     try {
-      const st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined });
+      const st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined, harness: harness || undefined });
       return send(res, 200, st);
     } catch (e) { return send(res, 400, { error: e.message }); }
   }
@@ -473,7 +477,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}/?t=${TOKEN}`;
   const snap = snapshot();
-  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed\n  brief + ask: ${NARRATOR ? `${narrator.llm.label} (${narrator.briefModel} / ${narrator.askModel})` : 'off'}`);
+  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed\n  brief + ask: ${NARRATOR ? `${narrator.llm.label} (${narrator.briefModel} / ${narrator.askModel})` : 'off'}\n  launch: ${agents.harnessList().map(h => h.default ? `${h.label} (default)` : h.label).join(' · ')}`);
   if (OPEN) {
     const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
     spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
@@ -487,16 +491,17 @@ server.on('error', (e) => {
   console.error(`agent-deck: port ${PORT} is already in use (is the deck already running?)`);
   process.exit(1);
 });
-function shutdown() { agents.flush(); agents.stopAll(); index.stop(); server.close(); process.exit(0); }
+// ACP sessions are closed before the agent goes, or it resumes them later with nobody to answer.
+async function shutdown() { agents.flush(); await agents.shutdown(); index.stop(); server.close(); process.exit(0); }
 
 /**
  * Replace this process with a fresh one on the same port and arguments.
  * Deck-launched claude sessions are children of this process, so they end.
  * The new server is detached and logs to the deck state dir.
  */
-function restart() {
+async function restart() {
   console.log(`--- ${new Date().toString()} restart requested from the deck`);
-  agents.flush(); agents.stopAll(); index.stop();
+  agents.flush(); await agents.shutdown(); index.stop();
   for (const c of clients) c.end();
   const log = fs.openSync(path.join(deck.dir, 'server.log'), 'a');
   const relaunch = () => {
