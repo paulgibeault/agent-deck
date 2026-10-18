@@ -14,6 +14,8 @@ import { AgentManager } from '../lib/agent.mjs';
 import { AcpDriver } from '../lib/harness/acp.mjs';
 import { ClaudeDriver } from '../lib/harness/claude.mjs';
 import { loadHarnesses } from '../lib/harnesses.mjs';
+import { classify } from '../public/classify.js';
+import { activitySince } from '../public/activity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FAKE = path.join(__dirname, 'fixtures', 'fake-acp.mjs');
@@ -29,12 +31,12 @@ function until(agents, id, pred, ms = 5000) {
 }
 
 /** An AgentManager with a fake ACP harness, wired to a SessionIndex like server.mjs does. */
-function deck(t, env = {}) {
+function deck(t, env = {}, opts = {}) {
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-acp-log-')), 'methods.log');
   const acp = new AcpDriver({ bin: process.execPath, args: [FAKE], label: 'fake acp', env: { ...process.env, FAKE_ACP_LOG: log, ...env } });
   const index = new SessionIndex({ claudeDir: fs.mkdtempSync(path.join(os.tmpdir(), 'deck-acp-home-')) });
   const agents = new AgentManager({ drivers: { fake: acp, claude: new ClaudeDriver({ bin: path.join(cwd, 'no-claude') }) }, defaultHarness: 'fake',
-    wakeable: (id) => index.files.has(id) ? { cwd: index.cwdOf(id) } : { error: 'unknown session' } });
+    wakeable: (id) => index.files.has(id) ? { cwd: index.cwdOf(id) } : { error: 'unknown session' }, ...opts });
   index.external = () => agents.registryEntries();
   index.deckState = (id) => agents.publicState(id);
   agents.on('stream', ({ id, cwd, title, events, meta }) => index.pushStream(id, { cwd, title, events, meta }));
@@ -64,7 +66,7 @@ test('acp-events: chunks merge by messageId, tool calls finish in place, usage a
   assert.equal(ev.tool.isError, false);
   assert.equal(ev.tool.result.text, 'Created');
   assert.deepEqual(ev.tool.input, { path: file, content: 'a\nb' }, 'an update that leaves rawInput out keeps the earlier one');
-  assert.deepEqual(ev.tool.diff, { file, add: 2, del: 0 });
+  assert.deepEqual(ev.tool.diff, { file, add: 2, del: 0, oldText: null, newText: 'a\nb' }, 'a write without a diff keeps its content as the new text');
   const bash = m.update({ sessionUpdate: 'tool_call', toolCallId: 'c2', name: 'bash', kind: 'execute', status: 'failed', rawInput: { command: 'ls /nope' }, rawOutput: { error: 'no such dir' } }).events[0];
   assert.equal(bash.tool.command, 'ls /nope');
   assert.equal(bash.tool.isError, true);
@@ -162,6 +164,31 @@ test('ACP session: launch, streamed events in the index, a permission answered i
   s = await until(agents, cur, x => x.status === 'idle' && !x.queue.length && x.turns === 5);
 });
 
+test('ACP session: an edit and a command arrive as kind-classified tools with diff text', async (t) => {
+  const { agents, index } = deck(t);
+  const st = await agents.launch({ cwd, prompt: 'edit then run' });
+  await until(agents, () => st.id, x => x.status === 'idle');
+  const evs = index.events(st.id).events;
+  const edit = evs.find(e => e.id === 'call_edit_1').tool;
+  assert.equal(edit.kind, 'edit');
+  assert.deepEqual([edit.diff.add, edit.diff.del, edit.diff.oldText], [1, 1, 'one\ntwo\nthree\n']);
+  const run = evs.find(e => e.id === 'call_bash_1').tool;
+  assert.deepEqual([run.kind, run.command], ['execute', 'git commit -m "fake"']);
+  assert.deepEqual(classify({ kind: 'tool', tool: run }).intent, 'commit');
+  assert.deepEqual(activitySince(evs, 0).milestones, ['commit']);
+});
+
+test('ACP session: a turn that ignores the cancel is reported, not shown as stopping forever', async (t) => {
+  const { agents } = deck(t, {}, { interruptGraceMs: 100 });
+  const st = await agents.launch({ cwd, prompt: 'deaf' });
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(agents.interrupt(st.id), true);
+  let s = await until(agents, () => st.id, x => x.stopFailed);
+  assert.equal(s.status, 'busy');
+  s = await until(agents, () => st.id, x => x.status === 'idle');
+  assert.equal(s.stopFailed, null, 'cleared when the turn ends');
+});
+
 test('ACP session: auto mode answers permission for the pilot; plan mode switches the agent', async (t) => {
   const { agents, index } = deck(t);
   const auto = await agents.launch({ cwd, prompt: 'permission please', permissionMode: 'auto' });
@@ -221,4 +248,33 @@ test('harnesses.json: defaults without a file, entries with one', () => {
   assert.equal(h.defaultHarness, 'gemini');
   assert.deepEqual(Object.keys(h.drivers), ['gemini']);
   assert.equal(h.drivers.gemini.label, 'Gemini');
+  assert.equal(h.drivers.gemini.actor, 'Gemini');
+  assert.equal(h.drivers.gemini.resumeCommand, null, 'no resume command unless the entry gives one');
+});
+
+test('harness list: actor and resume command come from the harness', () => {
+  const { drivers } = loadHarnesses(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-harness-')));
+  const agents = new AgentManager({ drivers, defaultHarness: 'opencode' });
+  const list = Object.fromEntries(agents.harnessList().map(x => [x.name, x]));
+  assert.equal(list.claude.actor, 'Claude');
+  assert.equal(list.claude.type, 'claude');
+  assert.equal(list.claude.resumeCommand, 'claude --resume {id}');
+  assert.equal(list.opencode.actor, 'opencode');
+  assert.equal(list.opencode.type, 'acp');
+  assert.equal(list.opencode.resumeCommand, 'opencode -s {id}');
+  assert.equal(list.opencode.models, false);
+});
+
+test('acp-events: an edit keeps its before/after text; a prompt\'s files are described, not kept', () => {
+  const m = new AcpEvents();
+  const file = path.join(cwd, 'a.js');
+  const ev = m.update({ sessionUpdate: 'tool_call', toolCallId: 'e1', kind: 'edit', status: 'completed', locations: [{ path: file }],
+    content: [{ type: 'diff', path: file, oldText: 'a\nb\n', newText: 'a\nc\n' }] }).events[0];
+  assert.deepEqual(ev.tool.diff, { file, add: 1, del: 1, created: undefined, oldText: 'a\nb\n', newText: 'a\nc\n' }, 'whole-file texts count only the changed lines');
+  const big = 'x'.repeat(300 * 1024);
+  const huge = m.update({ sessionUpdate: 'tool_call', toolCallId: 'e2', kind: 'edit', status: 'completed', content: [{ type: 'diff', path: file, oldText: big, newText: big + 'y' }] }).events[0];
+  assert.equal(huge.tool.diff.textOmitted, true);
+  assert.equal(huge.tool.diff.newText, undefined);
+  const p = m.prompt('look', [{ kind: 'image', index: 0, name: 'shot.png', mediaType: 'image/png', bytes: 400 }]);
+  assert.equal(p.attachments[0].kept, false);
 });

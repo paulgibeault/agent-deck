@@ -244,6 +244,9 @@ svg { flex: none; }
 .quota.crit { color: var(--err-fg); font-weight: 600; } .quota.crit .qa { stroke: var(--err); }
 .quota.none .qt { stroke-dasharray: 2 2.7; }
 .quota.checking .qring { animation: spin 1s linear infinite; }
+/* The context meter (ACP sessions): the same ring, read-only. */
+.quota.ctx { height: auto; padding: 0 2px; cursor: default; }
+.hc-h .quota.ctx { margin-left: auto; }
 .uq-acct { margin-top: -4px; font-size: 11.5px; color: var(--muted); }
 .uq-err { padding: 5px 8px; border-radius: 6px; font-size: 11.5px; color: var(--err-fg); background: color-mix(in srgb, var(--err) 8%, var(--bg1)); }
 .uq-why { font-size: 11.5px; color: var(--fg2); }
@@ -740,6 +743,7 @@ a.btn.primary:hover { background: color-mix(in srgb, var(--info) 88%, #000); tex
 .perm { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg1); border: 1px solid color-mix(in srgb, var(--turn) 45%, var(--line)); }
 .perm-h { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .perm-k { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; color: var(--turn-fg); }
+.perm-diff { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .perm-b { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 12.5px; }
 .perm-d { color: var(--fg2); }
 .perm-cmd { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--bg0); border: 1px solid var(--line); font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
