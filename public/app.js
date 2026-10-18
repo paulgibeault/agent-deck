@@ -145,7 +145,8 @@ function connect() {
   es.addEventListener('usage', (e) => { state.usage = JSON.parse(e.data); state.usage._at = Date.now(); if (state.usage.narrator) state.narrator = { ...state.narrator, ...state.usage.narrator }; renderQuota(); });
   es.addEventListener('briefs.snapshot', (e) => { const all = JSON.parse(e.data); for (const [id, b] of Object.entries(all)) state.briefs.set(id, b); refreshBriefViews(); });
   es.addEventListener('brief.update', (e) => { const b = JSON.parse(e.data); if (b.narrator) state.narrator = { ...state.narrator, ...b.narrator }; narrateBrief(b); state.briefs.set(b.id, b); refreshBriefViews(b.id); });
-  es.addEventListener('event.batch', (e) => { const { sessionId, events } = JSON.parse(e.data); narrateEvents(sessionId, events); onEvents(sessionId, events); });
+  // A replayed history (an agent's past session, fetched when opened) is not news: nothing to read aloud.
+  es.addEventListener('event.batch', (e) => { const { sessionId, events, history } = JSON.parse(e.data); if (!history) narrateEvents(sessionId, events); onEvents(sessionId, events); });
   es.addEventListener('event.update', (e) => { const { sessionId, event } = JSON.parse(e.data); onUpdate(sessionId, event); });
   es.addEventListener('session.update', (e) => onSession(JSON.parse(e.data)));
   es.addEventListener('deck.update', (e) => onDeck(JSON.parse(e.data)));
@@ -1260,8 +1261,8 @@ function renderHeader() {
   const st = statusOf(s, b, phase);
   if (s.hidden) win.append(ib('i-reuse', 'Reopen (move it out of Closed)', reopenSession));
   else win.append(ib('i-x', isAgent ? 'Back to parent session' : 'Close (move it to Closed)', closeSession));
-  // Only a session with a transcript file can be deleted; a streamed one (ACP) has none to move.
-  if (!isAgent && !s.stream) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
+  // Only a session with a transcript file can be deleted: a streamed one (ACP) once the deck journals it.
+  if (!isAgent && (!s.stream || s.journal)) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
   const top = h('div', { class: 'sh-top' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}`, title: st.head }), h('h1', { title: s.title }, s.title || id));
   if (isAgent) {
     const parent = state.byId.get(s.parentId);
@@ -1910,7 +1911,9 @@ function confirmDialog(title, body, okLabel) {
 }
 async function deleteSession() {
   const s = state.byId.get(state.selected); if (!s || s.kind !== 'session') return;
-  const ok = await confirmDialog('Delete this session?', `“${s.title}” and its subagent transcripts move to ~/.agent-deck/trash. Claude Code will no longer list or resume it. You can restore it by moving the files back.`, 'Delete');
+  const ok = await confirmDialog('Delete this session?', s.stream
+    ? `“${s.title}”: the deck’s copy of its history moves to ~/.agent-deck/trash and it leaves the deck’s lists. ${sessionHarness(s).label} keeps its own copy.`
+    : `“${s.title}” and its subagent transcripts move to ~/.agent-deck/trash. Claude Code will no longer list or resume it. You can restore it by moving the files back.`, 'Delete');
   if (!ok) return;
   try {
     const r = await api.post(`/api/sessions/${sid(s.id)}/delete`);
@@ -2224,6 +2227,8 @@ function openHistory() {
   hist.q = ''; hist.i = 0; $('hist-q').value = '';
   renderHistory();
   $('history').showModal(); $('hist-q').focus();
+  // Agents' own lists may hold sessions the deck has not seen (their own UI's); the snapshot brings them in.
+  api.post('/api/history/refresh').catch(() => {});
 }
 function renderHistory() {
   const snap = state.snapshot;
