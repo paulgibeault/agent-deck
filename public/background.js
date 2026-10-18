@@ -62,7 +62,7 @@ export function renderTable(tasks, alive, { filter = 'all', q = '', selected = n
     .filter(t => filter === 'all' || (filter === 'running') === (taskState(t, alive) === 'running'))
     .filter(t => !query || `${t.description || ''} ${t.command || ''} ${t.summary || ''} ${t.id}`.toLowerCase().includes(query))
     .sort((a, b) => (taskState(b, alive) === 'running') - (taskState(a, alive) === 'running') || (b.startedTs || '').localeCompare(a.startedTs || ''));
-  if (!rows.length) return h('p', { class: 'muted bg-empty' }, tasks.length ? 'Nothing matches.' : 'No background tasks in this session. Commands Claude runs in the background, Monitors and background agents show up here.');
+  if (!rows.length) return h('p', { class: 'muted bg-empty' }, tasks.length ? 'Nothing matches.' : 'No background tasks in this session. Commands the agent runs in the background, Monitors and background agents show up here.');
   const now = Date.now();
   const tbody = h('tbody', {}, ...rows.map(t => {
     const last = t.events.at(-1);
@@ -108,7 +108,7 @@ export function renderTaskDetails(t, out, ctx) {
   }));
   const body = h('div', { class: 'dbody' });
   root.append(body);
-  if (st === 'running' && t.stopRequestedTs) body.append(h('div', { class: 'note' }, `Claude asked to stop it at ${fmtTime(t.stopRequestedTs)}.`));
+  if (st === 'running' && t.stopRequestedTs) body.append(h('div', { class: 'note' }, `The agent asked to stop it at ${fmtTime(t.stopRequestedTs)}.`));
   if (st === 'ended') body.append(h('div', { class: 'note' }, 'The session’s process is gone, and background tasks end with it.'));
   if (t.summary) body.append(section('Result', {}, h('p', { class: 'bg-sum' }, t.summary)));
   if (t.command) body.append(section('Command', { actions: [copyBtn(t.command), t.kind !== 'agent' && ctx.runInShell ? ib('i-term', 'Run in Shell', () => ctx.runInShell(t.command), { size: 13 }) : null] },
@@ -125,7 +125,7 @@ export function renderTaskDetails(t, out, ctx) {
   if ((ctx.askStop || kill) && st === 'running') {
     body.append(h('div', { class: 'bg-stop' },
       kill ? h('button', { type: 'button', class: 'btn sm danger', onclick: kill }, 'Stop it') : null,
-      ctx.askStop ? h('button', { type: 'button', class: 'btn sm', onclick: () => ctx.askStop(t) }, 'Ask Claude to stop it') : null,
+      ctx.askStop ? h('button', { type: 'button', class: 'btn sm', onclick: () => ctx.askStop(t) }, 'Ask the agent to stop it') : null,
       h('span', { class: 'muted' }, kill ? 'Stop sends SIGTERM to the command and everything it started.' : 'Queues a prompt; the deck has not found the task’s process.')));
   }
   return root;

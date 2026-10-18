@@ -189,6 +189,15 @@ test('activitySince: weighs edits and commands, barely counts reads, spots miles
   assert.equal(activitySince(st.events, st.seq).events, 0);
 });
 
+test('activitySince / milestoneOf: ACP tools count by kind', () => {
+  const ev = (seq, kind, extra = {}) => ({ seq, kind: 'tool', ts: 't', tool: { name: kind, kind, input: {}, pending: false, ...extra } });
+  const events = [ev(1, 'edit'), ev(2, 'read'), ev(3, 'execute', { name: 'bash', command: 'git push origin main' }), ev(4, 'delete')];
+  const a = activitySince(events, 0);
+  assert.deepEqual([a.edits, a.looks, a.commands], [2, 1, 1]);
+  assert.deepEqual(a.milestones, ['push']);
+  assert.equal(milestoneOf(events[2]), 'push');
+});
+
 test('brief policy: mid-turn, reads alone never refresh; a run of edits does, after the drift wait', async () => {
   const { st, due } = await briefed();
   for (let i = 0; i < 20; i++) work(st, 'Read', { file_path: `/f${i}.js` });

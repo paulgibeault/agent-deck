@@ -1,8 +1,9 @@
 # agent-deck — design plan
 
-A local cockpit for Claude Code agents: see every session and subagent on this
-machine, follow their event streams at high fidelity, drive the ones you launch,
-and have status read aloud while you work on something else.
+A local cockpit for coding agents (Claude Code, and ACP agents such as opencode:
+see PLAN-harnesses.md): see every session and subagent on this machine, follow
+their event streams at high fidelity, drive the ones you launch, and have status
+read aloud while you work on something else.
 
 Written 2026-09-30 after inspecting a live Claude Code 2.1.284 install on macOS.
 

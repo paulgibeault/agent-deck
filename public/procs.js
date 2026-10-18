@@ -16,13 +16,13 @@ const fmtUp = (start, now = Date.now()) => start ? fmtMs(Math.max(0, now - start
 // What each kind of process is, by glyph and words.
 const KIND = {
   deck: { icon: 'i-logo', what: 'The agent-deck server' },
-  session: { icon: 'i-agent', what: 'A Claude Code session' },
+  session: { icon: 'i-agent', what: 'An agent session' },
   subagent: { icon: 'i-agent', what: 'A subagent. It runs inside its session’s process, so it has no pid of its own.' },
   task: { icon: 'i-bg', what: 'A background task' },
   tool: { icon: 'i-shell', what: 'A Bash call in progress' },
-  bash: { icon: 'i-shell', what: 'A command Claude ran' },
+  bash: { icon: 'i-shell', what: 'A command the agent ran' },
   shell: { icon: 'i-term', what: 'A command from the deck’s Shell tab' },
-  model: { icon: 'i-star', what: 'One of the deck’s own claude calls (brief, ask or quota)' },
+  model: { icon: 'i-star', what: 'One of the deck’s own model calls (brief, ask or quota)' },
   mcp: { icon: 'i-plug', what: 'An MCP server the session started' },
 };
 const STATE = { R: 'running', S: 'sleeping', I: 'idle', T: 'stopped', Z: 'zombie', U: 'waiting on I/O', D: 'waiting on I/O' };
@@ -245,7 +245,7 @@ export function createProcView(ctx) {
       const kids = tree ? (pm.detail?.descendants || 0) : 0;
       const warn = [
         !n.scope ? 'This process does not belong to the deck or its sessions.' : null,
-        n.tag?.kind === 'session' ? 'This is a Claude Code session; ending it stops the agent mid-turn.' : null,
+        n.tag?.kind === 'session' ? 'This is an agent session; ending it stops the agent mid-turn.' : null,
         n.tag?.kind === 'session' && n.tag.deck && sig === 'TERM' && !tree ? 'The deck ends it the way the power button does.' : null,
         kids ? `${kids} process${kids === 1 ? '' : 'es'} below it get the signal too, deepest first.` : null,
       ].filter(Boolean).join(' ');
@@ -390,7 +390,7 @@ export function createProcView(ctx) {
     if (t.toolUseId) links.push(['Call', h('button', { type: 'button', class: 'linkish', onclick: () => { dlg.close(); ctx.openCall(t.sessionId, t.toolUseId); } }, t.label || 'Bash call')]);
     if (t.runId) links.push(['Shell run', t.label]);
     out.push(facts(links));
-    if (t.command) out.push(section('Command Claude ran', { actions: [copyBtn(t.command)] }, codeBlock(t.command, 'bash', { numbers: false })));
+    if (t.command) out.push(section('Command the agent ran', { actions: [copyBtn(t.command)] }, codeBlock(t.command, 'bash', { numbers: false })));
     return out;
   }
 

@@ -3,8 +3,10 @@
 // scheduler decides when to refresh with it, and the page shows the same
 // counts under the brief. No DOM, no Node APIs.
 
-const EDIT = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+// By ACP tool kind (lib/transcript.mjs gives Claude's tools one too).
+const EDIT = new Set(['edit', 'delete', 'move']);
 const AGENT = new Set(['Agent', 'Task']);
+const commandOf = (t) => typeof t.command === 'string' ? t.command : t.name === 'Bash' ? t.input?.command : null;
 // Commands that close a chunk of work: worth a refresh on their own.
 const MILESTONE = /\bgit\s+(?:-C\s+\S+\s+)?(?:commit|push|merge|tag)\b|\bgh\s+pr\s+(?:create|merge)\b|\bnpm\s+publish\b/;
 
@@ -25,8 +27,8 @@ export const CADENCE = {
 
 /** The milestone a tool event marks ('commit', 'push', 'PR', …), or null. */
 export function milestoneOf(ev) {
-  if (ev.kind !== 'tool' || ev.tool.pending || ev.tool.isError || ev.tool.name !== 'Bash') return null;
-  const m = MILESTONE.exec(String(ev.tool.input?.command || ev.tool.summary || ''));
+  if (ev.kind !== 'tool' || ev.tool.pending || ev.tool.isError || commandOf(ev.tool) == null) return null;
+  const m = MILESTONE.exec(String(commandOf(ev.tool)));
   if (!m) return null;
   const w = m[0];
   return /gh\s+pr\s+create/.test(w) ? 'PR opened' : /gh\s+pr\s+merge/.test(w) ? 'PR merged' : /publish/.test(w) ? 'publish' : w.split(/\s+/).at(-1);
@@ -49,9 +51,9 @@ export function activitySince(events, afterSeq = 0) {
     else if (e.kind === 'system' && e.error) k = 'error';
     else if (e.kind === 'tool') {
       if (e.tool.isError) k = 'error';
-      else if (EDIT.has(e.tool.name)) k = 'edit';
+      else if (EDIT.has(e.tool.kind)) k = 'edit';
       else if (AGENT.has(e.tool.name)) k = 'agent';
-      else if (e.tool.name === 'Bash') k = 'command';
+      else if (commandOf(e.tool) != null) k = 'command';
       else k = 'look';
       const ms = milestoneOf(e);
       if (ms) a.milestones.push(ms);

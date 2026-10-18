@@ -1,12 +1,14 @@
 # agent-deck
 
-A local cockpit for Claude Code agents. See every session and subagent on
+A local cockpit for coding agents: Claude Code, and any agent that speaks the
+Agent Client Protocol (opencode first). See every session and subagent on
 this machine, follow their event streams at high fidelity, inspect what they
 changed, and run your own commands next to them.
 
-Sessions started elsewhere (terminal, desktop app, IDE) are observe-only: the
-deck reads what Claude Code already writes under `~/.claude` and never
-touches them. Sessions you start from the deck (**New session**, or `n`) run
+Claude Code sessions started elsewhere (terminal, desktop app, IDE) are
+observe-only: the deck reads what Claude Code already writes under
+`~/.claude` and never touches them. Which agents the deck can launch is set
+in `~/.agent-deck/harnesses.json` (see [PLAN-harnesses.md](PLAN-harnesses.md)). Sessions you start from the deck (**New session**, or `n`) run
 under it, and you can send, queue and interrupt them and answer their
 permission prompts. Any session that is not running takes a prompt too:
 sending starts it again. **Read aloud** narrates what sessions say as it

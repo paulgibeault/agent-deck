@@ -1,8 +1,9 @@
 // public/classify.js — what an event *is*, for the Events list.
 //
 // Every event gets a family (its color), an icon (its specific kind), a label
-// (tooltip / accessible name) and a one-line body. Bash is classified by what
-// the command does, not by the tool that ran it. Pure: no DOM, so the tests
+// (tooltip / accessible name) and a one-line body. Tools are classified by
+// their ACP kind (read, edit, execute…), refined by Claude's tool names; a
+// command by what it does, not by the tool that ran it. Pure: no DOM, so the tests
 // import it directly.
 //
 // Families: said (talk) · you · read (inspect) · edit (change) · bash (run) ·
@@ -269,6 +270,21 @@ const TOOL = {
   ScheduleWakeup: { fam: 'muted', icon: 'i-history', label: 'Scheduled wakeup' },
 };
 
+// Any harness's tools by ACP kind (lib/transcript.mjs fills it for Claude's).
+// TOOL above refines the Claude tools it names.
+const KIND = {
+  read:    { fam: 'read', icon: 'i-file',    label: 'Read file' },
+  search:  { fam: 'read', icon: 'i-search',  label: 'Search' },
+  edit:    { fam: 'edit', icon: 'i-pencil',  label: 'Edit file' },
+  delete:  { fam: 'edit', icon: 'i-trash',   label: 'Delete files' },
+  move:    { fam: 'edit', icon: 'i-pencil',  label: 'Move files' },
+  execute: { fam: 'bash', icon: 'i-term',    label: 'Command' },
+  think:   { fam: 'agent', icon: 'i-todo',   label: 'Plan' },
+  fetch:   { fam: 'web', icon: 'i-globe',    label: 'Fetch' },
+};
+/** A tool's command line, from any harness. */
+export const toolCommand = (t) => typeof t.command === 'string' ? t.command : t.name === 'Bash' && typeof t.input?.command === 'string' ? t.input.command : null;
+
 /** "claude_ai_Slack" → "Slack", "plugin_engineering_github" → "github". */
 export const mcpServer = (s) => String(s || '').replace(/^claude_ai_/, '').replace(/^plugin_[^_]+_/, '').replace(/_/g, ' ');
 
@@ -280,8 +296,10 @@ function todoText(todos = []) {
 
 function classifyTool(t) {
   const n = t.name;
-  if (n === 'Bash') {
-    const intent = bashIntent(t.input?.command);
+  const cmd = toolCommand(t);
+  // A command is classified by what it does, whichever harness ran it.
+  if (n === 'Bash' || (t.kind === 'execute' && cmd != null)) {
+    const intent = bashIntent(cmd);
     const it = INTENTS[intent];
     const desc = t.input?.description;
     return { fam: it.fam, icon: it.icon, label: it.label, intent, text: desc || t.summary, sub: desc ? t.summary : null, sans: !!desc,
@@ -290,7 +308,7 @@ function classifyTool(t) {
   const m = /^mcp__(.+?)__(.+)$/.exec(n);
   if (m) return { fam: 'web', icon: 'i-plug', label: `${mcpServer(m[1])} · ${m[2]}`, server: mcpServer(m[1]), text: `${m[2].replace(/_/g, ' ')}${t.summary && t.summary !== '{}' ? ' · ' + t.summary : ''}` };
   if (n === '?') return { fam: 'muted', icon: 'i-info', label: 'Tool result', text: t.summary };
-  const k = TOOL[n] || { fam: 'said', icon: 'i-code', label: n };
+  const k = TOOL[n] || (t.kind === 'edit' && t.diff?.created ? TOOL.Write : KIND[t.kind]) || { fam: 'said', icon: 'i-code', label: n };
   const out = { ...k, text: t.summary || t.display };
   if (n === 'TodoWrite') out.text = todoText(t.input?.todos);
   else if (n === 'Agent' || n === 'Task') { out.text = t.input?.description || t.summary; if (t.input?.subagent_type) out.sub = t.input.subagent_type; out.sans = true; }

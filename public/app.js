@@ -1,6 +1,6 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
 import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
-  markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone } from './events.js';
+  markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone, renderSideBySide, lineDiff, codeBlock, langFor, highlightIn } from './events.js';
 import { activitySince, CADENCE, WEIGHT } from './activity.js';
 import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
 import { createFilesView, renderFileView } from './files.js';
@@ -64,6 +64,28 @@ function toast(msg, action = null) {
   const t = h('div', { class: 'toast', role: 'status' }, msg);
   if (action) t.append(h('button', { type: 'button', onclick: () => { action.fn(); t.remove(); } }, action.label));
   document.body.append(t); setTimeout(() => t.remove(), action ? 6000 : 3000);
+}
+
+// ------------------------------------------------------------ harnesses
+// The agents the deck can launch (lib/harnesses.mjs, from /api/config); an older backend only runs Claude Code.
+// Copy that names the agent ("OPENCODE is working", the resume command) comes from here, not from constants.
+const CLAUDE_HARNESS = { name: 'claude', type: 'claude', label: 'Claude Code', actor: 'Claude', resumeCommand: 'claude --resume {id}', default: true, models: true,
+  modes: ['default', 'acceptEdits', 'auto', 'plan'],
+  modeLabels: { default: 'Ask me in the deck', acceptEdits: 'Accept edits, ask for the rest', auto: 'Auto (classifier decides)', plan: 'Plan only, no changes' } };
+let harnesses = [CLAUDE_HARNESS];
+const harnessOf = (name) => harnesses.find(x => x.name === name) || harnesses.find(x => x.default) || harnesses[0];
+/** The harness a session runs under (a subagent: its parent's). Sessions found on disk are Claude Code's. */
+function sessionHarness(s) {
+  const name = (s?.kind === 'agent' ? state.byId.get(s.parentId)?.harness : s?.harness) ?? (s?.stream ? null : 'claude');
+  return harnesses.find(x => x.name === name) || (name === 'claude' ? CLAUDE_HARNESS : { name, label: name || 'agent', actor: name || 'agent', resumeCommand: null });
+}
+/** The agent's short name, for copy: "Claude", "opencode". */
+const actorOf = (s) => { const hn = sessionHarness(s); return hn.actor || (hn.name === 'claude' ? 'Claude' : hn.label); };
+const isClaude = (s) => sessionHarness(s).name === 'claude' || sessionHarness(s).type === 'claude';
+/** The terminal command that reopens a session, or null where its harness has none. */
+function resumeCommand(s) {
+  const t = sessionHarness(s).resumeCommand;
+  return t ? `cd ${JSON.stringify(s.cwd || '.')} && ${t.replace('{id}', s.id)}` : null;
 }
 
 // ------------------------------------------------------------ phases
@@ -687,6 +709,8 @@ function quotaTone(lim) {
 function renderQuota() {
   const lim = state.usage?.limits;
   const btn = $('quota');
+  // Plan usage is Claude's: shown while the deck can launch Claude Code, or `claude /usage` reads a plan on this machine.
+  btn.hidden = !harnesses.some(x => x.name === 'claude' || x.type === 'claude') && !lim;
   const tone = quotaTone(lim);
   // The ring tracks the fullest window; the number is that window's use.
   const top = lim?.windows.length ? lim.windows.reduce((a, w) => (w.utilization > a.utilization ? w : a)) : null;
@@ -875,6 +899,7 @@ function cardFacts(s) {
     ['Turns', g.turns || null],
     ['Files touched', g.filesTouched || null],
     g.errors ? ['Errors', `${g.errors}${g.lastErrorTs ? ` · latest ${ago(Date.now() - Date.parse(g.lastErrorTs))} ago` : ''}`, recentErr(s) ? 'err' : ''] : null,
+    ['Context', contextText(g.context)],
     ['Cost', g.cost != null ? fmtUsd(g.cost) : null],
     ['Output', g.outTokens ? `${fmtTokens(g.outTokens)} tokens` : null],
     s.spawned?.length ? ['Sub-tasks', `${s.spawned.length} session${s.spawned.length === 1 ? '' : 's'} started with claude -p`] : null,
@@ -892,9 +917,9 @@ function cardBody(s) {
   const pb = state.briefs.get(s.id);
   const runSubs = (s.subagents || []).filter(a => a.status === 'running');
   const rows = [];
-  rows.push(h('div', { class: 'hc-h' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}` }), h('b', {}, s.title || s.id)));
+  rows.push(h('div', { class: 'hc-h' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}` }), h('b', {}, s.title || s.id), contextRing(g.context)));
   // Whose move, and why.
-  rows.push(h('div', { class: `hc-st sig-${st.sig}${st.quiet ? ' quiet' : ''}` }, h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
+  rows.push(h('div', { class: `hc-st sig-${st.sig}${st.quiet ? ' quiet' : ''}` }, h('span', { class: 'nl-k' }, whoLabel(st)),
     st.icon ? svgUse(st.icon, 12, st.head) : null, h('b', {}, st.head),
     st.clock != null ? h('span', { class: 'hc-clk' }, fmtClock(st.clock)) : st.right ? h('span', { class: 'hc-clk' }, st.right) : null));
   if (st.text) rows.push(h('div', { class: `hc-t${st.mono ? ' mono' : ''}` }, oneLine(st.text, 220)));
@@ -1151,7 +1176,8 @@ function renderHeader() {
   const st = statusOf(s, b, phase);
   if (s.hidden) win.append(ib('i-reuse', 'Reopen (move it out of Closed)', reopenSession));
   else win.append(ib('i-x', isAgent ? 'Back to parent session' : 'Close (move it to Closed)', closeSession));
-  if (!isAgent) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
+  // Only a session with a transcript file can be deleted; a streamed one (ACP) has none to move.
+  if (!isAgent && !s.stream) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
   const top = h('div', { class: 'sh-top' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}`, title: st.head }), h('h1', { title: s.title }, s.title || id));
   if (isAgent) {
     const parent = state.byId.get(s.parentId);
@@ -1166,9 +1192,12 @@ function renderHeader() {
   if (b?.pr) top.append(h('a', { class: 'sh-pr', href: b.pr.url, target: '_blank', rel: 'noopener' }, `PR #${b.pr.number}`));
   top.append(h('span', { class: 'spacer' }));
   // Where, which model, tokens and cost: one hover away rather than a line of figures under the brief.
+  const ctxRing = contextRing(b?.context || s.glance?.context);
+  if (ctxRing) top.append(ctxRing);
   top.append(detailsBtn());
-  if (d?.alive) top.append(ib('i-power', 'End the claude process now. It ends by itself after 30 minutes idle, and the next prompt starts it again.', stopSession, { cls: 'subtle' }));
-  if (!isAgent) top.append(ib('i-copy', 'Copy resume command', (e) => { navigator.clipboard?.writeText(`cd ${JSON.stringify(s.cwd || '.')} && claude --resume ${id}`); flashDone(e.currentTarget); }));
+  if (d?.alive) top.append(ib('i-power', `End the ${actorOf(s)} session now. It ends by itself after 30 minutes idle, and the next prompt starts it again.`, stopSession, { cls: 'subtle' }));
+  const resume = !isAgent && resumeCommand(s);
+  if (resume) top.append(ib('i-copy', `Copy resume command: ${resume}`, (e) => { navigator.clipboard?.writeText(resume); flashDone(e.currentTarget); }));
   top.append(win);
 
   // The status line sits in the prompt panel, right above the text box: whose
@@ -1181,6 +1210,21 @@ function renderHeader() {
   applyRing();
 }
 
+// How full the model's context window is, from a harness that reports it
+// (ACP's usage_update). On a small local model it matters more than cost.
+const contextTone = (f) => f >= 0.9 ? 'crit' : f >= 0.7 ? 'warn' : 'ok';
+function contextText(c) {
+  if (!c?.size) return null;
+  return `${fmtTokens(c.used || 0)} of ${fmtTokens(c.size)} tokens (${Math.round(((c.used || 0) / c.size) * 100)}%)`;
+}
+/** A ring like the plan-usage one; the numbers are in its tooltip. */
+function contextRing(c) {
+  if (!c?.size) return null;
+  const f = Math.min(1, (c.used || 0) / c.size);
+  return h('span', { class: `quota ctx ${contextTone(f)}`, role: 'img', 'aria-label': `Context: ${contextText(c)}`, title: `Context: ${contextText(c)}`,
+    html: `<svg class="qring" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle class="qt" cx="8" cy="8" r="6"/><circle class="qa" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="${Math.round(f * 100)} 100" transform="rotate(-90 8 8)"/></svg>` });
+}
+
 /** The session's particulars, moved off the main view: place, model, tokens, cost, and what its brief has cost. */
 function detailsCardBody(s, b) {
   const pb = state.briefs.get(s.id);
@@ -1190,6 +1234,7 @@ function detailsCardBody(s, b) {
   row('Process', s.alive && s.pid ? h('span', {}, pidLinkEl(s.pid, openProcs), s.startedAt ? ` · up ${ago(Date.now() - s.startedAt)}` : '') : null);
   row('Branch', [b?.branch || s.gitBranch, b?.pr ? `PR #${b.pr.number}` : null].filter(Boolean).join(' · '));
   row('Model', [b?.model?.replace('claude-', ''), b?.effort, b?.mode].filter(Boolean).join(' · '));
+  row('Context', contextText(b?.context));
   const t = b?.turnUsage;
   if (t?.messages) row('This turn', `${fmtTokens(t.input + t.cacheRead + t.cacheCreate)} in (${fmtTokens(t.cacheRead)} cached) · ${fmtTokens(t.output)} out${b.turnMs != null ? ` · ${fmtMs(b.turnMs)}` : ''}`);
   const u = b?.usage;
@@ -1263,11 +1308,15 @@ function patchChildren(el, nodes) {
 }
 
 /**
- * Whose move it is, in plain words. `who` leads the status line: CLAUDE while
- * the agent has the ball, YOU when it is waiting on the pilot.
+ * Whose move it is, in plain words. `who` leads the status line: the agent's
+ * name (CLAUDE, OPENCODE) while it has the ball, YOU when it is waiting on the pilot.
  */
 function statusOf(s, b, phase) {
+  return { actor: actorOf(s), ...statusOf0(s, b, phase) };
+}
+function statusOf0(s, b, phase) {
   const QUIET_MS = 90_000;
+  const actor = actorOf(s);
   const g = b || s.glance || {};
   const sig = sigOf(s);
   const observe = s.kind === 'session' && s.alive && !deckOf(s.id)?.alive;
@@ -1276,21 +1325,23 @@ function statusOf(s, b, phase) {
   const subsTxt = subs ? `${subs} subagent${subs === 1 ? '' : 's'} running` : null;
   const waited = g.need?.since ? ago(Date.now() - Date.parse(g.need.since)) : g.idleMs != null ? ago(g.idleMs) : null;
   if (sig === 'input' && (permLine(s.id) || g.need?.kind === 'permission')) return { sig, who: 'you', icon: 'i-hand', head: 'Needs your permission', text: permLine(s.id)?.replace(/^Wants to use /, '') || g.need.text, right: deckOf(s.id)?.alive ? 'answer below' : waited ? `waiting ${waited}` : '' };
-  if (sig === 'input') return { sig, who: 'you', icon: 'i-q', head: 'Claude asked you', text: (g.need?.text || g.lastText || '') + where, right: waited ? `waiting ${waited}` : '' };
-  if (sig === 'error') return { sig, who: phase === 'working' ? 'claude' : 'you', icon: 'i-x', head: phase === 'working' ? 'Hit an error' : 'Stopped on an error', text: g.need?.text || '', right: waited ? `${waited} ago` : '', seq: g.need?.seq };
+  if (sig === 'input') return { sig, who: 'you', icon: 'i-q', head: `${actor} asked you`, text: (g.need?.text || g.lastText || '') + where, right: waited ? `waiting ${waited}` : '' };
+  if (sig === 'error') return { sig, who: phase === 'working' ? 'agent' : 'you', icon: 'i-x', head: phase === 'working' ? 'Hit an error' : 'Stopped on an error', text: g.need?.text || '', right: waited ? `${waited} ago` : '', seq: g.need?.seq };
   if (phase === 'turn') return { sig, who: 'you', icon: 'i-check', head: 'Done · your turn', text: (g.lastPrompt ? `finished: ${g.lastPrompt}` : 'waiting for your next prompt') + where, right: g.idleMs != null ? `idle ${ago(g.idleMs)}` : '' };
   if (phase === 'working') {
+    const df = deckOf(s.id)?.stopFailed;
+    if (df) return { sig, who: 'agent', icon: 'i-alert', head: `${actor} didn’t stop`, text: 'it ignored the request to end the turn; end the session (power button) to force it', clock: g.turnMs };
     const t = g.activeTool;
-    if (t) return { sig, who: 'claude', head: `Running ${t.name}`, text: [t.summary, subsTxt].filter(Boolean).join(' · '), clock: t.startedMs || 0, mono: true };
-    if (g.quietMs != null && g.quietMs > QUIET_MS) return { sig, quiet: true, who: 'claude', head: `Quiet for ${ago(g.quietMs)}`, text: `no new events while ${g.state || 'working'}; it may be thinking hard, or stalled`, clock: g.turnMs };
-    if (g.waitingOn === 'subagents') return { sig, who: 'claude', head: `Waiting on ${subsTxt.replace(' running', '')}`, text: g.detail || '', clock: g.turnMs };
+    if (t) return { sig, who: 'agent', head: `Running ${t.name}`, text: [t.summary, subsTxt].filter(Boolean).join(' · '), clock: t.startedMs || 0, mono: true };
+    if (g.quietMs != null && g.quietMs > QUIET_MS) return { sig, quiet: true, who: 'agent', head: `Quiet for ${ago(g.quietMs)}`, text: `no new events while ${g.state || 'working'}; it may be thinking hard, or stalled`, clock: g.turnMs };
+    if (g.waitingOn === 'subagents') return { sig, who: 'agent', head: `Waiting on ${subsTxt.replace(' running', '')}`, text: g.detail || '', clock: g.turnMs };
     const head = { thinking: 'Thinking', responding: 'Writing', 'starting turn': 'Starting the turn' }[g.state] || 'Working';
-    return { sig, who: 'claude', head, text: [g.state === 'working' ? g.detail : null, subsTxt].filter(Boolean).join(' · '), clock: g.turnMs };
+    return { sig, who: 'agent', head, text: [g.state === 'working' ? g.detail : null, subsTxt].filter(Boolean).join(' · '), clock: g.turnMs };
   }
   if (deckOf(s.id)?.exit && phase === 'ended') {
     const x = deckOf(s.id).exit;
     const bad = x.code !== 0 && x.code !== null || (x.signal && x.signal !== 'SIGTERM');
-    if (bad) return { sig: 'error', who: 'ended', head: `claude exited ${x.signal || `with code ${x.code}`}`, text: x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
+    if (bad) return { sig: 'error', who: 'ended', head: `${actor} exited ${x.signal || `with code ${x.code}`}`, text: x.stderr ? x.stderr.split('\n').at(-1) : '', title: x.stderr || '', right: `${ago(Date.now() - x.at)} ago` };
   }
   const last = g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded';
   // A top-level session that is not running just waits for the next prompt, which starts it again.
@@ -1298,9 +1349,10 @@ function statusOf(s, b, phase) {
   return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: last };
 }
 
+function whoLabel(st) { return st.who === 'agent' ? st.actor.toUpperCase() : { you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]; }
 function renderNow(st) {
   const box = h('div', { class: `nowline sig-${st.sig}${st.quiet ? ' quiet' : ''}`, role: 'status' },
-    h('span', { class: 'nl-k' }, { claude: 'CLAUDE', you: 'YOU', done: 'DONE', ended: 'ENDED' }[st.who]),
+    h('span', { class: 'nl-k' }, whoLabel(st)),
     st.icon ? svgUse(st.icon, 14, st.head) : null,
     h('b', { class: 'nl-h' }, st.head),
     h('span', { class: `nl-t${st.mono ? ' mono' : ''}`, title: st.title || st.text }, st.text));
@@ -1423,7 +1475,7 @@ function briefFoot(id, s, pb, i, all) {
   const phase = phaseOf(s);
   const working = phase === 'working' || (phase === 'turn' && s?.glance?.need?.kind === 'permission');
   if (pb?.brief && !pb.pending && a) {
-    const rule = `Refreshes when the turn ends or Claude asks you something, when a subagent finishes, on a commit, push or PR, `
+    const rule = `Refreshes when the turn ends or the agent asks you something, when a subagent finishes, on a commit, push or PR, `
       + `and mid-turn once enough work piles up (${CADENCE.driftScore} points: edit ${WEIGHT.edit}, command ${WEIGHT.command}, read ${WEIGHT.look}; at most every ${CADENCE.driftMs / 60_000} min) `
       + `or every ${CADENCE.heartbeatMs / 60_000} min while it keeps working. Reads and permission prompts alone do not refresh it.`;
     if (working) {
@@ -1474,7 +1526,7 @@ function taskCtx(id) {
       const ref = sp.data.get(id)?.tasks[t.id];
       if (!ref || t.kind === 'agent') return null;
       return async () => {
-        if (!await confirmDialog('Stop this background task?', `SIGTERM goes to pid ${ref.pid} (${oneLine(taskTitle(t), 60)}) and everything it started. Claude sees the task end.`, 'Stop it')) return;
+        if (!await confirmDialog('Stop this background task?', `SIGTERM goes to pid ${ref.pid} (${oneLine(taskTitle(t), 60)}) and everything it started. The agent sees the task end.`, 'Stop it')) return;
         try { const r = await api.post(`/api/procs/${ref.pid}/signal`, { signal: 'TERM', tree: true, start: ref.start }); toast(r.failed?.length ? `Stopped ${r.sent.length}; ${r.failed.length} refused` : 'Stopped'); }
         catch (e) { toast(`Stop failed: ${e.message}`); }
       };
@@ -1483,7 +1535,7 @@ function taskCtx(id) {
     openAgent: (agentId) => select(agentId),
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
     // Only a session the deck can drive takes the prompt.
-    askStop: deckOf(id)?.alive ? (t) => api.post(`/api/sessions/${sid(id)}/send`, { text: `Please stop the background task ${t.id} (${taskTitle(t)}).`, model: prefs.launchModel || undefined }).then(() => toast('Asked Claude to stop it')).catch(e => toast(e.message)) : null,
+    askStop: deckOf(id)?.alive ? (t) => api.post(`/api/sessions/${sid(id)}/send`, { text: `Please stop the background task ${t.id} (${taskTitle(t)}).`, model: prefs.launchModel || undefined }).then(() => toast(`Asked ${actorOf(state.byId.get(id))} to stop it`)).catch(e => toast(e.message)) : null,
   };
 }
 function showTaskDetails(id, taskId, refresh = false) {
@@ -1684,11 +1736,16 @@ function onDeck(st) {
 
 function permLine(id) {
   const p = deckOf(id)?.permissions?.[0];
-  return p ? `Wants to use ${p.displayName}${permSubject(p) ? ': ' + permSubject(p) : ''}` : null;
+  return p ? `Wants to use ${permTool(p)}${permSubject(p) ? ': ' + permSubject(p) : ''}` : null;
+}
+/** The tool a permission is for. An ACP agent may title the call with its path; then the kind names it. */
+function permTool(p) {
+  return p.displayName && !p.displayName.includes('/') ? p.displayName : tagFor({ kind: 'tool', tool: { name: p.toolName, kind: p.kind || undefined, diff: p.diff ? { created: p.diff.oldText == null } : undefined, isError: false } }).label;
 }
 function permSubject(p) {
   const i = p.input || {};
-  return oneLine(i.command || i.file_path || i.notebook_path || i.url || i.pattern || i.query || p.description || '', 120);
+  const file = i.file_path || i.notebook_path || i.filePath || p.diff?.path;
+  return oneLine(i.command || (file ? tilde(file) : '') || i.url || i.pattern || i.query || p.description || '', 120);
 }
 function suggestionText(list) {
   return list.map(x => x.type === 'setMode' ? `switch to ${PERM_LABEL[x.mode] || x.mode}`
@@ -1709,23 +1766,33 @@ function renderPerms() {
 }
 function permCard(p) {
   const i = p.input || {};
+  const s = state.byId.get(state.selected);
   const body = h('div', { class: 'perm-b' });
-  if (p.toolName === 'ExitPlanMode' && i.plan) body.append(h('div', { class: 'md perm-plan', html: markdown(i.plan) }));
+  // An edit shows as the change it would make: ACP sends the diff, Claude's Edit has the strings.
+  const diff = p.diff || (i.file_path && typeof i.old_string === 'string' ? { path: i.file_path, oldText: i.old_string, newText: i.new_string ?? '' } : null);
+  if (diff) {
+    body.append(h('div', { class: 'mono' }, tilde(diff.path)), h('div', { class: 'perm-diff' },
+      diff.oldText == null ? codeBlock(diff.newText || '', langFor(diff.path)) : renderSideBySide(lineDiff(diff.oldText, diff.newText || ''), { lang: langFor(diff.path) })));
+    highlightIn(body);
+  } else if (p.toolName === 'ExitPlanMode' && i.plan) body.append(h('div', { class: 'md perm-plan', html: markdown(i.plan) }));
   else if (i.command) body.append(h('pre', { class: 'perm-cmd' }, i.command));
-  else if (i.file_path || i.notebook_path) body.append(h('div', { class: 'mono' }, tilde(i.file_path || i.notebook_path)));
+  else if (i.file_path || i.notebook_path || i.filePath) body.append(h('div', { class: 'mono' }, tilde(i.file_path || i.notebook_path || i.filePath)));
   else if (i.url) body.append(h('div', { class: 'mono' }, i.url));
   else body.append(h('pre', { class: 'perm-cmd' }, JSON.stringify(i, null, 2)));
   if (p.description && p.description !== i.command) body.prepend(h('div', { class: 'perm-d' }, p.description));
   if (p.reason || p.blockedPath) body.append(h('div', { class: 'muted perm-r' }, [p.reason, p.blockedPath ? `outside the allowed folders: ${tilde(p.blockedPath)}` : null].filter(Boolean).join(' · ')));
-  const why = h('input', { class: 'field grow', type: 'text', placeholder: 'Tell Claude why (optional, sent with Deny)', spellcheck: 'false' });
-  const act = (decision) => answerPerm(p.requestId, decision, why.value);
-  why.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); act('deny'); } });
+  // Claude gets the reason with a Deny and carries on; an ACP agent ends the turn and hears no reason.
+  const claude = isClaude(s);
+  const why = claude ? h('input', { class: 'field grow', type: 'text', placeholder: `Tell ${actorOf(s)} why (optional, sent with Deny)`, spellcheck: 'false' }) : null;
+  const act = (decision) => answerPerm(p.requestId, decision, why?.value || '');
+  why?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); act('deny'); } });
   const actions = h('div', { class: 'perm-a' },
     h('button', { type: 'button', class: 'btn primary', onclick: () => act('allow') }, 'Allow'),
     p.suggestions.length ? h('button', { type: 'button', class: 'btn', title: suggestionText(p.suggestions), onclick: () => act('always') }, 'Allow for session') : null,
-    h('button', { type: 'button', class: 'btn', onclick: () => act('deny') }, 'Deny'), why);
+    h('button', { type: 'button', class: 'btn', title: claude ? null : `Deny ends ${actorOf(s)}’s turn; send a prompt to say what to do instead`, onclick: () => act('deny') }, 'Deny'),
+    why || h('span', { class: 'muted perm-r' }, 'Deny ends the turn'));
   return h('div', { class: 'perm' }, h('div', { class: 'perm-h' }, h('span', { class: 'perm-k' }, 'PERMISSION'),
-    h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: p.toolName, isError: false } }).fam}` }, p.displayName),
+    h('span', { class: `tag f-${tagFor({ kind: 'tool', tool: { name: p.toolName, kind: p.kind || undefined, isError: false } }).fam}` }, permTool(p)),
     h('span', { class: 'muted' }, `asked ${ago(Date.now() - p.at)} ago`)), body, actions);
 }
 async function answerPerm(requestId, decision, message) {
@@ -1823,10 +1890,11 @@ async function stopSession() {
   const d = deckOf(s.id);
   const busy = d && d.status !== 'idle';
   if (busy || d?.queue.length) {
-    const ok = await confirmDialog('End the claude process?', `${busy ? 'Claude is in the middle of a turn, which will be cut off. ' : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}The next prompt you send starts it again.`, 'End process');
+    const actor = actorOf(s);
+    const ok = await confirmDialog(`End the ${actor} session?`, `${busy ? `${actor} is in the middle of a turn, which will be cut off. ` : ''}${d.queue.length ? `${d.queue.length} queued prompt${d.queue.length === 1 ? '' : 's'} will be dropped. ` : ''}The next prompt you send starts it again.`, 'End session');
     if (!ok) return;
   }
-  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Process ended'); }
+  try { await api.post(`/api/sessions/${sid(s.id)}/stop`); toast('Session ended'); }
   catch (e) { toast(`End failed: ${e.message}`); }
 }
 
@@ -1843,17 +1911,15 @@ function modelOptions(sel) {
 }
 function renderModelPicker() {
   const sel = $('tb-model');
+  // The picker lists Claude's models: hidden while new sessions start on a harness that doesn't take one.
+  sel.closest('.tb-model').hidden = !harnessOf(prefs.launchHarness).models;
   modelOptions(sel);
   sel.value = prefs.launchModel || '';
   sel.title = `New sessions start on ${sel.selectedOptions[0]?.textContent.replace(/^Default · /, '') || 'the CLI default'}`;
 }
 $('tb-model').addEventListener('change', (e) => { prefs.launchModel = e.target.value; savePrefs(); renderModelPicker(); });
 renderModelPicker();
-// The agents the deck can launch (lib/harnesses.mjs); an older backend only runs Claude Code.
-let harnesses = [{ name: 'claude', label: 'Claude Code', default: true, models: true, modes: ['default', 'acceptEdits', 'auto', 'plan'],
-  modeLabels: { default: 'Ask me in the deck', acceptEdits: 'Accept edits, ask for the rest', auto: 'Auto (classifier decides)', plan: 'Plan only, no changes' } }];
-api.get('/api/config').then(r => { cliModel = r.cliModel; if (r.harnesses?.length) harnesses = r.harnesses; renderModelPicker(); }).catch(() => {});
-const harnessOf = (name) => harnesses.find(x => x.name === name) || harnesses.find(x => x.default) || harnesses[0];
+api.get('/api/config').then(r => { cliModel = r.cliModel; if (r.harnesses?.length) harnesses = r.harnesses; renderModelPicker(); renderQuota(); }).catch(() => {});
 
 /** Show the launch dialog's fields for one harness: its permission modes, and a model pick only where it takes one. */
 function renderLaunchHarness(name, perm) {
@@ -1944,7 +2010,7 @@ $('ns-form').addEventListener('submit', async (e) => {
   try {
     const st = await api.post('/api/launch', body);
     prefs.launchCwd = body.cwd;
-    prefs.launchPerm = body.permissionMode; prefs.launchHarness = body.harness; savePrefs();
+    prefs.launchPerm = body.permissionMode; prefs.launchHarness = body.harness; savePrefs(); renderModelPicker();
     state.deck.set(st.id, st);
     $('ns-prompt').value = ''; launchFiles.clear();
     $('new-session').close();
