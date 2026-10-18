@@ -473,7 +473,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}/?t=${TOKEN}`;
   const snap = snapshot();
-  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed\n  brief + ask: ${NARRATOR ? `claude -p (${narrator.briefModel} / ${narrator.askModel})` : 'off'}`);
+  console.log(`agent-deck ${VERSION}\n  ${url}\n  claude dir: ${index.claudeDir}\n  sessions: ${snap.active.length} active · ${snap.recent.length} recent · ${snap.closed.length} closed\n  brief + ask: ${NARRATOR ? `${narrator.llm.label} (${narrator.briefModel} / ${narrator.askModel})` : 'off'}`);
   if (OPEN) {
     const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
     spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
