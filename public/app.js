@@ -70,6 +70,7 @@ function toast(msg, action = null) {
 // The agents the deck can launch (lib/harnesses.mjs, from /api/config); an older backend only runs Claude Code.
 // Copy that names the agent ("OPENCODE is working", the resume command) comes from here, not from constants.
 const CLAUDE_HARNESS = { name: 'claude', type: 'claude', label: 'Claude Code', actor: 'Claude', resumeCommand: 'claude --resume {id}', default: true, models: true,
+  backend: { kind: 'anthropic', label: 'Claude Code' },
   modes: ['default', 'acceptEdits', 'auto', 'plan'],
   modeLabels: { default: 'Ask me in the deck', acceptEdits: 'Accept edits, ask for the rest', auto: 'Auto (classifier decides)', plan: 'Plan only, no changes' } };
 let harnesses = [CLAUDE_HARNESS];
@@ -86,6 +87,17 @@ const isClaude = (s) => sessionHarness(s).name === 'claude' || sessionHarness(s)
 function resumeCommand(s) {
   const t = sessionHarness(s).resumeCommand;
   return t ? `cd ${JSON.stringify(s.cwd || '.')} && ${t.replace('{id}', s.id)}` : null;
+}
+
+// Where a harness's model runs (lib/harnesses.mjs backendOf): one glyph and colour each, on every session.
+const BACKEND_ICON = { local: 'i-be-local', anthropic: 'i-be-anthropic', google: 'i-be-google', openai: 'i-be-openai', other: 'i-be-other' };
+const backendOfHarness = (hn) => hn.backend || (hn.type === 'claude' ? CLAUDE_HARNESS.backend : { kind: 'other', label: hn.label || hn.name || 'agent' });
+const backendOf = (s) => backendOfHarness(sessionHarness(s));
+/** "Local · opencode · household": the backend, then the agent that runs on it when that says more. */
+const backendText = (hn) => { const be = backendOfHarness(hn); return be.label === hn.label ? be.label : `${be.label} · ${hn.label}`; };
+function backendGlyph(hn, n = 11) {
+  const be = backendOfHarness(hn);
+  return h('span', { class: `be be-${BACKEND_ICON[be.kind] ? be.kind : 'other'}`, role: 'img', 'aria-label': `Runs on ${backendText(hn)}` }, svgUse(BACKEND_ICON[be.kind] || 'i-be-other', n));
 }
 
 // ------------------------------------------------------------ phases
@@ -126,7 +138,7 @@ function connect() {
   es = new EventSource('/api/stream');
   es.onopen = () => { setConn(true); hideLaunch(); if (state.selected) catchUp(state.selected); for (const id of state.expanded) catchUp(id); };
   es.onerror = () => { setConn(false); watchBackend(); };
-  es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.narrator = d.narrator || state.narrator; reportView(); });
+  es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.server = { startedAt: d.serverStartedAt, version: d.version }; state.narrator = d.narrator || state.narrator; reportView(); });
   es.addEventListener('sessions.snapshot', (e) => applySnapshot(JSON.parse(e.data)));
   es.addEventListener('attention.snapshot', (e) => { state.attention = JSON.parse(e.data); });
   es.addEventListener('attention', (e) => { const a = JSON.parse(e.data); state.attention.log = [...state.attention.log, a].slice(-100); narrate(a); });
@@ -143,7 +155,8 @@ function connect() {
 function setConn(on) {
   if (restarting) return;
   $('conn').classList.toggle('on', on);
-  connTitle(on ? 'Server connected · click to restart it' : 'Server offline · click to restart it');
+  connTitle(on ? 'Backend connected · menu (m)' : 'Backend offline · menu (m)');
+  if ($('main-menu').matches(':popover-open')) renderMainMenu();
 }
 
 // ------------------------------------------------------------ restart backend
@@ -151,20 +164,20 @@ function setConn(on) {
 // drop the cached shell and reload so the UI matches the new backend.
 let restarting = false;
 function connTitle(t) { $('conn').title = t; $('conn').setAttribute('aria-label', t); }
-$('conn').addEventListener('click', async () => {
+async function confirmRestart() {
   if (restarting) return;
   const live = [...state.deck.values()].filter(d => d.alive).length;
   const ok = await confirmDialog('Restart the backend?',
     `The deck server restarts and this window reloads.${live ? ` ${live} session${live > 1 ? 's' : ''} launched from the deck will end; you can resume ${live > 1 ? 'them' : 'it'} afterwards.` : ''}`, 'Restart');
   if (ok) restartBackend();
-});
+}
 async function restartBackend() {
   let before;
   try { before = (await api.post('/api/restart')).startedAt; }
   catch (e) { toast(`Restart failed: ${e.message}`); return; }
   restarting = true;
   es?.close(); clearTimeout(launch.timer); launch.timer = null;
-  $('conn').classList.remove('on'); $('conn').classList.add('restarting'); connTitle('Server restarting…'); $('conn').disabled = true;
+  $('conn').classList.remove('on'); $('conn').classList.add('restarting'); connTitle('Backend restarting…');
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 500));
@@ -173,10 +186,50 @@ async function restartBackend() {
       if (r.ok && (await r.json()).startedAt !== before) return hardReload();
     } catch { /* still down */ }
   }
-  restarting = false; $('conn').disabled = false;
+  restarting = false; $('conn').classList.remove('restarting');
   toast('The backend did not come back. Check ~/.agent-deck/server.log.');
   setConn(false); watchBackend(0);
 }
+
+// ------------------------------------------------------------ main menu
+// The status dot opens it: the backend server, which agent new sessions run
+// on, plan limits where a backend has them, the deck's views, and restart.
+function renderMainMenu() {
+  const on = $('conn').classList.contains('on');
+  const srv = state.server;
+  const items = [h('div', { class: 'mm-h' }, h('span', { class: `conn-dot${on ? ' on' : restarting ? ' restarting' : ''}` }),
+    h('div', {}, h('b', {}, restarting ? 'Backend restarting…' : on ? 'Backend connected' : 'Backend offline'),
+      h('div', { class: 'muted' }, on && srv ? `${location.host} · up ${ago(Date.now() - srv.startedAt)}${srv.version ? ` · v${srv.version}` : ''}` : location.host)))];
+  if (harnesses.length > 1) {
+    items.push(menuSec('New sessions run on'));
+    const cur = harnessOf(prefs.launchHarness).name;
+    for (const hn of harnesses) items.push(menuItem(backendGlyph(hn, 13), backendText(hn), () => { prefs.launchHarness = hn.name; savePrefs(); renderModelPicker(); }, { checked: hn.name === cur }));
+  }
+  // Plan limits apply to Claude Code; a local model has none worth showing here.
+  const lim = state.usage?.limits;
+  if (harnesses.some(x => x.type === 'claude') || lim) {
+    const tone = quotaTone(lim);
+    items.push(menuSec(`${CLAUDE_HARNESS.backend.label} limits`, h('button', { type: 'button', class: 'linkish', onclick: () => checkQuota() }, 'Check now')));
+    if (!lim) items.push(h('p', { class: 'mm-note' }, state.usage?.error ? `No reading yet: ${state.usage.error.message}` : 'Reading claude /usage…'));
+    else {
+      items.push(...lim.windows.map(w => windowRow(w, { pace: false })));
+      if (lim.status === 'rejected' || tone === 'warn') items.push(h('p', { class: `mm-note ${tone}` }, lim.status === 'rejected' ? 'Limited: new turns are refused until a window resets.' : 'Filling up.'));
+    }
+  }
+  items.push(h('hr'),
+    menuItem(svgUse('i-plus', 13), 'New session', openLaunch, { kbd: 'n' }),
+    menuItem(svgUse('i-history', 13), 'All sessions', openHistory, { kbd: 'h' }),
+    menuItem(svgUse('i-proc', 13), 'Processes', () => openProcs(), { kbd: 'p' }),
+    menuItem(h('span', { class: 'mono' }, '?'), 'Keyboard shortcuts', () => $('keys').showModal(), { kbd: '?' }),
+    h('hr'),
+    menuItem(svgUse('i-power', 13), 'Restart backend…', confirmRestart, { cls: 'danger', disabled: restarting }));
+  $('main-menu').replaceChildren(...items);
+}
+function openMainMenu() { hideCard(true); renderMainMenu(); showMenu($('main-menu'), $('conn')); }
+$('conn').addEventListener('click', () => $('main-menu').matches(':popover-open') ? $('main-menu').hidePopover() : openMainMenu());
+// Uptime and reset countdowns move on their own.
+setInterval(() => { if ($('main-menu').matches(':popover-open')) renderMainMenu(); }, 15_000);
+
 async function hardReload() {
   try { for (const k of await caches.keys()) await caches.delete(k); } catch { /* no cache api */ }
   location.reload();
@@ -372,10 +425,11 @@ function sessRow(s, nested = false) {
   const sub = isAgent || nested ? (meta ? [meta] : null)
     : [h('span', { class: 'fld', title: s.cwd ? `Folder: ${tilde(s.cwd)}` : 'Folder' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
   // No native tooltips: the hover card says all of it.
-  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}` },
+  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}` },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
     h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), sub ? h('span', { class: 'sub' }, ...sub) : null),
-    h('span', { class: 'r' }, s.background ? h('span', { class: 'bgc', title: `${s.background} running in the background` }, svgUse('i-bg', 10), String(s.background)) : null, ago(Date.now() - (s.mtime || 0))));
+    h('span', { class: 'r' }, s.background ? h('span', { class: 'bgc', title: `${s.background} running in the background` }, svgUse('i-bg', 10), String(s.background)) : null,
+      isAgent || nested ? null : backendGlyph(sessionHarness(s), 10), ago(Date.now() - (s.mtime || 0))));
   return h('li', {}, btn);
 }
 
@@ -710,8 +764,9 @@ function renderQuota() {
   const lim = state.usage?.limits;
   const btn = $('quota');
   // Plan usage is Claude's: shown while the deck can launch Claude Code, or `claude /usage` reads a plan on this machine.
-  btn.hidden = !harnesses.some(x => x.name === 'claude' || x.type === 'claude') && !lim;
+  // The numbers live in the main menu; the ring shows only when a window is filling up.
   const tone = quotaTone(lim);
+  btn.hidden = (!harnesses.some(x => x.name === 'claude' || x.type === 'claude') && !lim) || !['warn', 'crit'].includes(tone);
   // The ring tracks the fullest window; the number is that window's use.
   const top = lim?.windows.length ? lim.windows.reduce((a, w) => (w.utilization > a.utilization ? w : a)) : null;
   btn.className = `quota ${tone}`;
@@ -721,6 +776,7 @@ function renderQuota() {
   btn.querySelector('.qpct').textContent = shown.length ? shown.map(w => `${w.key === 'five_hour' ? 'Session' : 'Week'} ${pct(w.utilization)}`).join(' · ') : top ? pct(top.utilization) : 'Plan usage –';
   btn.setAttribute('aria-label', top ? `Plan usage: ${winLabel(top)} ${pct(top.utilization)}${lim.status === 'rejected' ? ', limited' : ''}` : 'Plan usage: not known yet');
   if (card.id === 'quota') showUsageCard(true);
+  if ($('main-menu').matches(':popover-open')) renderMainMenu();
 }
 function untilText(ts) {
   if (!ts) return '';
@@ -729,6 +785,24 @@ function untilText(ts) {
   const sameDay = at.toDateString() === new Date().toDateString();
   const clock = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return `resets ${ms > 0 ? `in ${dur(ms)}` : 'now'} · ${sameDay ? clock : `${at.toLocaleDateString([], { weekday: 'short' })} ${clock}`}`;
+}
+/** One plan window: name, use, a bar with the projected use at reset, when it resets, and (with `pace`) the pace in words. */
+function windowRow(w, { pace = true } = {}) {
+  const wt = w.utilization >= 0.95 ? 'crit' : w.utilization >= 0.75 || w.pace?.hitsBeforeReset ? 'warn' : 'ok';
+  const row = h('div', { class: 'uq-w' },
+    h('div', { class: 'uq-l' }, h('b', {}, winLabel(w)), h('span', { class: `uq-p ${wt}` }, pct(w.utilization))),
+    h('div', { class: 'uq-bar' }, h('span', { class: wt, style: `width:${Math.min(100, w.utilization * 100)}%` }),
+      w.pace?.atReset != null && w.pace.atReset > w.utilization ? h('i', { style: `left:${Math.min(100, w.pace.atReset * 100)}%`, title: `projected ${pct(Math.min(1, w.pace.atReset))} at reset` }) : null),
+    h('div', { class: 'uq-r' }, untilText(w.resetsAt)));
+  // The pace: is this window going to run out before it resets?
+  const p = w.pace;
+  if (!pace || !p) return row;
+  if (p.perHour > 0) {
+    row.append(h('div', { class: `uq-pace${p.hitsBeforeReset ? ' warn' : ''}` },
+      p.hitsBeforeReset ? `At this pace it runs out in ~${dur(p.fullInMs)}, before the reset.`
+        : `At this pace: ~${pct(Math.min(1, p.atReset ?? w.utilization))} by the reset (${(p.perHour * 100).toFixed(1)} points an hour over the last ${dur(p.sinceMs)}).`));
+  } else row.append(h('div', { class: 'uq-pace' }, `No change over the last ${dur(p.sinceMs)}.`));
+  return row;
 }
 function usageCardBody() {
   const u = state.usage || {};
@@ -743,22 +817,7 @@ function usageCardBody() {
   if (!lim) {
     rows.push(h('p', { class: 'hc-sum muted' }, u.error ? 'No quota reading yet.' : 'Reading claude /usage…'));
   } else {
-    for (const w of lim.windows) {
-      const wt = w.utilization >= 0.95 ? 'crit' : w.utilization >= 0.75 || w.pace?.hitsBeforeReset ? 'warn' : 'ok';
-      const row = h('div', { class: 'uq-w' },
-        h('div', { class: 'uq-l' }, h('b', {}, winLabel(w)), h('span', { class: `uq-p ${wt}` }, pct(w.utilization))),
-        h('div', { class: 'uq-bar' }, h('span', { class: wt, style: `width:${Math.min(100, w.utilization * 100)}%` }),
-          w.pace?.atReset != null && w.pace.atReset > w.utilization ? h('i', { style: `left:${Math.min(100, w.pace.atReset * 100)}%`, title: `projected ${pct(Math.min(1, w.pace.atReset))} at reset` }) : null),
-        h('div', { class: 'uq-r' }, untilText(w.resetsAt)));
-      // The pace: is this window going to run out before it resets?
-      const p = w.pace;
-      if (p && p.perHour > 0) {
-        row.append(h('div', { class: `uq-pace${p.hitsBeforeReset ? ' warn' : ''}` },
-          p.hitsBeforeReset ? `At this pace it runs out in ~${dur(p.fullInMs)}, before the reset.`
-            : `At this pace: ~${pct(Math.min(1, p.atReset ?? w.utilization))} by the reset (${(p.perHour * 100).toFixed(1)} points an hour over the last ${dur(p.sinceMs)}).`));
-      } else if (p) row.append(h('div', { class: 'uq-pace' }, `No change over the last ${dur(p.sinceMs)}.`));
-      rows.push(row);
-    }
+    for (const w of lim.windows) rows.push(windowRow(w));
     const extra = lim.isUsingOverage ? 'in use now' : lim.overageStatus === 'rejected' ? `off${lim.overageDisabledReason ? ` (${lim.overageDisabledReason.replace(/_/g, ' ')})` : ''}` : lim.overageStatus || null;
     if (extra) rows.push(h('div', { class: 'hc-f' }, h('span', {}, `Extra usage: ${extra}`)));
     for (const n of lim.notes || []) rows.push(h('div', { class: 'hc-f' }, h('span', {}, n)));
@@ -790,7 +849,7 @@ function usageCardBody() {
   }
   rows.push(h('div', { class: 'hc-foot' },
     lim ? `as of ${ago(lim.ageMs + (Date.now() - (u._at || Date.now())))} ago · from ${lim.source || 'a model call'}` : 'not checked yet',
-    h('span', { class: 'spacer' }), 'click to check now'));
+    h('span', { class: 'spacer' }), 'click for the menu'));
   return rows;
 }
 function showUsageCard(refresh = false) {
@@ -810,12 +869,13 @@ $('quota').addEventListener('mouseenter', () => { clearTimeout(card.timer); card
 $('quota').addEventListener('mouseleave', () => hideCard());
 $('quota').addEventListener('focus', () => showUsageCard());
 $('quota').addEventListener('blur', () => hideCard());
-$('quota').onclick = async () => {
+async function checkQuota() {
   $('quota').classList.add('checking');
   try { const r = await api.post('/api/usage/refresh'); state.usage = { ...r, _at: Date.now() }; renderQuota(); }
   catch (e) { toast(`Quota check failed: ${e.message}`); }
   finally { $('quota').classList.remove('checking'); }
-};
+}
+$('quota').onclick = () => openMainMenu();
 // Reset countdowns and "as of" age move on their own.
 setInterval(() => { if (card.id === 'quota') showUsageCard(true); }, 15_000);
 
@@ -888,6 +948,9 @@ function cardFacts(s) {
     isAgent ? ['Subagent of', state.byId.get(s.parentId)?.title || s.parentId] : null,
     isAgent ? ['Type', s.agentType] : null,
     s.spawnedBy ? ['Started by', state.byId.get(s.spawnedBy)?.title || s.spawnedBy] : null,
+    isAgent ? null : ['Backend', backendText(sessionHarness(s))],
+    s.lineage?.from ? ['Moved from', `${state.byId.get(s.lineage.from.id)?.title || s.lineage.from.id} · ${backendText(harnessOf(s.lineage.from.harness))}`] : null,
+    s.lineage?.to ? ['Moved to', `${state.byId.get(s.lineage.to.id)?.title || s.lineage.to.id} · ${backendText(harnessOf(s.lineage.to.harness))}`] : null,
     ['Folder', tilde(s.cwd), 'mono'],
     ['Branch', s.gitBranch || s.worktreeBranch, 'mono'],
     s.pr ? ['Pull request', `#${s.pr.number}${s.pr.title ? ` · ${oneLine(s.pr.title, 60)}` : ''}`] : null,
@@ -1189,7 +1252,7 @@ function renderHeader() {
   // The permission mode shows only when it is not the default (asks before acting).
   if (d?.alive) { if (d.permissionMode !== 'default') top.append(h('span', { class: 'sh-mode', title: `Launched by the deck · pid ${d.pid} · permissions: ${d.permissionMode}` }, PERM_LABEL[d.permissionMode] || d.permissionMode)); }
   else if (!isAgent && s.alive) top.append(h('span', { class: 'sh-mode', title: 'Observe only: launched outside the deck, so the deck can read it but not drive it' }, svgUse('i-eye', 14)));
-  if (b?.pr) top.append(h('a', { class: 'sh-pr', href: b.pr.url, target: '_blank', rel: 'noopener' }, `PR #${b.pr.number}`));
+  if (!isAgent) top.append(backendChip(s));
   top.append(h('span', { class: 'spacer' }));
   // Where, which model, tokens and cost: one hover away rather than a line of figures under the brief.
   const ctxRing = contextRing(b?.context || s.glance?.context);
@@ -1203,12 +1266,152 @@ function renderHeader() {
   // The status line sits in the prompt panel, right above the text box: whose
   // move it is, next to where you would make yours.
   $('nowslot').replaceChildren(renderNow(st, phase));
-  const out = [top, renderBriefBox(id, s, b)];
+  const out = [top, placeRow(s, b), renderBriefBox(id, s, b)].filter(Boolean);
 
   patchChildren(el, out);
   if (card.id === 'details') showDetailsCard(detailsBtn(), true);
   applyRing();
 }
+
+// ------------------------------------------------------------ session title bar: backend and place
+// Which backend the session runs on, as a chip that opens the move menu.
+function backendChip(s) {
+  const hn = sessionHarness(s); const be = backendOfHarness(hn);
+  return h('button', { type: 'button', class: `sh-be be-${BACKEND_ICON[be.kind] ? be.kind : 'other'}`, 'aria-haspopup': 'menu',
+    title: `Runs on ${backendText(hn)}${harnesses.length > 1 ? ' · click to move it to another backend' : ''}`,
+    onclick: (e) => openBackendMenu(e.currentTarget) }, svgUse(BACKEND_ICON[be.kind] || 'i-be-other', 12), h('span', {}, be.label));
+}
+
+// Folder, worktree, branch, and the GitHub issues and PRs the session worked
+// on (lib/ghrefs.mjs). Git facts are fetched at most every 30s; titles and
+// states from gh may land a moment later.
+const place = { data: new Map(), inflight: new Set() };
+function placeOf(id) {
+  const s = state.byId.get(id);
+  const key = `${s?.cwd}|${s?.gitBranch}|${s?.pr?.number}`;
+  const c = place.data.get(id);
+  if ((!c || c.key !== key || Date.now() - c.at > (c.r?.pending ? 3000 : 30_000)) && !place.inflight.has(id)) {
+    place.inflight.add(id);
+    api.get(`/api/sessions/${sid(id)}/place`)
+      .then((r) => { const was = JSON.stringify(c?.r); place.data.set(id, { r, at: Date.now(), key }); if (id === state.selected && was !== JSON.stringify(r)) renderHeader(); })
+      .catch(() => place.data.set(id, { r: c?.r || null, at: Date.now(), key }))
+      .finally(() => place.inflight.delete(id));
+  }
+  return c?.r || null;
+}
+const GH_ICON = { pr: 'i-pr', issue: 'i-issue' };
+const GH_STATE = { open: 'Open', closed: 'Closed', merged: 'Merged' };
+function ghChip(r, repo) {
+  const num = `${repo && r.repo.toLowerCase() !== repo.toLowerCase() ? r.repo.split('/')[1] : ''}#${r.number}`;
+  const what = `${r.kind === 'pr' ? 'Pull request' : 'Issue'} ${num}`;
+  const tip = [r.branch ? `${what} · this branch` : what, r.state ? GH_STATE[r.state] || r.state : null].filter(Boolean).join(' · ') + (r.title ? `\n${r.title}` : '');
+  return h('a', { class: `sh-chip gh st-${r.state || 'unknown'}${r.branch ? ' cur' : ''}`, href: r.url, target: '_blank', rel: 'noopener', title: tip },
+    svgUse(r.state === 'merged' ? 'i-merge' : GH_ICON[r.kind] || 'i-issue', 12), h('span', {}, num));
+}
+const GH_SHOWN = 6;
+function placeRow(s, b) {
+  if (!s.cwd) return null;
+  const p = s.kind === 'agent' ? null : placeOf(s.id);
+  const chip = (icon, text, title, onclick, cls = '') => h(onclick ? 'button' : 'span', { type: onclick ? 'button' : null, class: `sh-chip${cls ? ' ' + cls : ''}`, title, onclick }, svgUse(icon, 12), h('span', {}, text));
+  const row = h('div', { class: 'sh-place' });
+  row.append(chip('i-folder', tilde(s.cwd), `Folder: ${s.cwd} · click for its files`, () => setTab('files'), 'fld'));
+  if (p?.worktree) row.append(chip('i-worktree', `worktree of ${basename(p.worktree.main)}`, `A linked git worktree of ${tilde(p.worktree.main)}`, null));
+  // The branch the session recorded; the folder may have moved on since (git's word when it hasn't recorded one).
+  const now = p?.branch || (p?.detached ? `detached ${p.detached}` : null);
+  const branch = (b?.branch || s.gitBranch || s.worktreeBranch || '').replace(/^HEAD$/, '') || now;
+  if (branch) row.append(chip('i-branch', branch, `Branch ${branch}${now && now !== branch ? ` · the folder is now on ${now}` : ''} · click for its changes`, () => setTab('changes'), 'br'));
+  // Before gh answers, the PR the transcript links still shows.
+  const refs = p?.refs || (s.pr?.url ? [{ kind: 'pr', number: s.pr.number, url: s.pr.url, repo: s.pr.repo || '' }] : []);
+  const repo = p?.github?.repo || null;
+  row.append(...refs.slice(0, GH_SHOWN).map(r => ghChip(r, repo)));
+  if (refs.length > GH_SHOWN) row.append(h('span', { class: 'sh-chip more', title: refs.slice(GH_SHOWN).map(r => `${r.kind === 'pr' ? 'PR' : 'Issue'} #${r.number}${r.title ? ` ${r.title}` : ''}`).join('\n') }, `+${refs.length - GH_SHOWN}`));
+  const l = s.lineage;
+  if (l?.from) row.append(chip('i-move', `from ${backendOfHarness(harnessOf(l.from.harness)).label}`, `Moved here from “${state.byId.get(l.from.id)?.title || l.from.id}” ${ago(Date.now() - l.from.at)} ago · click to open it`, () => select(l.from.id), 'mv'));
+  if (l?.to) row.append(chip('i-move', `moved to ${backendOfHarness(harnessOf(l.to.harness)).label}`, `Continued as “${state.byId.get(l.to.id)?.title || l.to.id}” · click to open it`, () => select(l.to.id), 'mv'));
+  return row;
+}
+
+// ------------------------------------------------------------ menus
+// Popover menus: the main menu (the status dot) and the backend menu (the chip in a session's title bar).
+function menuItem(icon, text, fn, { kbd = null, disabled = false, checked = null, cls = '', title = null } = {}) {
+  return h('button', { type: 'button', class: `mm-i${cls ? ' ' + cls : ''}`, role: checked == null ? 'menuitem' : 'menuitemradio', 'aria-checked': checked == null ? null : String(checked),
+    disabled: disabled || null, title, onclick: (e) => { e.currentTarget.closest('[popover]')?.hidePopover(); fn(); } },
+    h('span', { class: 'mm-ic' }, icon), h('span', { class: 'mm-t' }, text),
+    checked ? h('span', { class: 'mm-chk' }, svgUse('i-check', 12)) : kbd ? h('kbd', {}, kbd) : null);
+}
+const menuSec = (text, extra = null) => h('div', { class: 'mm-sec' }, h('span', {}, text), extra);
+function showMenu(pop, anchor, align = 'left') {
+  const r = anchor.getBoundingClientRect();
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.left = align === 'left' ? `${Math.max(8, r.left - 4)}px` : 'auto';
+  if (!pop.matches(':popover-open')) pop.showPopover();
+  // Keep it on screen once its size is known.
+  const w = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, align === 'left' ? r.left - 4 : r.right - w))}px`;
+  pop.querySelector('.mm-i:not(:disabled)')?.focus();
+}
+// Up/Down move between items; the browser closes the popover on Esc.
+for (const id of ['main-menu', 'be-pop']) {
+  $(id).addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = [...$(id).querySelectorAll('.mm-i:not(:disabled)')];
+    const i = items.indexOf(document.activeElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
+  });
+}
+
+/** The backend menu: where this session runs, and the other backends it can move to. */
+function openBackendMenu(anchor) {
+  const s = state.byId.get(state.selected); if (!s || s.kind === 'agent') return;
+  const hn = sessionHarness(s); const be = backendOfHarness(hn);
+  const d = deckOf(s.id); const b = state.cache.get(s.id)?.brief;
+  const model = (b?.model || s.model || '').replace('claude-', '');
+  const midTurn = d?.alive && d.status === 'busy';
+  const items = [h('div', { class: 'mm-h' }, backendGlyph(hn, 16),
+    h('div', {}, h('b', {}, `Runs on ${be.label}`), h('div', { class: 'muted' }, [be.label !== hn.label ? hn.label : null, model || null].filter(Boolean).join(' · ') || ' ')))];
+  const others = harnesses.filter(x => x.name !== hn.name);
+  if (others.length) {
+    items.push(menuSec('Move this session to'));
+    for (const x of others) items.push(menuItem(backendGlyph(x, 13), backendText(x), () => openMigrate(s, x), { disabled: midTurn || !s.cwd }));
+    if (midTurn) items.push(h('p', { class: 'mm-note' }, 'Wait for the turn to end, or stop it, to move the session.'));
+  } else items.push(h('p', { class: 'mm-note' }, 'No other backend is set up. Add one in ~/.agent-deck/harnesses.json.'));
+  $('be-pop').replaceChildren(...items);
+  showMenu($('be-pop'), anchor);
+}
+
+const migrating = { s: null, to: null };
+function openMigrate(s, to) {
+  const d = deckOf(s.id); const be = backendOfHarness(to);
+  migrating.s = s; migrating.to = to;
+  const q = d?.queue?.length || 0;
+  $('mg-t').textContent = `Move to ${be.label}?`;
+  $('mg-b').textContent = `Starts ${to.label} in ${tilde(s.cwd)} with this session’s history as its first prompt: what was asked, the conversation, the files it touched. `
+    + (q ? `${plural(q, 'queued prompt')} go${q === 1 ? 'es' : ''} with it. ` : '')
+    + (d?.alive ? `The ${actorOf(s)} session ends.` : s.alive ? `The ${actorOf(s)} session keeps running outside the deck, in the same folder.` : 'This session stays as it is, linked to the new one.');
+  $('mg-note').value = ''; $('mg-err').hidden = true;
+  $('mg-go').disabled = false; $('mg-go').textContent = 'Move';
+  $('migrate').showModal();
+  $('mg-note').focus();
+}
+$('mg-cancel').onclick = () => $('migrate').close();
+$('mg-note').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('mg-form').requestSubmit(); } });
+$('mg-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const { s, to } = migrating; if (!s || !to) return;
+  $('mg-go').disabled = true; $('mg-go').textContent = 'Moving…'; $('mg-err').hidden = true;
+  try {
+    const st = await api.post(`/api/sessions/${sid(s.id)}/migrate`, { harness: to.name, note: $('mg-note').value });
+    state.deck.set(st.id, st);
+    $('migrate').close();
+    toast(`Moved to ${backendOfHarness(to).label}`);
+    if (state.byId.has(st.id)) openLaunched(st.id); else state.pendingOpen = st.id;
+  } catch (err) {
+    $('mg-err').textContent = err.message === 'not found' ? 'The deck backend is older than this page. Restart it from the main menu, then try again.' : err.message;
+    $('mg-err').hidden = false;
+    $('mg-go').disabled = false; $('mg-go').textContent = 'Move';
+  }
+});
 
 // How full the model's context window is, from a harness that reports it
 // (ACP's usage_update). On a small local model it matters more than cost.
@@ -1595,7 +1798,7 @@ const procView = createProcView({
   openCall: async (id, toolUseId) => { await select(id); const ev = findEvent(id, toolUseId); if (ev) jumpToSeq(ev.seq); else toast('That call is not loaded'); },
   runInShell: (cmd, cwd) => { if (!state.selected) { toast('Open a session to use its Shell tab'); return; } setTab('shell'); if (cwd) $('sh-cwd').value = cwd; $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
   openEditor: (p) => api.openEditor(p),
-  restart: () => $('conn').click(),
+  restart: () => confirmRestart(),
 });
 function openProcs(opts) { hideCard(true); procView.open(opts); }
 $('procs-btn').onclick = () => openProcs();
@@ -2334,6 +2537,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
   if (e.key === 'h') { e.preventDefault(); openHistory(); return; }
   if (e.key === 'p') { e.preventDefault(); openProcs(); return; }
+  if (e.key === 'm') { e.preventDefault(); openMainMenu(); return; }
   if (e.key === '[') { e.preventDefault(); setRailMin(!prefs.railMin); return; }
   if (!state.selected) { if (e.key === '/') { e.preventDefault(); $('tree-filter').focus(); } else if (e.key === '?') $('keys').showModal(); return; }
   if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
