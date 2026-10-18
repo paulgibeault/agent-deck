@@ -337,6 +337,10 @@
     <p id="mg-b" class="ns-sub"></p>
     <label class="ns-l" for="mg-note">What next <span class="muted">(optional)</span></label>
     <textarea id="mg-note" class="field ns-prompt" rows="3" placeholder="Leave empty to pick up where it left off (⌘↩ to move)"></textarea>
+    <details id="mg-preview" class="mg-preview">
+      <summary>Handoff <span id="mg-size" class="muted"></span><button type="button" id="mg-reset" class="linkish" hidden>Rebuild</button></summary>
+      <textarea id="mg-prompt" class="field mono" rows="14" spellcheck="false" aria-label="The handoff prompt"></textarea>
+    </details>
     <p id="mg-err" class="ns-err" role="alert" hidden></p>
     <div class="dialog-a">
       <button type="button" id="mg-cancel" class="btn">Cancel</button>

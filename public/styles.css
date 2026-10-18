@@ -447,6 +447,13 @@ button.sh-chip:hover, a.sh-chip:hover { background: var(--hover); color: var(--f
 .sh-chip.gh.st-open svg { color: var(--ok); } .sh-chip.gh.st-merged svg { color: var(--ask); } .sh-chip.gh.st-closed svg { color: var(--err); }
 .sh-chip.gh.cur { box-shadow: inset 0 0 0 1px var(--line2); }
 .sh-chip.more { color: var(--muted); cursor: help; }
+.sh-chip.gh.draft svg { color: var(--muted); }
+.sh-chip .ci { width: 6px; height: 6px; border-radius: 3px; margin-left: 1px; }
+.sh-chip .ci-success { background: var(--ok); } .sh-chip .ci-failure { background: var(--err); } .sh-chip .ci-pending { background: var(--work); animation: pulse 1.4s ease-in-out infinite; }
+.sh-chip.gh > svg:last-child:not(:first-child) { color: var(--ok); }
+.sh-chip.new-pr { color: var(--muted); } .sh-chip.new-pr:hover { color: var(--info-fg); }
+.sh-place .sh-ed { width: 20px; height: 20px; margin-left: -6px; opacity: .55; }
+.sh-place .sh-ed:hover { opacity: 1; }
 .sh-chip.mv svg { color: var(--info); }
 
 /* Popover menus: the main menu (status dot) and a session's backend menu. */
@@ -1258,3 +1265,15 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .pidlink { border: 0; padding: 0; background: none; color: var(--info); font-size: inherit; cursor: pointer; }
 .pidlink:hover { text-decoration: underline; }
 @media (max-width: 900px) { .pm-body { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } .pm-left { border-right: 0; border-bottom: 1px solid var(--line); } }
+
+/* Main menu: today's use per backend. Move dialog: the handoff preview. */
+.mm-u { display: flex; align-items: center; gap: 9px; height: 26px; padding: 0 8px; font-size: 12px; font-variant-numeric: tabular-nums; cursor: default; }
+.mm-u > .be { width: 16px; justify-content: center; }
+.mm-u .muted { font-size: 11.5px; }
+.mm-u b { min-width: 46px; text-align: right; font-weight: 600; }
+.mg-preview { margin-top: 10px; }
+.mg-preview summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; font-size: 12px; font-weight: 500; color: var(--fg2); }
+.mg-preview summary .muted { font-weight: 400; font-size: 11.5px; }
+.mg-preview summary .linkish { margin-left: auto; }
+.mg-preview textarea { width: 100%; height: 280px; min-height: 120px; margin-top: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.45; resize: vertical; white-space: pre-wrap; }
+#migrate { width: min(720px, calc(100vw - 40px)); }
