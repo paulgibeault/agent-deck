@@ -94,11 +94,14 @@ test('Narrator: at most two calls in flight', async () => {
   } finally { await s.close(); }
 });
 
-test('transportFromEnv: claude unless DECK_LLM=openai', () => {
-  assert.equal(transportFromEnv({}).name, 'claude');
+test('transportFromEnv: the household model unless DECK_LLM=claude', () => {
+  const h = transportFromEnv({});
+  assert.equal(h.name, 'openai');
+  assert.equal(h.label, 'openai http://127.0.0.1:8080/v1');
+  assert.equal(h.defaultModel, 'qwen3.6-35b-a3b');
   const t = transportFromEnv({ DECK_LLM: 'openai', DECK_LLM_URL: 'http://h:1/v1', DECK_LLM_MODEL: 'q' });
-  assert.equal(t.name, 'openai');
   assert.equal(t.defaultModel, 'q');
-  assert.equal(new Narrator({ llm: transportFromEnv({}) }).briefModel, process.env.DECK_BRIEF_MODEL || 'haiku');
+  assert.equal(transportFromEnv({ DECK_LLM: 'claude' }).name, 'claude');
+  assert.equal(new Narrator({ llm: transportFromEnv({ DECK_LLM: 'claude' }) }).briefModel, process.env.DECK_BRIEF_MODEL || 'haiku');
   assert.throws(() => transportFromEnv({ DECK_LLM: 'gpt' }), /claude or openai/);
 });

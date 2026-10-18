@@ -319,7 +319,7 @@ test('Narrator + /usage: quota arrives from a verbose reply and from claude /usa
     const report = parseUsageReport(await readUsageReport());
     console.log(JSON.stringify({ q, by: n.status().byPurpose, report }));`;
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script],
-    { env: { ...process.env, DECK_CLAUDE_BIN: path.join(__dirname, 'fixtures', 'fake-claude.mjs'), FAKE_5H: '0.61' }, encoding: 'utf8' });
+    { env: { ...process.env, DECK_LLM: 'claude', DECK_CLAUDE_BIN: path.join(__dirname, 'fixtures', 'fake-claude.mjs'), FAKE_5H: '0.61' }, encoding: 'utf8' });
   const { q, by, report } = JSON.parse(out.trim().split('\n').at(-1));
   assert.equal(q.unifiedWindows.five_hour.utilization, 0.61);
   assert.equal(by.brief.calls, 1);

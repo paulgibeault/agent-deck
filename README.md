@@ -58,17 +58,24 @@ Flags and environment:
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps its state |
 | `DECK_EDITOR` | `code` | command for "open in editor" (`<cmd> -g file:line`) |
 | `--no-narrator` / `DECK_NARRATOR=off` | on | turn off the generated Brief and Ask (no model calls) |
-| `DECK_BRIEF_MODEL` | `haiku` | model for the generated Brief |
-| `DECK_ASK_MODEL` | `sonnet` | model for Ask about this |
-| `DECK_CLAUDE_BIN` | `claude` | CLI used for model calls |
+| `DECK_LLM` | `openai` | transport for the Brief and Ask: `openai` (an OpenAI-compatible endpoint) or `claude` (`claude -p`) |
+| `DECK_LLM_URL` | `http://127.0.0.1:8080/v1` | endpoint for `openai` (the household model via the open-act tunnel) |
+| `DECK_LLM_MODEL` | `qwen3.6-35b-a3b` | model for `openai` |
+| `DECK_BRIEF_MODEL` | `DECK_LLM_MODEL`, or `haiku` with `claude` | model for the generated Brief |
+| `DECK_ASK_MODEL` | `DECK_LLM_MODEL`, or `sonnet` with `claude` | model for Ask about this |
+| `DECK_CLAUDE_BIN` | `claude` | CLI used for `claude -p` model calls and `/usage` |
 | `DECK_AGENT_BIN` | `claude` | CLI used for deck-launched sessions |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | unset | Microsoft neural voices for Read aloud (or set them in its settings) |
 | `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash, Kokoro voices |
 
-The Brief and Ask call `claude -p` with no tools, no MCP servers and no
-session persistence, using whatever login the CLI already has. If that login
-has expired the deck says so in the Brief; run `claude` in a terminal and
-`/login`. To try both flows without a login, point `DECK_CLAUDE_BIN` at
+The Brief and Ask run on the household model by default, through the
+open-act tunnel at `DECK_LLM_URL`. If the tunnel is down, calls fail and
+retry; check it with `~/work/open-act/deploy/clients/macos/bootstrap.sh
+--status`. With `DECK_LLM=claude` they call `claude -p` instead, with no
+tools, no MCP servers and no session persistence, using whatever login the
+CLI already has. If that login has expired the deck says so in the Brief;
+run `claude` in a terminal and `/login`. To try both flows without a model,
+set `DECK_LLM=claude` and point `DECK_CLAUDE_BIN` at
 `test/fixtures/fake-claude.mjs` (the `agent-deck-fake-model` preview config
 does this).
 
