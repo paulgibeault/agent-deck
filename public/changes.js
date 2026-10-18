@@ -1,18 +1,22 @@
 // public/changes.js — the Changes tab's "by turn" view: what each turn changed,
 // file by file, and a rich diff of one file's edits within a turn.
-import { h, svgUse, ib, fmtTime, oneLine, headerFor, section, renderDiff, parseUnified, lineDiff, langFor, copyBtn } from './events.js';
-import { classify } from './classify.js';
+import { h, svgUse, ib, fmtTime, oneLine, headerFor, section, renderDiff, parseUnified, langFor, copyBtn, editOps } from './events.js';
+import { classify, toolCommand } from './classify.js';
 import { fileKind, glyph, viewSwitch } from './files.js';
 
+export { editOps };
+
 const SHELL_EDITS = new Set(['sedit', 'delete', 'fs']);
+// Tools that change files but report no diff (an ACP delete or move): listed like commands.
+const NO_DIFF_KINDS = new Set(['delete', 'move']);
 
 /**
  * Turns that changed something, newest first:
  * [{ n, prompt, ts, add, del, live?, files: [{ path, rel, add, del, created, deleted?, git?, edits: [ev…] }], shell: [ev…] }]
  * Where the deck snapshotted a turn (`snap.turns[promptId]`, from git), its
  * files are exactly what changed, however it changed. Otherwise they come
- * from the Edit/Write/MultiEdit/NotebookEdit tools, and commands that edit
- * files (sed -i, rm, mv…) are listed without a diff.
+ * from edit tools (any harness: tool.diff), and commands and tools that change
+ * files without a diff (sed -i, rm, mv, an ACP delete or move) are listed by name.
  */
 export function turnChanges(events, cwd, snap = null) {
   const turns = []; let cur = null; let n = 0;
@@ -28,7 +32,7 @@ export function turnChanges(events, cwd, snap = null) {
       if (!f) cur.byPath.set(d.file, f = { path: d.file, rel: base && d.file.startsWith(base) ? d.file.slice(base.length) : d.file.replace(/^\/Users\/[^/]+/, '~'), add: 0, del: 0, created: false, edits: [] });
       f.add += d.add; f.del += d.del; f.created ||= !!d.created; f.edits.push(ev);
       cur.add += d.add; cur.del += d.del;
-    } else if (ev.tool.name === 'Bash' && SHELL_EDITS.has(classify(ev).intent)) cur.shell.push(ev);
+    } else if (NO_DIFF_KINDS.has(ev.tool.kind) || (toolCommand(ev.tool) != null && SHELL_EDITS.has(classify(ev).intent))) cur.shell.push(ev);
   }
   const relOf = (abs) => base && abs.startsWith(base) ? abs.slice(base.length) : abs.replace(/^\/Users\/[^/]+/, '~');
   for (const t of turns) {
@@ -83,29 +87,11 @@ export function renderTurnList(root, turns, { selected = null, collapsed = new S
     }
     for (const ev of t.shell) {
       const c = classify(ev);
-      out.push(h('div', { class: `ct-file shell${selected === `ev:${ev.id}` ? ' sel' : ''}`, role: 'button', tabindex: '-1', dataset: { key: `ev:${ev.id}` }, title: `${ev.tool.input.command}\n(changed files by command, so no diff was recorded)`, onclick: () => onShell?.(ev) },
+      out.push(h('div', { class: `ct-file shell${selected === `ev:${ev.id}` ? ' sel' : ''}`, role: 'button', tabindex: '-1', dataset: { key: `ev:${ev.id}` }, title: `${toolCommand(ev.tool) ?? ev.tool.summary}\n(no diff was recorded for this change)`, onclick: () => onShell?.(ev) },
         h('span', { class: `fi f-${c.fam}` }, svgUse(c.icon, 15, c.label)), h('span', { class: 'ct-name' }, oneLine(c.text, 120)), h('span', { class: 'fsp' }), h('span', { class: 'ct-x' }, 'no diff')));
     }
   }
   root.replaceChildren(...out);
-}
-
-/** Ops for one edit, from its full result (structuredPatch / created content), else from its input. */
-export function editOps(ev, detail) {
-  const r = detail?.toolUseResult;
-  if (Array.isArray(r?.structuredPatch) && r.structuredPatch.length) {
-    return parseUnified(r.structuredPatch.map(hk => `@@ -${hk.oldStart},${hk.oldLines} +${hk.newStart},${hk.newLines} @@\n${(hk.lines || []).join('\n')}`).join('\n'));
-  }
-  if (r?.type === 'create' && typeof r.content === 'string') {
-    const lines = r.content.replace(/\n$/, '').split('\n');
-    return [{ t: 'hunk', text: `@@ -0,0 +1,${lines.length} @@ new file` }, ...lines.map((b, i) => ({ t: 'add', b, bn: i + 1 }))];
-  }
-  const inp = ev.tool.input || {};
-  if (ev.tool.name === 'Edit') return lineDiff(inp.old_string ?? '', inp.new_string ?? '');
-  if (ev.tool.name === 'MultiEdit') return (inp.edits || []).flatMap((e, i) => [{ t: 'hunk', text: `@@ -0 +0 @@ edit ${i + 1}` }, ...lineDiff(e.old_string ?? '', e.new_string ?? '')]);
-  if (ev.tool.name === 'Write') return (inp.content ?? '').split('\n').map((b, i) => ({ t: 'add', b, bn: i + 1 }));
-  if (ev.tool.name === 'NotebookEdit') return (inp.new_source ?? '').split('\n').map((b) => ({ t: 'add', b }));
-  return [];
 }
 
 /**

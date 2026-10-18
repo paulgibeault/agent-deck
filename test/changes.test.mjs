@@ -75,3 +75,26 @@ test('turn snapshots capture any change between a prompt and its turn end, witho
   assert.equal(g('diff', '--cached', '--name-only'), indexBefore);                           // user's index untouched
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+test('ACP edits: Changes groups them by tool.diff, diffs them from their texts; deletes list without a diff', () => {
+  const acp = (id, kind, diff, extra = {}) => ({ id, kind: 'tool', ts: 't', tool: { name: kind, kind, input: {}, diff, pending: false, paths: diff ? [diff.file] : [], ...extra } });
+  const events = [
+    { id: 'p1', kind: 'prompt', text: 'go', ts: 't1' },
+    acp('e1', 'edit', { file: '/r/a.js', add: 2, del: 2, oldText: 'a\nb\n', newText: 'a\nc\n' }),
+    acp('w1', 'edit', { file: '/r/n.txt', add: 2, del: 0, created: true, oldText: null, newText: 'x\ny\n' }),
+    acp('d1', 'delete', null, { summary: 'old.txt' }),
+    acp('c1', 'execute', null, { name: 'bash', command: 'rm -f tmp.txt', summary: 'rm -f tmp.txt' }),
+  ];
+  const [t] = turnChanges(events, '/r');
+  assert.deepEqual(t.files.map(f => [f.rel, f.created]), [['a.js', false], ['n.txt', true]]);
+  assert.deepEqual(t.shell.map(e => e.id), ['d1', 'c1']);
+  assert.deepEqual(editOps(events[1], null).map(o => o.t), ['hunk', 'eq', 'del', 'add']);
+  // A whole-file diff folds to the changed lines and three lines of context.
+  const long = Array.from({ length: 20 }, (_, i) => `l${i + 1}`);
+  const mid = acp('e2', 'edit', { file: '/r/z.js', add: 1, del: 1, oldText: long.join('\n') + '\n', newText: long.map(l => l === 'l10' ? 'L10' : l).join('\n') + '\n' });
+  const ops = editOps(mid, null);
+  assert.deepEqual(ops.map(o => o.t), ['hunk', 'eq', 'eq', 'eq', 'del', 'add', 'eq', 'eq', 'eq']);
+  assert.equal(ops[0].text, '@@ -7 +7 @@');
+  assert.deepEqual([ops[4].an, ops[5].bn], [10, 10]);
+  assert.deepEqual(editOps(events[2], null).map(o => [o.t, o.b]), [['add', 'x'], ['add', 'y']]);
+});
