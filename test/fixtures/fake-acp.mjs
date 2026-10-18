@@ -48,6 +48,11 @@ const methods = {
     if (configId !== 'mode') throw Object.assign(new Error(`unknown config option: ${configId}`), { code: -32602 });
     return { configOptions: configOptions(value) };
   },
+  'session/resume': ({ sessionId, cwd }) => {
+    // The real agent keeps closed sessions on disk; this one takes any id back.
+    if (!sessions.has(sessionId)) sessions.set(sessionId, { cwd, active: false, cancel: null });
+    return { configOptions: configOptions() };
+  },
   'session/close': ({ sessionId }) => { sessions.delete(sessionId); return {}; },
   'session/prompt': (p) => prompt(p),
 };

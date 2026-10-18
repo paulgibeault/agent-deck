@@ -290,29 +290,26 @@
 <dialog id="new-session" class="dialog wide">
   <form id="ns-form">
     <h2 id="ns-t">New session</h2>
-    <p id="ns-sub" class="ns-sub">Runs <code>claude</code> under the deck, so you can send, queue, interrupt and answer permission prompts from here.</p>
+    <p id="ns-sub" class="ns-sub">Runs <span id="ns-agent">the agent</span> under the deck, so you can send, queue, interrupt and answer permission prompts from here.</p>
     <label class="ns-l" for="ns-cwd">Folder</label>
     <input id="ns-cwd" class="field" type="text" list="ns-cwds" spellcheck="false" autocomplete="off" required placeholder="/path/to/repo">
     <datalist id="ns-cwds"></datalist>
     <label class="ns-l" for="ns-prompt">First prompt</label>
     <div id="ns-prompt-box" class="compose-box">
       <div class="ta-wrap">
-        <textarea id="ns-prompt" class="ns-prompt" rows="4" placeholder="What should Claude do? (⌘↩ to start)"></textarea>
+        <textarea id="ns-prompt" class="ns-prompt" rows="4" placeholder="What should it do? (⌘↩ to start)"></textarea>
         <button id="ns-clip" type="button" class="ib clip" aria-label="Attach files" title="Attach images, PDFs or text files. You can also paste or drop them here."><svg width="13" height="13"><use href="#i-clip"/></svg></button>
         <input id="ns-file" type="file" multiple hidden>
         <div id="ns-files" class="att-tray" hidden></div>
       </div>
     </div>
     <div class="ns-row">
-      <div><label class="ns-l" for="ns-model">Model</label>
+      <div id="ns-harness-w"><label class="ns-l" for="ns-harness">Agent</label>
+        <select id="ns-harness" class="field"></select></div>
+      <div id="ns-model-w"><label class="ns-l" for="ns-model">Model</label>
         <select id="ns-model" class="field"></select></div>
       <div><label class="ns-l" for="ns-perm">Permissions</label>
-        <select id="ns-perm" class="field">
-          <option value="default">Ask me in the deck</option>
-          <option value="acceptEdits">Accept edits, ask for the rest</option>
-          <option value="auto">Auto (classifier decides)</option>
-          <option value="plan">Plan only, no changes</option>
-        </select></div>
+        <select id="ns-perm" class="field"></select></div>
       <div id="ns-name-w"><label class="ns-l" for="ns-name">Name <span class="muted">(optional)</span></label>
         <input id="ns-name" class="field" type="text" spellcheck="false" autocomplete="off"></div>
     </div>
