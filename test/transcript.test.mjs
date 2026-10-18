@@ -158,6 +158,20 @@ test('brief: pending tool → running; finished dead session → ended; live idl
   assert.equal(e.need.seq, 999);
 });
 
+test('Claude tools get an ACP kind, paths and command', () => {
+  const s = new SessionState('s');
+  const use = (id, name, input) => s.ingest({ type: 'assistant', uuid: `a${id}`, timestamp: '2026-10-03T10:00:00Z', message: { id: `m${id}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  use('t1', 'Read', { file_path: '/r/a.js' }); use('t2', 'Bash', { command: 'ls' }); use('t3', 'Grep', { pattern: 'x' });
+  use('t4', 'Edit', { file_path: '/r/b.js', old_string: 'a', new_string: 'b' }); use('t5', 'Agent', { description: 'd', prompt: 'p' });
+  const by = Object.fromEntries(s.events.filter(e => e.kind === 'tool').map(e => [e.tool.name, e.tool]));
+  assert.deepEqual([by.Read.kind, by.Read.paths], ['read', ['/r/a.js']]);
+  assert.deepEqual([by.Bash.kind, by.Bash.command], ['execute', 'ls']);
+  assert.equal(by.Grep.kind, 'search');
+  assert.deepEqual([by.Edit.kind, by.Edit.paths], ['edit', ['/r/b.js']]);
+  assert.equal(by.Agent.kind, 'other');
+  assert.equal(by.Agent.command, undefined);
+});
+
 test('toolSummary one-liners', () => {
   assert.equal(toolSummary('Read', { file_path: '/a/b.js', offset: 10, limit: 5 }), 'b.js :10+5');
   assert.equal(toolSummary('Write', { file_path: '/a/b.js', content: 'x\ny' }), 'b.js (2 lines)');

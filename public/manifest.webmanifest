@@ -1,7 +1,7 @@
 {
   "name": "agent-deck",
   "short_name": "agent-deck",
-  "description": "Local cockpit for Claude Code agents.",
+  "description": "Local cockpit for coding agents.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

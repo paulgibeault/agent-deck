@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitCommands, bashIntent, bashFacts, classify, mcpServer } from '../public/classify.js';
+import { splitCommands, bashIntent, bashFacts, classify, mcpServer, filterCat } from '../public/classify.js';
 
 test('splitCommands respects quotes, $(…) and heredocs', () => {
   assert.deepEqual(splitCommands('git status --short | head; git fetch -q origin && git log'), ['git status --short', 'head', 'git fetch -q origin', 'git log']);
@@ -87,4 +87,24 @@ test('classify gives every event a family, icon and body', () => {
   assert.equal(classify({ kind: 'system', error: true, text: 'overloaded' }).fam, 'err');
   assert.equal(classify({ kind: 'raw', text: '{}' }).fam, 'muted');
   assert.equal(mcpServer('plugin_engineering_github'), 'github');
+});
+
+test('classify: any harness\'s tools by kind; Claude names refine', () => {
+  const acp = (kind, extra = {}) => classify({ kind: 'tool', tool: { name: kind, kind, input: {}, summary: 's', pending: false, ...extra } });
+  assert.deepEqual([acp('read').fam, acp('read').icon], ['read', 'i-file']);
+  assert.deepEqual([acp('search').fam, acp('search').icon], ['read', 'i-search']);
+  assert.deepEqual([acp('edit').fam, acp('edit').label], ['edit', 'Edit file']);
+  assert.equal(acp('edit', { diff: { file: '/r/a', add: 1, del: 0, created: true } }).label, 'Write file');
+  assert.equal(acp('delete').icon, 'i-trash');
+  assert.equal(acp('fetch').fam, 'web');
+  assert.equal(acp('other').label, 'other');
+  // An ACP command gets the same intent logic as Claude's Bash.
+  const commit = acp('execute', { name: 'bash', command: 'git commit -m x', input: { command: 'git commit -m x', description: 'Commit' }, result: { text: '[main abc1234] x' } });
+  assert.equal(commit.intent, 'commit'); assert.equal(commit.icon, 'i-commit');
+  assert.equal(commit.text, 'Commit'); assert.equal(commit.sub, 's');
+  assert.equal(acp('execute').label, 'Command', 'an execute with no command falls back to the kind');
+  // Claude's tool names keep their specific glyphs over the kind.
+  assert.equal(classify({ kind: 'tool', tool: { name: 'Grep', kind: 'search', input: {}, summary: '/x/' } }).label, 'Search');
+  assert.equal(classify({ kind: 'tool', tool: { name: 'TodoWrite', kind: 'think', input: { todos: [] } } }).label, 'Plan');
+  assert.equal(filterCat({ kind: 'tool', tool: { name: 'edit', kind: 'edit', input: {} } }), 'edit');
 });

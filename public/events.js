@@ -1,7 +1,10 @@
 // public/events.js — normalized-event renderers: Events rows + Details pane,
 // plus the small markdown / diff / highlight helpers they share.
 import { modelLabel, priceOf, costOf } from './pricing.js';
-import { classify } from './classify.js';
+import { classify, toolCommand } from './classify.js';
+import { lineDiff, foldDiff } from './diff.js';
+
+export { lineDiff };
 
 // ------------------------------------------------------------ formatting
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -391,30 +394,6 @@ export function codeBlock(text, lang, { numbers = true, start = 1 } = {}) {
 }
 
 // ------------------------------------------------------------ diffs
-/** Line diff via LCS; falls back to replace-all for very large inputs. */
-export function lineDiff(aText, bText) {
-  const a = aText.split('\n'), b = bText.split('\n');
-  const ops = [];
-  if (a.length * b.length > 2_500_000) {
-    for (const l of a) ops.push({ t: 'del', a: l });
-    for (const l of b) ops.push({ t: 'add', b: l });
-    return ops;
-  }
-  const n = a.length, m = b.length;
-  const dp = new Uint32Array((n + 1) * (m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
-    dp[i * (m + 1) + j] = a[i] === b[j] ? dp[(i + 1) * (m + 1) + j + 1] + 1 : Math.max(dp[(i + 1) * (m + 1) + j], dp[i * (m + 1) + j + 1]);
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { ops.push({ t: 'eq', a: a[i], b: b[j] }); i++; j++; }
-    else if (dp[(i + 1) * (m + 1) + j] >= dp[i * (m + 1) + j + 1]) ops.push({ t: 'del', a: a[i++] });
-    else ops.push({ t: 'add', b: b[j++] });
-  }
-  while (i < n) ops.push({ t: 'del', a: a[i++] });
-  while (j < m) ops.push({ t: 'add', b: b[j++] });
-  return ops;
-}
-
 /** Parse a unified diff into ops (with hunk separators). */
 export function parseUnified(text) {
   const ops = []; let an = 0, bn = 0;
@@ -541,6 +520,33 @@ function stripReadNumbers(text) {
 }
 
 /**
+ * Ops for one edit: from Claude's full result (structuredPatch / created
+ * content), from the before/after texts an ACP edit carries, else from the input.
+ */
+export function editOps(ev, detail) {
+  const r = detail?.toolUseResult;
+  const d = ev.tool.diff;
+  if (Array.isArray(r?.structuredPatch) && r.structuredPatch.length) {
+    return parseUnified(r.structuredPatch.map(hk => `@@ -${hk.oldStart},${hk.oldLines} +${hk.newStart},${hk.newLines} @@\n${(hk.lines || []).join('\n')}`).join('\n'));
+  }
+  if (r?.type === 'create' && typeof r.content === 'string') {
+    const lines = r.content.replace(/\n$/, '').split('\n');
+    return [{ t: 'hunk', text: `@@ -0,0 +1,${lines.length} @@ new file` }, ...lines.map((b, i) => ({ t: 'add', b, bn: i + 1 }))];
+  }
+  if (typeof d?.newText === 'string') {
+    if (d.oldText == null) return d.newText.replace(/\n$/, '').split('\n').map((b, i) => ({ t: 'add', b, bn: i + 1 }));
+    // ACP sends whole files: show the changed lines with a little context.
+    return foldDiff(lineDiff(d.oldText.replace(/\n$/, ''), d.newText.replace(/\n$/, '')));
+  }
+  const inp = ev.tool.input || {};
+  if (ev.tool.name === 'Edit') return lineDiff(inp.old_string ?? '', inp.new_string ?? '');
+  if (ev.tool.name === 'MultiEdit') return (inp.edits || []).flatMap((e, i) => [{ t: 'hunk', text: `@@ -0 +0 @@ edit ${i + 1}` }, ...lineDiff(e.old_string ?? '', e.new_string ?? '')]);
+  if (ev.tool.name === 'Write') return (inp.content ?? '').split('\n').map((b, i) => ({ t: 'add', b, bn: i + 1 }));
+  if (ev.tool.name === 'NotebookEdit') return (inp.new_source ?? '').split('\n').map((b) => ({ t: 'add', b }));
+  return [];
+}
+
+/**
  * A details section: title, action buttons, an Ask button scoped to it.
  * `ask` is a scope spec ({ kind: 'event', ..., label }) or null.
  */
@@ -579,7 +585,7 @@ export function svgUse(id, n = 12, tip = null) {
 function titleOf(ev) {
   if (ev.kind === 'tool') {
     const t = ev.tool;
-    if (t.name === 'Bash' && t.input.description) return t.input.description;
+    if (toolCommand(t) != null && t.input.description) return t.input.description;
     if (t.name === 'Agent') return t.input.description || 'Subagent';
     return `${t.display} ${t.summary}`.trim();
   }
@@ -602,7 +608,8 @@ export function renderDetails(ev, detail, ctx) {
   const evSpec = (part, what) => ({ kind: 'event', sessionId: ev.sessionId, eventId: ev.id, label: part ? `${part} of ${at}` : at, what });
   const statusChip = ev.kind !== 'tool' ? null
     : t.pending ? h('span', { class: 'chip st-running' }, 'running')
-    : t.isError ? h('span', { class: 'chip err' }, t.name === 'Bash' && detail?.toolUseResult?.returnCodeInterpretation ? detail.toolUseResult.returnCodeInterpretation : 'error')
+    // Claude's Bash reports an exit status; other tools (and every ACP tool) only ok or failed.
+    : t.isError ? h('span', { class: 'chip err' }, t.name === 'Bash' && detail?.toolUseResult?.returnCodeInterpretation ? detail.toolUseResult.returnCodeInterpretation : 'failed')
     : h('span', { class: 'chip ok' }, t.name === 'Bash' ? 'exit 0' : 'ok');
   const rawToggle = ib('i-code', 'Raw record', () => root.classList.toggle('show-raw'));
   const tokens = ev.usage?.output_tokens ? `${fmtTokens(ev.usage.output_tokens)} tokens` : null;
@@ -625,8 +632,12 @@ export function renderDetails(ev, detail, ctx) {
     body.append(section('Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
     if (ev.attachments?.length) body.append(section('Attachments', {}, renderPromptAttachments(ev)));
   } else if (ev.kind === 'tool') {
-    const path = t.input.file_path || t.input.notebook_path || null;
-    switch (t.name) {
+    const path = t.paths?.[0] || t.diff?.file || t.input.file_path || t.input.notebook_path || null;
+    const cmd = toolCommand(t);
+    // By kind, so any harness's tools render; Claude's tools with richer inputs refine it.
+    const view = ['Edit', 'MultiEdit', 'Write', 'Agent'].includes(t.name) ? t.name
+      : cmd != null ? 'execute' : t.kind === 'read' && path ? 'read' : t.kind === 'edit' && (t.diff?.newText != null || t.diff?.textOmitted) ? 'edit' : t.name;
+    switch (view) {
       case 'Edit': {
         const ops = lineDiff(t.input.old_string ?? '', t.input.new_string ?? '');
         const start = detail?.toolUseResult?.structuredPatch?.[0]?.oldStart ?? t.meta?.structuredPatch?.[0]?.oldStart ?? 1;
@@ -643,20 +654,29 @@ export function renderDetails(ev, detail, ctx) {
         body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), copyBtn(t.input.content ?? '')], ask: evSpec('Written file', 'this file') }, codeBlock(t.input.content ?? '', langFor(path))));
         break;
       }
-      case 'Read': {
+      case 'edit': {
+        // A harness that reports the edit as before/after texts (ACP).
+        const d = t.diff;
+        const content = d.textOmitted ? h('div', { class: 'note' }, `Too large to show here: +${d.add} −${d.del} lines.`)
+          : d.oldText == null ? codeBlock(d.newText ?? '', langFor(path)) : renderSideBySide(editOps(ev, null), { lang: langFor(path) });
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), d.newText != null ? copyBtn(d.newText, 'Copy the new text') : null], ask: evSpec(d.oldText == null ? 'Written file' : 'Edit', 'this change') }, content));
+        if (t.isError && resultText) body.append(section('Result (error)', {}, h('pre', { class: 'plain out err' }, resultText)));
+        break;
+      }
+      case 'read': {
         const { text, start } = stripReadNumbers(resultText);
         body.append(section(relPath(path, ctx.cwd), { actions: [loading, openBtn(path, start, ctx.api), copyBtn(text)], ask: evSpec('Read', 'this file') },
           t.result?.images?.length ? renderImages(ev, ctx) : codeBlock(text, langFor(path), { start })));
         break;
       }
-      case 'Bash': {
-        body.append(section('Command', { actions: [copyBtn(t.input.command ?? ''), ib('i-term', 'Run in Shell', () => ctx.runInShell?.(t.input.command ?? ''), { size: 13 })], ask: evSpec('Command', 'this command') },
-          codeBlock(t.input.command ?? '', 'bash', { numbers: false })));
+      case 'execute': {
+        body.append(section('Command', { actions: [copyBtn(cmd), ib('i-term', 'Run in Shell', () => ctx.runInShell?.(cmd), { size: 13 })], ask: evSpec('Command', 'this command') },
+          codeBlock(cmd, 'bash', { numbers: false })));
         const r = detail?.toolUseResult;
         const stdout = r?.stdout ?? resultText; const stderr = r?.stderr ?? '';
         const lines = stdout ? stdout.split('\n').length : 0;
-        body.append(section(t.isError ? 'Output (error)' : 'Output', { note: t.pending ? 'running…' : `stdout · ${lines} line${lines === 1 ? '' : 's'}`, actions: [loading, copyBtn(stdout)], ask: evSpec('Output', 'this output') },
-          h('pre', { class: 'plain out' + (t.isError ? ' err' : '') }, stdout || '(no output)')));
+        body.append(section(t.isError ? 'Output (error)' : 'Output', { note: t.pending ? 'running…' : `${r ? 'stdout · ' : ''}${lines} line${lines === 1 ? '' : 's'}`, actions: [loading, copyBtn(stdout)], ask: evSpec('Output', 'this output') },
+          h('pre', { class: 'plain out' + (t.isError ? ' err' : '') }, stdout || (t.pending ? '' : '(no output)'))));
         if (stderr) body.append(section('stderr', { ask: evSpec('stderr', 'stderr') }, h('pre', { class: 'plain out err' }, stderr)));
         if (r?.interrupted) body.append(h('div', { class: 'note err' }, 'interrupted'));
         break;
@@ -698,11 +718,14 @@ export function renderDetails(ev, detail, ctx) {
   return root;
 }
 
-const attLabel = (a) => a.kind === 'image' ? `image (${a.mediaType || '?'})` : a.name;
+const attLabel = (a) => a.kind === 'image' ? (a.name || `image (${a.mediaType || '?'})`) : a.name;
+// An attachment the deck did not keep (an ACP session: no transcript) is described, not shown; `bytes` counts base64.
+const attSize = (b64) => { const n = Math.round(b64 * 3 / 4); return n < 1024 ? `${n} B` : n < 1 << 20 ? `${Math.round(n / 1024)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`; };
 function renderPromptAttachments(ev) {
   const wrap = h('div', { class: 'prompt-att' });
   for (const a of ev.attachments) {
-    if (a.kind === 'image') {
+    if (a.kept === false) wrap.append(h('span', { class: 'chip', title: `${a.mediaType || a.kind} · sent to the agent; the deck keeps no copy` }, svgUse(a.kind === 'image' ? 'i-image' : 'i-clip', 10), ` ${a.name || a.kind} · ${attSize(a.bytes || 0)}`));
+    else if (a.kind === 'image') {
       const src = `/api/sessions/${encodeURIComponent(ev.sessionId)}/events/${encodeURIComponent(ev.id)}/image/${a.index}`;
       wrap.append(h('a', { href: src, target: '_blank' }, h('img', { src, alt: a.mediaType || 'image', title: `${a.mediaType} · ${fmtTokens(a.bytes)} b64 chars` })));
     } else wrap.append(h('span', { class: 'chip', title: a.kind === 'pdf' ? 'PDF document' : 'inlined as text' }, svgUse('i-clip', 10), ` ${a.name}`));

@@ -5,7 +5,9 @@
 // Prompt words steer it: "tool" runs a read tool, "permission" asks before an
 // edit (allowed: it completes; rejected: the turn ends cancelled, as in
 // opencode), "fs" asks the client to read a file (the deck has no fs, so it
-// expects -32601), "slow" streams until session/cancel, "crash" exits.
+// expects -32601), "slow" streams until session/cancel ("deaf": and ignores
+// it), "edit" changes a file (a whole-file diff), "run" runs a command,
+// "crash" exits.
 //
 // FAKE_ACP_LOG=<file> appends every method it receives, so a test can check
 // what arrived and in what order. FAKE_ACP_STUBBORN=1 ignores the end of stdin.
@@ -70,6 +72,23 @@ async function prompt({ sessionId, prompt: blocks }) {
     let stopReason = 'end_turn';
     let reply = `Fake reply to: ${text}`;
 
+    if (/deaf/.test(text)) {
+      for (let i = 1; i <= 40 && sessions.has(sessionId); i++) { update(sessionId, { sessionUpdate: 'agent_message_chunk', messageId: msgId, content: { type: 'text', text: `${i}\n` } }); await sleep(50); }
+      reply = '';
+    }
+    if (/edit/.test(text)) {
+      const toolCallId = 'call_edit_1', path = `${s.cwd}/app.js`;
+      const oldText = 'one\ntwo\nthree\n', newText = 'one\nTWO\nthree\n';
+      update(sessionId, { sessionUpdate: 'tool_call', toolCallId, name: 'edit', title: 'edit', kind: 'edit', status: 'pending', locations: [], rawInput: {} });
+      update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', kind: 'edit', locations: [{ path }], rawInput: { filePath: path, oldString: 'two', newString: 'TWO' },
+        content: [{ type: 'diff', path, oldText, newText }] });
+    }
+    if (/\brun\b/.test(text)) {
+      const toolCallId = 'call_bash_1';
+      update(sessionId, { sessionUpdate: 'tool_call', toolCallId, name: 'bash', title: 'bash', kind: 'execute', status: 'pending', locations: [], rawInput: {} });
+      update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', kind: 'execute', rawInput: { command: 'git commit -m "fake"', description: 'Commit the change' },
+        content: [{ type: 'content', content: { type: 'text', text: '[main abc1234] fake\n 1 file changed' } }] });
+    }
     if (/slow/.test(text)) {
       const cancelled = new Promise(r => { s.cancel = r; });
       for (let i = 1; i <= 300; i++) {

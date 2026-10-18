@@ -1,7 +1,7 @@
 {
   "name": "agent-deck",
   "version": "0.1.0",
-  "description": "Local cockpit for Claude Code agents: sessions, subagents, event streams, git changes, pilot shell.",
+  "description": "Local cockpit for coding agents (Claude Code and ACP agents such as opencode): sessions, subagents, event streams, git changes, pilot shell.",
   "type": "module",
   "private": true,
   "engines": { "node": ">=20" },
