@@ -81,16 +81,21 @@ send, persisted modes, `publicState`, `registryEntries`. Keep all of that. Move
 only the protocol into a driver with a small interface:
 
 ```js
-// driver: one per harness
-start({ id, cwd, model, mode, name, resume })  → { id, model, mode }   // resolves when ready
-prompt(id, content)                            // resolves on turn end: { stopReason, usage, cost }
-interrupt(id)
-answer(id, requestId, decision)                // 'allow' | 'always' | 'deny'
-setMode(id, mode) / setModel(id, model)        // optional
-stop(id)
-events: 'permission' {id, request}, 'permission-cancel', 'ratelimit', 'exit'
-caps: { modes, models, resume, events: 'transcript' | 'stream' }
+// driver: one per harness (built in phase 3 as lib/harness/claude.mjs)
+driver.caps                                    // { modes, resume, events: 'transcript' | 'stream' }
+driver.start({ id, cwd, model, permissionMode, name, resume }) → session   // one handle per session
+session.pid
+session.send(text, attachments) → bool         // a prompt; false if it can't take input
+session.interrupt()                            // ask the agent to end the turn
+session.answer(permission, decision, message)  // 'allow' | 'always' | 'deny'
+session.signal(sig) / session.stop()           // stop: end input, then escalate
+events: 'init' {sessionId, model, permissionMode}, 'result' {…lastResult},
+        'permission' {requestId, …}, 'permission-cancel' requestId, 'ratelimit', 'exit' {code, signal, stderr}
 ```
+
+A handle per session (rather than id-keyed driver methods) keeps a resume
+that comes back with a new id simple, and fits ACP too: the ACP driver's
+handles share one `AcpConnection`.
 
 The queue matters more for ACP than for Claude: opencode rejects a second
 prompt on a busy session (`Session already has an active ACP prompt`), and
