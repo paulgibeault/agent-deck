@@ -1277,3 +1277,9 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .mg-preview summary .linkish { margin-left: auto; }
 .mg-preview textarea { width: 100%; height: 280px; min-height: 120px; margin-top: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.45; resize: vertical; white-space: pre-wrap; }
 #migrate { width: min(720px, calc(100vw - 40px)); }
+
+/* API request details: the messages a request added, one block each. */
+.req-msg + .req-msg { margin-top: 10px; }
+.req-role { font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
+.req-role::first-letter { text-transform: uppercase; }
+.req-tools { font-size: 11px; color: var(--fg2); overflow-wrap: anywhere; padding-top: 4px; }
