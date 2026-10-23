@@ -332,3 +332,36 @@ test('parseTaskNotification reads every field and the exit code', () => {
   assert.deepEqual(n, { taskId: 'x', toolUseId: 't', outputFile: '/o', status: 'completed', summary: 'Background command "a" completed (exit code 0)', event: null, exitCode: 0 });
   assert.equal(parseTaskNotification('hello'), null);
 });
+
+test('request log: one request event per model call, its blob and shape records folded in', () => {
+  const s = new SessionState('sess-r');
+  const tool = (name) => ({ name, description: '', input_schema: {} });
+  const recs = [
+    { type: 'api-request-shape', shapeHash: 'sh1', shape: { system: [{ type: 'text', text: 'You are…' }], tools: [tool('Bash'), tool('Read')] } },
+    { type: 'api-request-blob', hash: 'b1', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+    { type: 'api-request', id: 'r1', timestamp: '2026-10-23T04:30:00Z', version: '2.1.307', querySource: 'sdk', shapeHash: 'sh1', keep: 0, tail: ['b1'],
+      params: { model: 'claude-opus-5-5', max_tokens: 128000, thinking: { type: 'adaptive' }, output_config: { effort: 'medium' }, betas: ['a', 'b'] },
+      cacheControl: [{ path: ['system', 0], value: { type: 'ephemeral', ttl: '1h', scope: 'global' } }] },
+    { type: 'api-request-shape', shapeHash: 'sh2', shape: { system: [], tools: [tool('Bash'), tool('Grep')] } },
+    { type: 'api-request-blob', hash: 'b2', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: {} }] } },
+    { type: 'api-request-blob', hash: 'b3x', message: { role: 'user', content: 'plain string content' } },
+    { type: 'api-request-blob', hash: 'b4', message: { role: 'system', content: [{ type: 'tool_addition', tool: { definition: { name: 'mcp__x__y' } } }] } },
+    { type: 'api-request', id: 'r2', timestamp: '2026-10-23T04:30:05Z', base: 'r1', shapeHash: 'sh2', keep: 1, tail: ['b2', 'b3', 'b3x', 'b4'], params: { model: 'claude-opus-5-5' } },
+  ];
+  for (const r of recs) s.ingest(r);
+  const reqs = s.events.filter(e => e.kind === 'request');
+  assert.equal(s.events.length, 2, 'blob and shape records make no events of their own');
+  assert.deepEqual(s.meta.unknownTypes, {});
+  const [a, b] = reqs.map(e => e.request);
+  assert.equal(reqs[0].id, 'r1');
+  assert.equal(a.model, 'claude-opus-5-5'); assert.equal(a.effort, 'medium'); assert.equal(a.thinking, 'adaptive'); assert.equal(a.maxTokens, 128000);
+  assert.equal(a.messages, 1); assert.deepEqual(a.added, ['user']); assert.equal(a.first, true);
+  assert.equal(a.tools, 2); assert.equal(a.system, 1); assert.equal(a.shapeChanged, undefined);
+  assert.deepEqual(a.cache, [{ at: 'system.0', ttl: '1h', scope: 'global' }]);
+  assert.equal(b.messages, 5); assert.equal(b.first, false);
+  assert.deepEqual(b.added, ['assistant', '?', 'user', 'system'], 'a message already in the transcript has no blob');
+  assert.deepEqual(b.toolsAdded, ['Grep']); assert.deepEqual(b.toolsRemoved, ['Read']);
+  assert.deepEqual(b.inlineTools, ['mcp__x__y']);
+  const d = s.detail('r2');
+  assert.deepEqual(d.raw.map(x => x.type), ['api-request', 'api-request-shape', 'api-request-blob', 'api-request-blob', 'api-request-blob']);
+});
