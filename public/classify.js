@@ -8,6 +8,7 @@
 //
 // Families: said (talk) · you · read (inspect) · edit (change) · bash (run) ·
 //           stop · git · agent (delegate) · web (external) · muted (system) · err
+import { modelLabel } from './pricing.js';
 
 // ------------------------------------------------------------ bash commands
 /**
@@ -353,6 +354,12 @@ export function classify(ev) {
       const s = SYSTEM[ev.subtype] || { icon: 'i-info', label: ev.subtype || 'System' };
       return { fam: s.fam || 'muted', icon: s.icon, label: s.label, text: ev.text, sans: true };
     }
+    case 'request': {
+      const r = ev.request || {};
+      const n = r.messages ?? 0;
+      return { fam: 'muted', icon: 'i-api', label: 'API request', sans: true,
+        text: `${modelLabel(r.model) || 'Model'} called with ${n} message${n === 1 ? '' : 's'}${r.added?.length ? `, ${r.added.length} new` : ''}` };
+    }
     default: return { fam: 'muted', icon: 'i-code', label: ev.subtype || 'Raw record', text: ev.text };
   }
 }
@@ -372,6 +379,7 @@ export const FILTERS = [
   { k: 'read',     icon: 'i-search', fam: 'read',  label: 'Reading & searching' },
   { k: 'agent',    icon: 'i-agent',  fam: 'agent', label: 'Subagents, skills & plans' },
   { k: 'web',      icon: 'i-globe',  fam: 'web',   label: 'Web & MCP' },
+  { k: 'api',      icon: 'i-api',    fam: 'muted', label: 'API requests' },
   { k: 'other',    icon: 'i-info',   fam: 'muted', label: 'Notes & system' },
   { k: 'errors',   icon: 'i-alert',  fam: 'err',   label: 'Errors' },
 ];
@@ -381,6 +389,7 @@ export function filterCat(ev) {
   switch (ev.kind) {
     case 'text': case 'prompt': return 'messages';
     case 'thinking': return 'thinking';
+    case 'request': return 'api';
     case 'tool': return GROUP[classify(ev).fam] || 'other';
     case 'system': return ev.subtype === 'task' ? 'agent' : 'other';
     default: return 'other';
