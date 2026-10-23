@@ -143,6 +143,15 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     case 'queue':
       if (ev.queueDepth > 1) chips.append(h('span', { class: 'chip', title: 'Messages waiting' }, `${ev.queueDepth} waiting`));
       break;
+    case 'request': {
+      // Only news earns a chip: tools coming or going, a request built from scratch.
+      const r = ev.request || {};
+      const added = [...(r.toolsAdded || []), ...(r.inlineTools || [])];
+      if (added.length) chips.append(h('span', { class: 'chip f-web', title: `Tools added: ${added.join(', ')}` }, `+${added.length} tool${added.length === 1 ? '' : 's'}`));
+      if (r.toolsRemoved?.length) chips.append(h('span', { class: 'chip', title: `Tools removed: ${r.toolsRemoved.join(', ')}` }, `−${r.toolsRemoved.length} tool${r.toolsRemoved.length === 1 ? '' : 's'}`));
+      if (r.first) chips.append(h('span', { class: 'chip', title: 'Built from scratch, not on the previous request: the prompt cache starts over' }, 'fresh'));
+      break;
+    }
     case 'system':
       if (ev.subtype === 'task' && ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
       break;
@@ -592,6 +601,7 @@ function titleOf(ev) {
   if (ev.kind === 'text') return 'Assistant message';
   if (ev.kind === 'prompt') return oneLine(ev.text.replace(/<[^>]+>/g, ' '), 140);
   if (ev.kind === 'thinking') return 'Thinking';
+  if (ev.kind === 'request') return `${modelLabel(ev.request?.model) || 'Model'} request`;
   return ev.subtype || ev.kind;
 }
 
@@ -706,6 +716,8 @@ export function renderDetails(ev, detail, ctx) {
     if (bgt) body.prepend(section('Background', {}, h('div', { class: 'card-row' }, h('span', { class: `chip ${bgt.state === 'running' ? 'st-running' : bgt.state === 'failed' ? 'err' : 'st-ended'}` }, bgt.state),
       h('span', { class: 'muted' }, bgt.state === 'running' ? 'still running in the background' : bgt.task.summary || ''), h('button', { type: 'button', class: 'btn sm', onclick: bgt.open }, 'Open task'))));
     if (t.meta && Object.keys(t.meta).length) body.append(section('Result metadata', {}, h('details', {}, h('summary', {}, 'toolUseResult (slim)'), h('pre', { class: 'plain' }, JSON.stringify(t.meta, null, 2)))));
+  } else if (ev.kind === 'request') {
+    renderRequest(body, ev, detail, evSpec);
   } else {
     body.append(section(ev.subtype || ev.kind, { actions: [copyBtn(ev.text ?? '')], ask: evSpec(null, 'this') }, h('pre', { class: 'plain' + (ev.error ? ' err' : '') }, ev.text ?? '')));
   }
@@ -716,6 +728,61 @@ export function renderDetails(ev, detail, ctx) {
   root.append(rawPane);
   highlightIn(root);
   return root;
+}
+
+// ------------------------------------------------------------ API requests
+// One model call from Claude Code's request log (lib/transcript.mjs requestOf).
+// `detail.raw` is [request, ...blob and shape records written just before it].
+const capText = (s, n = 8000) => s.length > n ? s.slice(0, n) + `\n…[${s.length - n} more chars]` : s;
+function requestBlock(b) {
+  if (typeof b === 'string') return b;
+  switch (b?.type) {
+    case 'text': return b.text ?? '';
+    case 'thinking': return b.thinking ? `(thinking) ${b.thinking}` : '(thinking, not shown)';
+    case 'redacted_thinking': return '(thinking, redacted)';
+    case 'tool_use': return `→ ${b.name} ${JSON.stringify(b.input ?? {})}`;
+    case 'tool_result': return `← ${typeof b.content === 'string' ? b.content : (b.content || []).map(c => c?.type === 'text' ? c.text : `[${c?.type}]`).join('\n')}`;
+    case 'tool_addition': return `+ tool ${b.tool?.definition?.name ?? ''}`;
+    default: return `[${b?.type ?? 'block'}]`;
+  }
+}
+function renderRequest(body, ev, detail, evSpec) {
+  const r = ev.request || {};
+  const rows = [];
+  const row = (k, v, cls) => { if (v) rows.push(h('tr', {}, h('th', {}, k), h('td', { class: cls || null }, v))); };
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  row('Model', r.model, 'mono');
+  row('Effort', r.effort);
+  row('Thinking', r.thinking);
+  row('Max output', r.maxTokens ? `${fmtTokens(r.maxTokens)} tokens` : null);
+  row('Messages', `${r.messages}${r.added?.length ? ` · ${r.added.length} new` : ''} · ${r.first ? 'built from scratch' : 'builds on the previous request'}`);
+  row('Context', r.tools != null ? `${plural(r.system, 'system block')} · ${plural(r.tools, 'tool')}` : null);
+  if (r.toolsAdded?.length || r.inlineTools?.length) row('Tools added', [...(r.toolsAdded || []), ...(r.inlineTools || [])].join(', '), 'mono');
+  if (r.toolsRemoved?.length) row('Tools removed', r.toolsRemoved.join(', '), 'mono');
+  row('Cache', (r.cache || []).map(c => `${c.at} ${c.ttl}${c.scope ? ' ' + c.scope : ''}`).join(' · '), 'mono');
+  row('Source', r.source);
+  if (r.betas?.length) row('Betas', h('details', {}, h('summary', {}, plural(r.betas.length, 'beta')), h('div', { class: 'mono' }, r.betas.join(', '))));
+  row('Client', r.cli ? `Claude Code ${r.cli}` : null);
+  body.append(section('Request', { ask: evSpec('Request', 'this API request') }, h('table', { class: 'hc-tbl' }, h('tbody', {}, ...rows))));
+
+  const raw = detail?.raw;
+  if (!raw) { if (detail === null) body.append(h('div', { class: 'note' }, 'loading the messages…')); return; }
+  const blobs = new Map(raw.filter(x => x?.type === 'api-request-blob').map(x => [x.hash, x.message]));
+  const msgs = (raw[0]?.tail || []).map(hash => {
+    const m = blobs.get(hash);
+    if (!m) return h('div', { class: 'req-msg' }, h('div', { class: 'req-role' }, 'Already in the transcript'), h('div', { class: 'note' }, 'Not repeated in the request log (usually tool results); see the earlier events.'));
+    const text = capText((Array.isArray(m.content) ? m.content : [m.content]).map(requestBlock).join('\n\n'));
+    return h('div', { class: 'req-msg' }, h('div', { class: 'req-role' }, m.role || 'message'), h('pre', { class: 'plain' }, text));
+  });
+  if (msgs.length) body.append(section('New messages', { note: `${msgs.length}`, ask: evSpec('New messages', 'what this request added') }, ...msgs));
+  const shape = raw.find(x => x?.type === 'api-request-shape')?.shape;
+  if (shape) {
+    const sys = (shape.system || []).map(b => b?.text ?? '').join('\n\n');
+    const tools = (shape.tools || []).map(t => t?.name).filter(Boolean);
+    body.append(section('System prompt & tools', { note: r.shapeChanged ? 'changed with this request' : 'first sent with this request', actions: [copyBtn(sys, 'Copy the system prompt')] },
+      h('details', {}, h('summary', {}, `System prompt · ${fmtTokens(sys.length)} chars`), h('pre', { class: 'plain' }, capText(sys, 40000))),
+      h('details', {}, h('summary', {}, plural(tools.length, 'tool')), h('div', { class: 'mono req-tools' }, tools.join(', ')))));
+  }
 }
 
 const attLabel = (a) => a.kind === 'image' ? (a.name || `image (${a.mediaType || '?'})`) : a.name;

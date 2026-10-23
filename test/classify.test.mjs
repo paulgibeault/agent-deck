@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitCommands, bashIntent, bashFacts, classify, mcpServer, filterCat } from '../public/classify.js';
+import { splitCommands, bashIntent, bashFacts, classify, mcpServer, filterCat, FILTERS } from '../public/classify.js';
 
 test('splitCommands respects quotes, $(…) and heredocs', () => {
   assert.deepEqual(splitCommands('git status --short | head; git fetch -q origin && git log'), ['git status --short', 'head', 'git fetch -q origin', 'git log']);
@@ -107,4 +107,13 @@ test('classify: any harness\'s tools by kind; Claude names refine', () => {
   assert.equal(classify({ kind: 'tool', tool: { name: 'Grep', kind: 'search', input: {}, summary: '/x/' } }).label, 'Search');
   assert.equal(classify({ kind: 'tool', tool: { name: 'TodoWrite', kind: 'think', input: { todos: [] } } }).label, 'Plan');
   assert.equal(filterCat({ kind: 'tool', tool: { name: 'edit', kind: 'edit', input: {} } }), 'edit');
+});
+
+test('API requests: their own glyph and filter category', () => {
+  const ev = { kind: 'request', request: { model: 'claude-opus-5-5', messages: 42, added: ['assistant', 'user'] } };
+  const c = classify(ev);
+  assert.equal(c.icon, 'i-api'); assert.equal(c.label, 'API request');
+  assert.equal(c.text, 'Opus 5.5 called with 42 messages, 2 new');
+  assert.equal(filterCat(ev), 'api');
+  assert.ok(FILTERS.some(f => f.k === 'api'));
 });

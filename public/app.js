@@ -2663,7 +2663,7 @@ function showDetailsEmpty() {
 async function showEventDetails(ev, refreshOnly = false) {
   const key = `${ev.sessionId}:${ev.id}`;
   const body = $('details-body');
-  const needsFull = ev.kind === 'tool' && (ev.tool.result?.truncated || ev.tool.result?.images?.length || !ev.tool.pending);
+  const needsFull = ev.kind === 'request' || ev.kind === 'tool' && (ev.tool.result?.truncated || ev.tool.result?.images?.length || !ev.tool.pending);
   if (!refreshOnly || state.detailsKey !== key) { state.detailsKey = key; syncDetailsPane(); body.replaceChildren(renderDetails(ev, needsFull ? null : undefined, detailCtx(ev))); body.scrollTop = 0; applyRing(); narration.mirror(key, body.querySelector('.md'), body); }
   if (!needsFull && !refreshOnly) return;
   try {
