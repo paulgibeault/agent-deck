@@ -1749,8 +1749,27 @@ function briefFoot(id, s, pb, i, all) {
     } else if (phase === 'turn') foot.append(h('span', { class: 'bf-n', title: rule }, 'next: on new activity'));
     else foot.append(h('span', { class: 'bf-n' }, 'final'));
   }
+  // The household model's tunnel to the studio is down: offer to heal it.
+  if (state.narrator.enabled && TUNNEL_ERR.test(pb?.error || state.narrator.error?.message || '')) {
+    foot.append(ib('i-plug', 'Heal the SSH tunnel to the studio', healTunnel, { size: 12, cls: 'err', disabled: healing || null }));
+  }
   if (state.narrator.enabled) foot.append(ib('i-refresh', 'Refresh the brief now', refreshBrief, { size: 12, disabled: pb?.pending || null }));
   return foot;
+}
+const TUNNEL_ERR = /open-act tunnel/;
+let healing = false;
+/** Run scripts/heal-tunnel.sh on the server; on success, refresh the brief it was blocking. */
+async function healTunnel() {
+  if (healing) return;
+  healing = true; renderHeader();
+  toast('Healing the tunnel to the studio…');
+  try {
+    const r = await api.post('/api/tunnel/heal');
+    const last = r.output.split('\n').filter(Boolean).at(-1) || `exit ${r.code}`;
+    toast(r.ok ? 'Tunnel healed' : `Tunnel not healed: ${last}`);
+    if (r.ok && state.selected) refreshBrief();
+  } catch (e) { toast(`Heal failed: ${e.message}`); }
+  finally { healing = false; renderHeader(); }
 }
 async function refreshBrief() {
   try { await api.post(`/api/sessions/${sid(state.selected)}/brief/refresh`); }
