@@ -309,6 +309,15 @@ async function route(req, res, url) {
     setTimeout(restart, 100);
     return;
   }
+  // Heal the open-act tunnel to the studio (scripts/heal-tunnel.sh); exit code says how it went.
+  if (p === '/api/tunnel/heal' && req.method === 'POST') {
+    const child = spawn('/bin/sh', [path.join(__dirname, 'scripts', 'heal-tunnel.sh')], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { out += d; });
+    const code = await new Promise(r => { child.on('error', () => r(-1)); child.on('close', r); });
+    return send(res, 200, { ok: code === 0, code, output: out.trim() });
+  }
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
   if (p === '/api/attention' && req.method === 'GET') return send(res, 200, attention.view());
