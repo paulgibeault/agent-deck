@@ -309,7 +309,7 @@ async function route(req, res, url) {
     setTimeout(restart, 100);
     return;
   }
-  // Heal the open-act tunnel to the studio (scripts/heal-tunnel.sh); exit code says how it went.
+  // Heal the open-act tunnel to the model host (scripts/heal-tunnel.sh); exit code says how it went.
   if (p === '/api/tunnel/heal' && req.method === 'POST') {
     const child = spawn('/bin/sh', [path.join(__dirname, 'scripts', 'heal-tunnel.sh')], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';

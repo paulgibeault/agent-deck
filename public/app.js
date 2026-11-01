@@ -1759,9 +1759,9 @@ function briefFoot(id, s, pb, i, all) {
     } else if (phase === 'turn') foot.append(h('span', { class: 'bf-n', title: rule }, 'next: on new activity'));
     else foot.append(h('span', { class: 'bf-n' }, 'final'));
   }
-  // The household model's tunnel to the studio is down: offer to heal it.
+  // The household model's tunnel to its host is down: offer to heal it.
   if (state.narrator.enabled && TUNNEL_ERR.test(pb?.error || state.narrator.error?.message || '')) {
-    foot.append(ib('i-plug', 'Heal the SSH tunnel to the studio', healTunnel, { size: 12, cls: 'err', disabled: healing || null }));
+    foot.append(ib('i-plug', 'Heal the SSH tunnel to the model host', healTunnel, { size: 12, cls: 'err', disabled: healing || null }));
   }
   if (state.narrator.enabled) foot.append(ib('i-refresh', 'Refresh the brief now', refreshBrief, { size: 12, disabled: pb?.pending || null }));
   return foot;
@@ -1772,7 +1772,7 @@ let healing = false;
 async function healTunnel() {
   if (healing) return;
   healing = true; renderHeader();
-  toast('Healing the tunnel to the studio…');
+  toast('Healing the tunnel to the model host…');
   try {
     const r = await api.post('/api/tunnel/heal');
     const last = r.output.split('\n').filter(Boolean).at(-1) || `exit ${r.code}`;

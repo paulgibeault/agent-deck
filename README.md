@@ -72,8 +72,7 @@ Flags and environment:
 
 The Brief and Ask run on the household model by default, through the
 open-act tunnel at `DECK_LLM_URL`. If the tunnel is down, calls fail and
-retry; check it with `~/work/open-act/deploy/clients/macos/bootstrap.sh
---status`. With `DECK_LLM=claude` they call `claude -p` instead, with no
+retry; check it with the open-act client bootstrap's `--status`. With `DECK_LLM=claude` they call `claude -p` instead, with no
 tools, no MCP servers and no session persistence, using whatever login the
 CLI already has. If that login has expired the deck says so in the Brief;
 run `claude` in a terminal and `/login`. To try both flows without a model,

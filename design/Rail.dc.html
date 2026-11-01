@@ -127,7 +127,7 @@ class Component extends DCLogic {
     const sess = (label, meta, time, kind, selected) => ({ isSess: true, label, meta, time, dot: dot(kind), style: rowStyle(selected) });
     const sub = (label, time, kind) => ({ isSub: true, label, time, dot: dot(kind) });
     const active = [
-      { isRepo: true, label: '~/work/hive-mind' },
+      { isRepo: true, label: '~/code/sample-app' },
       sess('Issues documentation setup', 'main · PR #27 · 10 subagents', '6s', 'working', sel),
       { isAgents: true },
     ];
@@ -141,17 +141,17 @@ class Component extends DCLogic {
       );
     }
     active.push(
-      { isRepo: true, label: '~/work/agent-deck' },
+      { isRepo: true, label: '~/code/agent-deck' },
       sess('Claude design improvements', 'main · desktop', '2s', 'working', false),
       sess('Phase 1 kickoff', 'main · your turn', '6m', 'turn', false)
     );
     return {
       active,
       recent: [
-        { label: 'Hive-mind roadmap issues', meta: 'hive-mind · main', time: '52m' },
-        { label: 'Agent status visibility options', meta: 'hive-mind · main', time: '52m' },
-        { label: 'Session state migration to Mac Studio', meta: 'geebs · master', time: '30h' },
-        { label: 'Minesweeper variant for fleet', meta: 'paulgibeault.github.io · PR #178', time: '30h' },
+        { label: 'Sample-app roadmap issues', meta: 'sample-app · main', time: '52m' },
+        { label: 'Agent status visibility options', meta: 'sample-app · main', time: '52m' },
+        { label: 'Session state migration to the new server', meta: 'dotfiles · master', time: '30h' },
+        { label: 'Minesweeper variant for fleet', meta: 'example-site · PR #178', time: '30h' },
       ],
     };
   }
