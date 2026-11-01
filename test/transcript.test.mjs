@@ -222,6 +222,38 @@ test('SessionIndex: buckets, subagent tree, paging', () => {
   assert.equal(idx.filesOf('sess-1').length, 1);
 });
 
+test('SessionIndex: subagent status from the meta file and the live deck report; nesting by parentAgentId', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-home-'));
+  const proj = path.join(dir, 'projects', '-tmp-proj');
+  const sub = path.join(proj, 'sess-1', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
+  fs.copyFileSync(FIXTURE, path.join(proj, 'sess-1.jsonl'));
+  const agent = (id, meta) => {
+    fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'Explore', description: id, ...meta }));
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), '');
+  };
+  agent('a1', { requestShape: 'background', stoppedByUser: true });
+  agent('a2', { finished: true });
+  agent('a3', { parentAgentId: 'a2', spawnDepth: 2 });
+  const idx = new SessionIndex({ claudeDir: dir, recentDays: 3650 });
+  idx.scanProjects(); idx.refreshRegistry();
+  const by = Object.fromEntries(idx.summary('sess-1').subagents.map(a => [a.id, a]));
+  assert.equal(by.a1.status, 'stopped');
+  assert.equal(by.a2.status, 'done');
+  assert.equal(by.a3.parentAgentId, 'a2');
+  assert.equal(by.a3.status, 'ended');
+  // A live session the deck runs reports its subagents itself, and that wins.
+  idx.registry.set('sess-1', { alive: true, sessionId: 'sess-1' });
+  idx.deckState = (id) => id === 'sess-1' ? { subagents: { a3: { status: 'running', activity: 'Reading files' }, a1: { status: 'completed' } } } : null;
+  assert.equal(idx.summary('a3').status, 'running');
+  assert.equal(idx.summary('a3').activity, 'Reading files');
+  assert.equal(idx.summary('a1').status, 'done');
+  // A failed subagent is not one the pilot stopped.
+  idx.deckState = () => ({ subagents: { a1: { status: 'failed' } } });
+  assert.equal(idx.summary('a1').status, 'ended');
+});
+
 test('SessionIndex: a headless session started by a Bash `claude -p` call nests under that session', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-home-'));
   const proj = path.join(dir, 'projects', '-tmp-proj');
@@ -364,4 +396,21 @@ test('request log: one request event per model call, its blob and shape records 
   assert.deepEqual(b.inlineTools, ['mcp__x__y']);
   const d = s.detail('r2');
   assert.deepEqual(d.raw.map(x => x.type), ['api-request', 'api-request-shape', 'api-request-blob', 'api-request-blob', 'api-request-blob']);
+});
+
+test('relay prompts: a message for a subagent reads back as the pilot\'s words, to whom, and is not the session\'s prompt', async () => {
+  const { wireText, parseRelay } = await import('../lib/transcript.mjs');
+  const wire = wireText({ text: 'check the README\n\nand the docs', to: { id: 'a1b2', title: 'Docs "pass"' } });
+  assert.deepEqual(parseRelay(wire), { to: { id: 'a1b2', title: 'Docs "pass"' }, text: 'check the README\n\nand the docs' });
+  assert.deepEqual(parseRelay(wireText({ text: 'x', to: { id: 'c3' } })), { to: { id: 'c3', title: null }, text: 'x' });
+  assert.equal(parseRelay('just a prompt'), null);
+  const s = new SessionState('s');
+  const base = { cwd: '/tmp/p', sessionId: 's' };
+  s.ingest({ ...base, type: 'user', uuid: 'u1', timestamp: '2026-10-26T10:00:00Z', message: { role: 'user', content: 'build the thing' } });
+  s.ingest({ ...base, type: 'user', uuid: 'u2', timestamp: '2026-10-26T10:01:00Z', message: { role: 'user', content: wire } });
+  s.ingest({ type: 'last-prompt', lastPrompt: wire, sessionId: 's' });
+  const ev = s.events.filter(e => e.kind === 'prompt').at(-1);
+  assert.equal(ev.text, 'check the README\n\nand the docs');
+  assert.deepEqual(ev.to, { id: 'a1b2', title: 'Docs "pass"' });
+  assert.equal(s.meta.lastPrompt, 'build the thing');
 });

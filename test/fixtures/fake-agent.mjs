@@ -6,7 +6,8 @@
 //
 // Prompt words steer it: "permission" asks to run a Bash command first,
 // "slow" works for 60s (interruptible), "crash" exits with an error, "fail"
-// ends the turn on a failed tool call.
+// ends the turn on a failed tool call, "background agent" starts a subagent
+// (task afake0001) that runs until stop_task stops it.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -37,6 +38,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 out({ type: 'system', subtype: 'init', session_id: id, cwd, model, permissionMode: mode, tools: ['Bash'] });
 
 const waiting = new Map();   // request_id -> resolve
+const tasks = new Set();     // running background subagents
 let interrupt = null;
 let busy = Promise.resolve();
 // Turns run one after another, so a turn can still be waiting to start when
@@ -56,6 +58,15 @@ process.stdin.on('data', (d) => {
     else if (msg.type === 'control_request' && msg.request.subtype === 'interrupt') {
       out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: {} } });
       if (interrupt) interrupt(); else if (pending) earlyInterrupt = true;
+    } else if (msg.type === 'control_request' && msg.request.subtype === 'stop_task') {
+      const tid = msg.request.task_id;
+      if (!tasks.has(tid)) { out({ type: 'control_response', response: { subtype: 'error', request_id: msg.request_id, error: `No task found with ID: ${tid}` } }); continue; }
+      tasks.delete(tid);
+      out({ type: 'system', subtype: 'task_updated', task_id: tid, patch: { status: 'killed' } });
+      out({ type: 'system', subtype: 'task_notification', task_id: tid, status: 'stopped', summary: 'stopped' });
+      out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: {} } });
+    } else if (msg.type === 'control_request') {
+      out({ type: 'control_response', response: { subtype: 'error', request_id: msg.request_id, error: `Unsupported control request subtype: ${msg.request.subtype}` } });
     } else if (msg.type === 'user') { pending++; busy = busy.then(() => turn(msg.message.content)).finally(() => { pending--; }); }
   }
 });
@@ -91,6 +102,11 @@ async function turn(content) {
     record({ type: 'assistant', message: { model, id: `msg_${toolUseId}`, role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: 'npm test' } }] } });
     record({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: '3 tests failed', is_error: true }] } });
     reply = null;
+  }
+  if (/background agent/.test(text)) {
+    tasks.add('afake0001');
+    out({ type: 'system', subtype: 'task_started', task_id: 'afake0001', task_type: 'local_agent', description: 'Fake helper', is_backgrounded: true });
+    out({ type: 'system', subtype: 'task_progress', task_id: 'afake0001', description: 'Running Fake step' });
   }
   let interrupted = false;
   if (/slow/.test(text)) {

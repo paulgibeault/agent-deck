@@ -314,6 +314,7 @@ function classifyTool(t) {
   if (n === 'TodoWrite') out.text = todoText(t.input?.todos);
   else if (n === 'Agent' || n === 'Task') { out.text = t.input?.description || t.summary; if (t.input?.subagent_type) out.sub = t.input.subagent_type; out.sans = true; }
   else if (n === 'Skill') out.text = t.input?.skill || t.summary;
+  else if (n === 'SendMessage' && typeof t.input?.message === 'string') { out.text = t.input.message; if (t.input.to) out.sub = `to ${t.input.to}`; out.sans = true; }
   else if (n === 'WebSearch' || n === 'AskUserQuestion') out.sans = true;
   return out;
 }
