@@ -75,7 +75,11 @@ const agents = new AgentManager({
     if (!index.files.has(id)) return { error: 'unknown session' };
     if (index.registry.get(id)?.alive && !agents.running(id)) return { error: 'this session is running outside the deck (a terminal or the desktop app); send it prompts there' };
     const cwd = index.cwdOf(id);
-    return cwd ? { cwd } : { error: 'the session\'s folder is not known' };
+    if (!cwd) return { error: 'the session\'s folder is not known' };
+    // A streamed session the deck has no events for (it restarted since) comes back with its history.
+    const f = index.files.get(id);
+    const loaded = index.loaded.get(id);
+    return { cwd, replay: !!f.stream && !loaded?.state.events.length, title: f.stream ? loaded?.state.meta.title || null : null };
   },
 });
 const tts = new AzureTts({ dir: deck.dir });
@@ -175,7 +179,9 @@ const snaps = new TurnSnapshots({ dir: deck.dir });
 index.on('events', ({ sessionId, appended, updated }) => {
   if (appended.length && index.files.has(sessionId)) {
     const cwd = index.cwdOf(sessionId);
-    if (cwd && appended.some(e => e.kind === 'prompt' || e.kind === 'turn_end')) snaps.observe(sessionId, cwd, appended).catch(() => {});
+    // Replayed history (an ACP session/load) happened before; the tree now says nothing about it.
+    const live = appended.filter(e => !e.replayed);
+    if (cwd && live.some(e => e.kind === 'prompt' || e.kind === 'turn_end')) snaps.observe(sessionId, cwd, live).catch(() => {});
   }
   if (appended.length) broadcast('event.batch', { sessionId, events: appended });
   for (const ev of updated) broadcast('event.update', { sessionId, event: ev });
@@ -190,6 +196,10 @@ agents.on('change', (st) => {
 agents.on('ratelimit', (info) => usage.update(info, 'a session the deck launched'));
 // ACP sessions have no transcript file; their events come from the driver.
 agents.on('stream', ({ id, cwd, title, events, meta }) => index.pushStream(id, { cwd, title, events, meta }));
+// They are kept only in memory here, so after a restart list again the ones the agents still keep.
+agents.storedStreams().then((list) => {
+  for (const x of list) if (x.cwd) index.addStream(x.id, { cwd: x.cwd, title: x.title, at: Date.parse(x.updatedAt) || null });
+}).catch(() => {});
 const usageView = () => ({ limits: usage.snapshot(), error: usageError, narrator: { enabled: NARRATOR, ...narrator.status() } });
 usage.on('usage', () => broadcast('usage', usageView()));
 // `claude -p /usage` reads the plan quota without a model call, so it is free
