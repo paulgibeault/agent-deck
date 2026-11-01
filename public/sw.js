@@ -1,8 +1,8 @@
 // public/sw.js — keeps the app shell available when the backend is down, so
 // the installed app can open and offer to launch it. Network first: a running
 // server always wins and refreshes the copy. /api/* is never touched.
-const CACHE = 'deck-shell-v16';
-const SHELL = ['/', '/app.js', '/events.js', '/classify.js', '/diff.js', '/files.js', '/changes.js', '/activity.js', '/attach.js', '/pricing.js', '/narration.js', '/speech.js', '/procs.js', '/background.js', '/header.js', '/menu.js', '/views.js', '/models.js', '/styles.css', '/manifest.webmanifest',
+const CACHE = 'deck-shell-v17';
+const SHELL = ['/', '/app.js', '/events.js', '/classify.js', '/diff.js', '/files.js', '/changes.js', '/activity.js', '/attach.js', '/pricing.js', '/narration.js', '/speech.js', '/procs.js', '/background.js', '/header.js', '/menu.js', '/views.js', '/models.js', '/place.js', '/styles.css', '/manifest.webmanifest',
   '/vendor/highlight.min.js', '/vendor/github.min.css', '/vendor/github-dark.min.css',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png'];
 
