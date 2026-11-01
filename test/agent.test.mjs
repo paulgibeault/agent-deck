@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AgentManager, messageContent, normalizeAttachments } from '../lib/agent.mjs';
+import { AgentManager, messageContent, normalizeAttachments, wireText } from '../lib/agent.mjs';
 import { promptParts } from '../lib/transcript.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
 
@@ -216,4 +216,62 @@ test('attachments: content blocks out, descriptors back, data kept off the wire'
   const lines = fs.readFileSync(path.join(claudeDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${st.id}.jsonl`), 'utf8');
   assert.match(lines, /Fake reply to: with a picture \(with 1 attachment\)/);
   assert.match(lines, /"type":"image"/);
+});
+
+test('subagents: live state, messages relayed by the session, stop_task, no idle end while one runs', async (t) => {
+  const agents = new AgentManager({ bin: FAKE, idleMs: 300 });
+  t.after(() => agents.stopAll());
+  const { id } = await agents.launch({ cwd, prompt: 'start a background agent' });
+  let st = await until(agents, id, s => s.status === 'idle' && s.subagents.afake0001);
+  assert.deepEqual({ status: st.subagents.afake0001.status, activity: st.subagents.afake0001.activity }, { status: 'running', activity: 'Running Fake step' });
+
+  // Idle with a subagent still running: the process stays up.
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(agents.publicState(id).alive, true);
+
+  // A message for the subagent goes out as a relay request, and the queue says who it is for.
+  agents.send(id, 'slow one');
+  const item = agents.send(id, 'also check the README', undefined, { to: { id: 'afake0001', title: 'Fake helper' } });
+  assert.deepEqual(item.to, { id: 'afake0001', title: 'Fake helper' });
+  assert.deepEqual(agents.publicState(id).queue[0].to, { id: 'afake0001', title: 'Fake helper' });
+  assert.throws(() => agents.send(id, 'see this', [{ name: 'a.txt', mediaType: 'text/plain', data: Buffer.from('x').toString('base64') }], { to: { id: 'afake0001' } }), /cannot carry attachments/);
+  agents.interrupt(id);
+  await until(agents, id, s => s.status === 'idle' && s.held);
+  agents.queueOp(id, { op: 'resume' });
+  await until(agents, id, s => s.status === 'idle' && !s.queue.length);
+  const file = path.join(claudeDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
+  const prompts = fs.readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => r.type === 'last-prompt').map(r => r.lastPrompt);
+  assert.match(prompts.at(-1), /SendMessage \(to: "afake0001"[;)]/);
+  assert.match(prompts.at(-1), /also check the README$/);
+
+  // stop_task ends the subagent alone; an unknown task is the CLI's error.
+  assert.equal(await agents.stopTask(id, 'afake0001'), true);
+  st = await until(agents, id, s => s.subagents.afake0001?.status === 'stopped');
+  assert.equal(st.subagents.afake0001.activity, null);
+  await assert.rejects(agents.stopTask(id, 'nope'), /No task found/);
+  // Nothing left running: the idle end applies again.
+  await until(agents, id, s => !s.alive, 3000);
+});
+
+test('wireText: prompts pass through, a subagent message asks for a verbatim relay', () => {
+  assert.equal(wireText({ text: 'hi' }), 'hi');
+  const w = wireText({ text: 'do X', to: { id: 'a1', title: 'Helper' } });
+  assert.match(w, /^\[agent-deck\] .*"Helper" \(agent id a1\).*SendMessage \(to: "a1"[;)]/);
+  assert.ok(w.endsWith('\n\ndo X'));
+});
+
+test('send now merges only the session\'s own prompts; messages for subagents stay separate relays', async (t) => {
+  const agents = new AgentManager({ bin: FAKE });
+  t.after(() => agents.stopAll());
+  const { id } = await agents.launch({ cwd, prompt: 'slow one' });
+  await until(agents, id, s => s.status === 'busy');
+  const to = { id: 'afake0001', title: 'Fake helper' };
+  agents.send(id, 'for the helper', undefined, { to });
+  agents.send(id, 'queued for the session');
+  assert.throws(() => agents.sendNow(id, 'now, helper', undefined, { to }), /queued/);
+  const merged = agents.sendNow(id, 'typed now');
+  assert.equal(merged.text, 'queued for the session\n\ntyped now');
+  assert.equal(merged.to, undefined);
+  const q = agents.publicState(id).queue;
+  assert.deepEqual(q.map(x => x.to?.id || null), [null, 'afake0001'], 'the relay waits behind the merged prompt');
 });

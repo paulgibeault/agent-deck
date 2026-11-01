@@ -72,7 +72,7 @@ const agents = new AgentManager({
   ...loadHarnesses(deck.dir),
   store: path.join(deck.dir, 'agents.json'),
   wakeable: (id) => {
-    if (!index.files.has(id)) return { error: index.cwdOf(id) ? 'subagents take their prompts from the parent session' : 'unknown session' };
+    if (!index.files.has(id)) return { error: 'unknown session' };
     if (index.registry.get(id)?.alive && !agents.running(id)) return { error: 'this session is running outside the deck (a terminal or the desktop app); send it prompts there' };
     const cwd = index.cwdOf(id);
     return cwd ? { cwd } : { error: 'the session\'s folder is not known' };
@@ -375,8 +375,27 @@ async function route(req, res, url) {
 
   let m;
   if ((m = /^\/api\/sessions\/([^/]+)\/(send|send-now|queue|interrupt|permission|stop)$/.exec(p)) && req.method === 'POST') {
-    const id = decodeURIComponent(m[1]);
+    let id = decodeURIComponent(m[1]);
     const body = await readBody(req, PROMPT_BODY_LIMIT);
+    // A subagent is driven through the session it runs in: prompts are
+    // relayed by it (lib/agent.mjs wireText), interrupt and stop end the
+    // subagent alone (stop_task); its queue and permissions are that session's.
+    const sub = index.agents.get(id);
+    if (sub) {
+      const to = { id, title: index.agentSummary(sub).title };
+      id = sub.parentId;
+      if (!agents._driverOf(id)?.caps.subagents) return send(res, 409, { error: 'this session\'s agent offers no way to message a subagent' });
+      try {
+        switch (m[2]) {
+          // Send now would cut the session's own turn short; for a subagent it queues like send.
+          case 'send': case 'send-now': return send(res, 200, { item: await agents.send(id, body.text, body.attachments, { model: body.model, to }) });
+          case 'interrupt': case 'stop': return send(res, 200, { stopped: await agents.stopTask(id, to.id) });
+          case 'queue': await agents.queueOp(id, body); break;
+          case 'permission': agents.answer(id, body.requestId, body.decision, body.message); break;
+        }
+        return send(res, 200, { ok: true, state: agents.publicState(id) });
+      } catch (e) { return send(res, e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { error: e.message }); }
+    }
     try {
       switch (m[2]) {
         case 'send': return send(res, 200, { item: await agents.send(id, body.text, body.attachments, { model: body.model }) });
@@ -459,6 +478,10 @@ async function route(req, res, url) {
   if ((m = /^\/api\/sessions\/([^/]+)\/events\/([^/]+)\/image\/(\d+)$/.exec(p))) {
     const img = index.image(decodeURIComponent(m[1]), decodeURIComponent(m[2]), Number(m[3]));
     return img ? send(res, 200, img.data, { 'Content-Type': img.mediaType || 'image/png' }) : send(res, 404, 'no image');
+  }
+  if ((m = /^\/api\/sessions\/([^/]+)\/tasks\/([^/]+)\/stop$/.exec(p)) && req.method === 'POST') {
+    try { return send(res, 200, { stopped: await agents.stopTask(decodeURIComponent(m[1]), decodeURIComponent(m[2])) }); }
+    catch (e) { return send(res, e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { error: e.message }); }
   }
   if ((m = /^\/api\/sessions\/([^/]+)\/tasks\/([^/]+)\/output$/.exec(p))) {
     const r = index.taskOutput(decodeURIComponent(m[1]), decodeURIComponent(m[2]), q.get('tail'));

@@ -122,7 +122,7 @@ const PHASE_LABEL = { working: 'Working', turn: 'Your turn', done: 'Done', ended
 const SIG_LABEL = { input: 'Needs input', error: 'Error', working: 'Working', done: 'Done', ended: 'Ended' };
 function sigOf(s) {
   if (!s) return 'ended';
-  if (s.kind === 'agent') return s.status === 'running' ? 'working' : s.status === 'done' ? 'done' : 'ended';
+  if (s.kind === 'agent') return permsOf(s).length ? 'input' : s.status === 'running' ? 'working' : s.status === 'done' ? 'done' : 'ended';
   if (!s.alive) return 'ended';
   if (deckOf(s.id)?.permissions?.length) return 'input';   // the deck hears these before the transcript shows them
   const c = state.cache.get(s.id);
@@ -387,6 +387,8 @@ function onEvents(sessionId, events) {
     c.events.push(ev); c.byId.set(ev.id, ev); c.lastSeq = ev.seq; added++;
   }
   if (added && visibleSession(sessionId)) scheduleRows();
+  // A permission prompt lands before the subagent's transcript shows the call it is for.
+  if (added && sessionId === state.selected && state.byId.get(sessionId)?.kind === 'agent' && driveOf(sessionId)?.permissions?.length) { renderPerms(); renderHeader(); }
 }
 function onUpdate(sessionId, ev) {
   const c = state.cache.get(sessionId);
@@ -435,18 +437,19 @@ async function loadSession(id) {
 let treeTimer = null;
 function scheduleTree() { if (!treeTimer) treeTimer = requestAnimationFrame(() => { treeTimer = null; renderTree(); }); }
 
-function sessRow(s, nested = false) {
+function sessRow(s, nested = false, depth = 1) {
   const phase = phaseOf(s);
   const sig = sigOf(s);
   const isAgent = s.kind === 'agent';
   const st = !isAgent && (phase === 'turn' || phase === 'working') ? statusOf(s, null, phase) : null;
-  const meta = isAgent ? [s.agentType, s.worktreeBranch].filter(Boolean).join(' · ')
+  // A running subagent says what it is doing now, when its session reports it.
+  const meta = isAgent ? (s.status === 'running' && s.activity) || [s.agentType, s.worktreeBranch].filter(Boolean).join(' · ')
     : [s.gitBranch, s.pr ? `PR #${s.pr.number}` : null, ...(s.alive && !s.hidden ? [sig === 'input' || sig === 'error' ? st?.head.toLowerCase() : null] : [])].filter(Boolean).join(' · ');
   // The folder leads a session's second line; rows are not grouped by it.
   const sub = isAgent || nested ? (meta ? [meta] : null)
     : [h('span', { class: 'fld', title: s.cwd ? `Folder: ${tilde(s.cwd)}` : 'Folder' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
   // No native tooltips: the hover card says all of it.
-  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}` },
+  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, style: depth > 1 ? `--depth:${depth}` : null, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}` },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
     h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), sub ? h('span', { class: 'sub' }, ...sub) : null),
     h('span', { class: 'r' }, s.background ? h('span', { class: 'bgc', title: `${s.background} running in the background` }, svgUse('i-bg', 10), String(s.background)) : null,
@@ -480,10 +483,16 @@ function childBlock(s, kind) {
   li.append(bar);
   const out = [li];
   if (open) {
-    const order = [...kids].sort((a, b) => isRun(b) - isRun(a) || b.mtime - a.mtime);
+    // Subagents a subagent started sit under it, a step further in.
+    const sort = (list) => [...list].sort((a, b) => isRun(b) - isRun(a) || b.mtime - a.mtime);
+    const ids = new Set(kids.map(a => a.id));
+    const under = new Map();
+    for (const a of kids) { const p = !tasks && ids.has(a.parentAgentId) ? a.parentAgentId : null; under.set(p, [...(under.get(p) || []), a]); }
+    const order = sort(under.get(null) || []);
     const all = state.subsAll.has(key) || containsSel;
     const shown = all ? order : order.slice(0, 4);
-    for (const a of shown) out.push(sessRow(a, true));
+    const walk = (a, depth) => { out.push(sessRow(a, true, depth)); for (const c of sort(under.get(a.id) || [])) walk(c, depth + 1); };
+    for (const a of shown) walk(a, 1);
     if (order.length > 4 && !containsSel) out.push(h('li', {}, h('button', { type: 'button', class: 'more', dataset: { more: key } }, all ? 'Show fewer' : `+ ${order.length - 4} more`)));
   }
   return out;
@@ -1587,7 +1596,7 @@ function statusOf0(s, b, phase) {
   const subs = g.subagents?.running || 0;
   const subsTxt = subs ? `${subs} subagent${subs === 1 ? '' : 's'} running` : null;
   const waited = g.need?.since ? ago(Date.now() - Date.parse(g.need.since)) : g.idleMs != null ? ago(g.idleMs) : null;
-  if (sig === 'input' && (permLine(s.id) || g.need?.kind === 'permission')) return { sig, who: 'you', icon: 'i-hand', head: 'Needs your permission', text: permLine(s.id)?.replace(/^Wants to use /, '') || g.need.text, right: deckOf(s.id)?.alive ? 'answer below' : waited ? `waiting ${waited}` : '' };
+  if (sig === 'input' && (permLine(s.id) || g.need?.kind === 'permission')) return { sig, who: 'you', icon: 'i-hand', head: 'Needs your permission', text: permLine(s.id)?.replace(/^Wants to use /, '') || g.need.text, right: driveOf(s.id)?.alive ? 'answer below' : waited ? `waiting ${waited}` : '' };
   if (sig === 'input') return { sig, who: 'you', icon: 'i-q', head: `${actor} asked you`, text: (g.need?.text || g.lastText || '') + where, right: waited ? `waiting ${waited}` : '' };
   if (sig === 'error' && g.need?.kind === 'ci') return { sig, who: 'you', icon: 'i-ci', head: 'CI is red', text: g.need.text, right: '' };
   if (sig === 'error') return { sig, who: phase === 'working' ? 'agent' : 'you', icon: 'i-x', head: phase === 'working' ? 'Hit an error' : 'Stopped on an error', text: g.need?.text || '', right: waited ? `${waited} ago` : '', seq: g.need?.seq };
@@ -1610,6 +1619,7 @@ function statusOf0(s, b, phase) {
   const last = g.lastEventTs ? `last activity ${ago(Date.now() - Date.parse(g.lastEventTs))} ago` : 'no activity recorded';
   // A top-level session that is not running just waits for the next prompt, which starts it again.
   if (phase === 'ended' && s.kind === 'session') return { sig, who: 'you', head: 'Your turn', text: last };
+  if (s.kind === 'agent' && s.status === 'stopped') return { sig, who: 'ended', head: 'Stopped', text: last };
   return { sig, who: phase === 'done' ? 'done' : 'ended', head: phase === 'done' ? 'Done' : 'Ended', text: last };
 }
 
@@ -1786,19 +1796,31 @@ function refreshBriefViews(id) {
 // what is running, the Background tab lists them all, and a task's details
 // show its command, Monitor events and the live end of its output file.
 const bg = { filter: 'all', q: '', timer: null, out: null, key: null };
-const tasksOf = (id) => state.cache.get(id)?.meta?.tasks || [];
+// A background agent the transcript still calls running may have finished or
+// been stopped since: its subagent's own status says so sooner.
+const AGENT_TASK = { done: 'completed', stopped: 'stopped' };
+const tasksOf = (id) => (state.cache.get(id)?.meta?.tasks || []).map((t) => {
+  const st = t.kind === 'agent' && t.status === 'running' ? AGENT_TASK[state.byId.get(t.agentId)?.status] : null;
+  return st ? { ...t, status: st } : t;
+});
+/** A background agent opens as the subagent it is; anything else opens its details. */
+function openTask(id, tid) {
+  const t = taskOf(id, tid);
+  if (t?.kind === 'agent' && t.agentId && state.byId.has(t.agentId)) select(t.agentId);
+  else showTaskDetails(id, tid);
+}
 const taskOf = (id, taskId) => tasksOf(id).find(t => t.id === taskId) || null;
 const aliveOf = (id) => !!state.byId.get(id)?.alive;
 function renderBackground() {
   const id = state.selected;
   const tasks = tasksOf(id), alive = aliveOf(id);
-  $('bgslot').replaceChildren(...(id ? renderStrip(tasks, alive, { open: (tid) => showTaskDetails(id, tid), openTab: () => setTab('bg') }) : []));
+  $('bgslot').replaceChildren(...(id ? renderStrip(tasks, alive, { open: (tid) => openTask(id, tid), openTab: () => setTab('bg') }) : []));
   const running = tasks.filter(t => taskState(t, alive) === 'running').length;
   $('bg-count').textContent = tasks.length ? (running ? `${running} running` : String(tasks.length)) : '';
   $('bg-count').classList.toggle('live', running > 0);
   if (state.tab === 'bg') {
     const sel = state.detailsKey?.startsWith(`task:${id}:`) ? state.detailsKey.slice(`task:${id}:`.length) : null;
-    $('bg-list').replaceChildren(renderTable(tasks, alive, { filter: bg.filter, q: bg.q, selected: sel, open: (tid) => showTaskDetails(id, tid), pidOf: (t) => taskPid(id, t, renderBackground) }));
+    $('bg-list').replaceChildren(renderTable(tasks, alive, { filter: bg.filter, q: bg.q, selected: sel, open: (tid) => openTask(id, tid), pidOf: (t) => taskPid(id, t, renderBackground) }));
   }
 }
 function taskCtx(id) {
@@ -1807,6 +1829,17 @@ function taskCtx(id) {
     pidOf: (t) => taskPid(id, t, () => showTaskDetails(id, t.id, true)),
     killTask: (t) => {
       const ref = sp.data.get(id)?.tasks[t.id];
+      // A session the deck runs stops one task itself (stop_task): any subagent, and a
+      // command whose process the deck has not found (one from an earlier process may be unknown to it).
+      if (deckOf(id)?.alive && isClaude(state.byId.get(id)) && (t.kind === 'agent' || !ref)) {
+        const stop = async () => {
+          if (!await confirmDialog(`Stop this ${t.kind === 'agent' ? 'subagent' : 'background task'}?`, `${oneLine(taskTitle(t), 80)} stops now. ${actorOf(state.byId.get(id))} sees it end and carries on.`, 'Stop it')) return;
+          try { await api.post(`/api/sessions/${sid(id)}/tasks/${encodeURIComponent(t.id)}/stop`); toast('Stopped'); }
+          catch (e) { toast(`Stop failed: ${e.message}`); }
+        };
+        stop.note = `Stops it through ${actorOf(state.byId.get(id))}, which sees it end. No model turn.`;
+        return stop;
+      }
       if (!ref || t.kind === 'agent') return null;
       return async () => {
         if (!await confirmDialog('Stop this background task?', `SIGTERM goes to pid ${ref.pid} (${oneLine(taskTitle(t), 60)}) and everything it started. The agent sees the task end.`, 'Stop it')) return;
@@ -1817,8 +1850,6 @@ function taskCtx(id) {
     openCall: (toolUseId) => { const ev = findEvent(id, toolUseId); if (ev) jumpToSeq(ev.seq); else toast('That call is not loaded'); },
     openAgent: (agentId) => select(agentId),
     runInShell: (cmd) => { setTab('shell'); $('sh-cmd').value = cmd; $('sh-cmd').focus(); },
-    // Only a session the deck can drive takes the prompt.
-    askStop: deckOf(id)?.alive ? (t) => api.post(`/api/sessions/${sid(id)}/send`, { text: `Please stop the background task ${t.id} (${taskTitle(t)}).`, model: prefs.launchModel || undefined }).then(() => toast(`Asked ${actorOf(state.byId.get(id))} to stop it`)).catch(e => toast(e.message)) : null,
   };
 }
 function showTaskDetails(id, taskId, refresh = false) {
@@ -1944,20 +1975,27 @@ function renderQueue() {
   const id = state.selected;
   const c = state.cache.get(id);
   const s = state.byId.get(id);
-  const d = s?.kind === 'session' ? deckOf(id) : null;
+  // A subagent is driven through the session it runs in (see driveOf).
+  const isAgent = s?.kind === 'agent';
+  const root = isAgent ? state.byId.get(s.parentId) : s;
+  const d = root?.kind === 'session' ? deckOf(root.id) : null;
   const compose = $('compose'), sendBtn = $('send'), nowBtn = $('send-now'), stopBtn = $('stop');
   // Any session the deck can drive takes a prompt; one that is not running
-  // starts again when it is sent. Subagents and sessions running elsewhere
-  // get a line saying why there is no box.
-  const canSend = s?.kind === 'session' && (d?.alive || !s.alive);
+  // starts again when it is sent. So does a subagent of one, through it.
+  // Sessions running elsewhere get a line saying why there is no box.
+  const canSend = root?.kind === 'session' && (d?.alive || !root.alive) && (!isAgent || isClaude(root));
   $('prompt').classList.toggle('readonly', !canSend);
   $('prompt').hidden = !s;
   $('ro-why').replaceChildren(...(canSend || !s ? [] : roWhy(s)));
+  // SendMessage carries text only.
+  $('compose-clip').hidden = isAgent;
   if (canSend) {
-    const q = d?.queue || [];
+    // A subagent's view lists the messages waiting for it; the session's lists them all.
+    const q = (d?.queue || []).filter(x => !isAgent || x.to?.id === id);
     const running = !!d?.alive;
     const idle = !running || d.status === 'idle';
     const rows = q.map((item, i) => h('li', { dataset: { qid: item.id } }, h('span', { class: 'muted' }, `${i + 1}.`),
+      item.to && !isAgent ? h('span', { class: 'q-to', title: `For the subagent ${item.to.title || item.to.id}; ${actorOf(root)} passes it on` }, svgUse('i-agent', 11)) : null,
       item.attachments?.length ? h('span', { class: 'q-att', title: item.attachments.map(a => a.name).join('\n') }, svgUse('i-clip', 11), String(item.attachments.length)) : null,
       h('span', { class: 'q editable', title: 'Click to edit', tabindex: '0', role: 'button', 'aria-label': `Edit queued prompt: ${oneLine(item.text, 80)}`, onclick: (e) => editQueued(item, e.currentTarget), onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); editQueued(item, e.currentTarget); } } }, item.text.replace(/\s+/g, ' ')),
       ib('i-top', 'Send this next', () => queueOp('top', item.id), { size: 12, disabled: i === 0 && !d.held || !running || null }),
@@ -1972,11 +2010,26 @@ function renderQueue() {
     const starting = running && d.status === 'starting';
     const queues = running && (!idle || q.length > 0 || d.held);
     compose.disabled = false;
-    compose.placeholder = starting ? 'Starting… · ⌘↩ queues it' : queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
+    if (isAgent) {
+      // The session relays it with SendMessage once it is free; a finished subagent picks up again.
+      const who = actorOf(root);
+      compose.placeholder = queues ? `Message this subagent · ⌘↩ queues it; ${who} passes it on when its turn ends` : `Message this subagent · ${who} passes it on · ⌘↩`;
+      sendBtn.title = queues ? `Queue: ${who} passes it on when its current turn ends (⌘↩)` : `Send: ${who} passes it on with SendMessage, one short turn (⌘↩)`;
+    } else {
+      compose.placeholder = starting ? 'Starting… · ⌘↩ queues it' : queues ? `Prompt · ⌘↩ queues it for when this turn ends · ⇧⌘↩ sends ${q.length ? 'it and the queue ' : ''}now` : 'Prompt · ⌘↩ to send';
+      sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
+    }
     sendBtn.disabled = false;
     sendBtn.classList.toggle('queues', queues);
-    sendBtn.title = queues ? 'Queue: goes out when the current turn ends (⌘↩)' : 'Send (⌘↩)';
     sendBtn.setAttribute('aria-label', queues ? 'Queue prompt' : 'Send');
+    if (isAgent) {
+      // Send now would cut the session's own turn short; Stop ends just this subagent.
+      nowBtn.hidden = true;
+      stopBtn.hidden = !(running && s.status === 'running');
+      stopBtn.disabled = false;
+      stopBtn.title = 'Stop this subagent (⌘.). The session it runs in carries on.';
+      return;
+    }
     nowBtn.hidden = idle && !q.length && !d?.held;
     nowBtn.disabled = !!d?.interrupting;
     nowBtn.title = d?.interrupting ? 'Stopping…' : `Send now: ${idle ? '' : 'stop the current turn and '}send ${q.length ? `the ${q.length === 1 ? 'queued prompt' : `${q.length} queued prompts`} and anything typed, as one message` : 'this prompt'} (⇧⌘↩)`;
@@ -1997,28 +2050,45 @@ function renderQueue() {
 function roWhy(s) {
   if (s.kind === 'agent') {
     const parent = state.byId.get(s.parentId);
-    return [svgUse('i-info', 13, 'Why there is no prompt box'), h('span', {}, 'Subagents take their instructions from the session that started them, so there is no prompt box here.'),
+    const why = !parent ? 'The session it runs in is not known, so the deck can only watch.'
+      : !isClaude(parent) ? `${actorOf(parent)} offers no way to message a subagent, so the deck can only watch.`
+      : `The session it runs in is running in ${whereOf(parent)}, so the deck can only watch. Once that session ends you can message this subagent here.`;
+    return [svgUse('i-eye', 13, 'Observe only'), h('span', {}, why),
       parent ? h('button', { type: 'button', class: 'linkish', onclick: () => select(s.parentId) }, `Open ${parent.title || 'the parent session'}`) : null];
   }
-  const where = s.entrypoint === 'claude-desktop' ? 'the Claude desktop app' : /vscode|jetbrains|ide/i.test(s.entrypoint || '') ? 'an editor' : 'a terminal';
-  return [svgUse('i-eye', 13, 'Observe only'), h('span', {}, `Running in ${where}, so the deck can only watch. Send prompts there; once it ends you can continue it here.`)];
+  return [svgUse('i-eye', 13, 'Observe only'), h('span', {}, `Running in ${whereOf(s)}, so the deck can only watch. Send prompts there; once it ends you can continue it here.`)];
 }
+const whereOf = (s) => s.entrypoint === 'claude-desktop' ? 'the Claude desktop app' : /vscode|jetbrains|ide/i.test(s.entrypoint || '') ? 'an editor' : 'a terminal';
 function focusCompose() { if (!$('compose').disabled) $('compose').focus({ preventScroll: true }); }
 
 // ------------------------------------------------------------ deck-launched sessions
 const PERM_LABEL = { default: 'asks', acceptEdits: 'accept edits', auto: 'auto', plan: 'plan only' };
 function deckOf(id) { return id ? state.deck.get(id) || state.byId.get(id)?.deck || null : null; }
+/** The deck state of the session that takes this one's prompts: its own, or for a subagent the session it runs in. */
+function driveOf(id) { const s = state.byId.get(id); return deckOf(s?.kind === 'agent' ? s.parentId : id); }
+/**
+ * Pending permission prompts to show for a session. The CLI asks them all
+ * through the session's process and names only the tool call, so a
+ * subagent's are the ones whose call is in its own events (once loaded).
+ */
+function permsOf(s) {
+  if (!s) return [];
+  const d = driveOf(s.id);
+  const list = d?.alive ? d.permissions || [] : [];
+  if (s.kind !== 'agent') return list;
+  return list.filter(p => p.toolUseId && findEvent(s.id, p.toolUseId));
+}
 
 function onDeck(st) {
   if (st.gone) state.deck.delete(st.id); else state.deck.set(st.id, st);
   const s = state.byId.get(st.id);
   if (s && !st.gone) s.deck = st;
-  if (st.id === state.selected) { renderHeader(); renderQueue(); renderPerms(); }
+  if (st.id === state.selected || state.byId.get(state.selected)?.parentId === st.id) { renderHeader(); renderQueue(); renderPerms(); }
   else if (!state.selected) scheduleOverview();
 }
 
 function permLine(id) {
-  const p = deckOf(id)?.permissions?.[0];
+  const p = permsOf(state.byId.get(id))[0];
   return p ? `Wants to use ${permTool(p)}${permSubject(p) ? ': ' + permSubject(p) : ''}` : null;
 }
 /** The tool a permission is for. An ACP agent may title the call with its path; then the kind names it. */
@@ -2038,8 +2108,7 @@ function suggestionText(list) {
 
 function renderPerms() {
   const el = $('perms');
-  const d = deckOf(state.selected);
-  const list = d?.alive ? d.permissions : [];
+  const list = permsOf(state.byId.get(state.selected));
   const key = list.map(p => p.requestId).join(',');
   if (el.dataset.key === key) return;
   el.dataset.key = key;
@@ -2105,8 +2174,13 @@ async function sendPrompt(now = false) {
   const id = state.selected;
   if (composeFiles.busy()) { toast('Still reading the attachments…'); return; }
   const attachments = composeFiles.payload();
+  // A subagent's message is relayed with SendMessage: text only, and never "now" (that would cut the session's turn short).
+  if (state.byId.get(id)?.kind === 'agent') {
+    now = false;
+    if (attachments.length) { toast('A message to a subagent carries text only; remove the attachments'); return; }
+  }
   // Send now with an empty box still sends: it flushes the queue.
-  if (!text.trim() && !attachments.length && !(now && deckOf(id)?.queue?.length)) { $('compose').focus(); return; }
+  if (!text.trim() && !attachments.length && !(now && driveOf(id)?.queue?.length)) { $('compose').focus(); return; }
   $('send').disabled = true; $('send-now').disabled = true;
   try {
     await api.post(`/api/sessions/${sid(id)}/${now ? 'send-now' : 'send'}`, { text, attachments: attachments.length ? attachments : undefined, model: prefs.launchModel || undefined });
@@ -2151,7 +2225,7 @@ async function finishEdit(save) {
   const text = ed.el.value;
   const changed = save && text.trim() && text !== ed.original;
   state.qEdit = null;
-  const item = changed && deckOf(ed.sessionId)?.queue.find(x => x.id === ed.id);
+  const item = changed && driveOf(ed.sessionId)?.queue.find(x => x.id === ed.id);
   if (item) item.text = text;   // show the new wording now; the server confirms it
   if (ed.sessionId === state.selected) renderQueue();
   const path = `/api/sessions/${sid(ed.sessionId)}/queue`;
@@ -2165,8 +2239,10 @@ async function finishEdit(save) {
   }
 }
 async function interruptSession() {
-  try { await api.post(`/api/sessions/${sid(state.selected)}/interrupt`); }
-  catch (e) { toast(`Interrupt failed: ${e.message}`); }
+  // For a subagent this stops it (stop_task); its session carries on.
+  const agent = state.byId.get(state.selected)?.kind === 'agent';
+  try { await api.post(`/api/sessions/${sid(state.selected)}/interrupt`); if (agent) toast('Stopping the subagent'); }
+  catch (e) { toast(`${agent ? 'Stop' : 'Interrupt'} failed: ${e.message}`); }
 }
 async function stopSession() {
   const s = state.byId.get(state.selected); if (!s) return;
