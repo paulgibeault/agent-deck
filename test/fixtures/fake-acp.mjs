@@ -7,7 +7,8 @@
 // opencode), "fs" asks the client to read a file (the deck has no fs, so it
 // expects -32601), "slow" streams until session/cancel ("deaf": and ignores
 // it), "edit" changes a file (a whole-file diff), "run" runs a command,
-// "crash" exits.
+// "retry" fails its model call over and over, as opencode does when the model
+// cannot read an image, until session/cancel, "crash" exits.
 //
 // FAKE_ACP_LOG=<file> appends every method it receives, so a test can check
 // what arrived and in what order. FAKE_ACP_STUBBORN=1 ignores the end of stdin.
@@ -88,6 +89,16 @@ async function prompt({ sessionId, prompt: blocks }) {
       update(sessionId, { sessionUpdate: 'tool_call', toolCallId, name: 'bash', title: 'bash', kind: 'execute', status: 'pending', locations: [], rawInput: {} });
       update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', kind: 'execute', rawInput: { command: 'git commit -m "fake"', description: 'Commit the change' },
         content: [{ type: 'content', content: { type: 'text', text: '[main abc1234] fake\n 1 file changed' } }] });
+    }
+    if (/retry/.test(text)) {
+      const cancelled = new Promise(r => { s.cancel = r; });
+      const error = { type: 'provider.internal', message: 'image input is not supported - hint: if this is unexpected, you may need to provide the mmproj', status: 500 };
+      for (let attempt = 1; attempt <= 20; attempt++) {
+        update(sessionId, { sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': { attempt, nextRetryAt: new Date(Date.now() + 40).toISOString(), error } } });
+        if (await Promise.race([cancelled.then(() => true), sleep(40).then(() => false)])) break;
+        update(sessionId, { sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': null } });
+      }
+      stopReason = 'cancelled'; reply = '';
     }
     if (/slow/.test(text)) {
       const cancelled = new Promise(r => { s.cancel = r; });
