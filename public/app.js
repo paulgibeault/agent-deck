@@ -12,6 +12,7 @@ import { createProcView, pidLinkEl } from './procs.js';
 import { headerRows } from './header.js';
 import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
 import { registerView, showView } from './views.js';
+import './models.js';
 
 const $ = (id) => document.getElementById(id);
 
