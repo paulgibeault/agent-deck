@@ -6,8 +6,8 @@
 import { h, ib, svgUse, ago, oneLine, markdown, basename, relPath } from './events.js';
 import { registerView, showView, currentView } from './views.js';
 import { registerMenuItem } from './menu.js';
-import { renderFileView } from './files.js';
-import { workstreamMap, cardStates, orderCards, unaffiliated, isLive, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles, SHOWN } from './homemodel.js';
+import { openFile as vaultFile } from './vault.js';
+import { workstreamMap, cardStates, orderCards, unaffiliated, isLive, parseNotes, parseSource, decisionGroups, groupFiles, sessionRows, coalesce, SHOWN } from './homemodel.js';
 
 const $ = (id) => document.getElementById(id);
 let ctx = null;
@@ -58,6 +58,13 @@ export function initHome(c) {
 }
 
 export function goHome() { showView('home'); }
+/** Home, with one workstream open (#35's header chip calls this). */
+export async function openWorkstream(slug) {
+  goHome();
+  if (!st.loaded || st.stale) await load();
+  if (st.open?.slug === slug) return;
+  openCard(slug, grid.querySelector(`[data-key="${CSS.escape(slug)}"]`));
+}
 /** h, and the toggle: Home ↔ the session view as it was left. */
 export function toggleHome() { currentView() === 'home' ? ctx.back() : goHome(); }
 export const homeShowing = () => { try { return localStorage.getItem('deck.home') === '1'; } catch { return false; } };
@@ -90,9 +97,12 @@ function build(pane) {
   scroller = h('div', { class: 'hm-scroll' }, h('div', { class: 'hm-bar' }), grid);
   panel = h('div', { class: 'hm-x', hidden: true, role: 'dialog', 'aria-modal': 'false' });
   root = h('section', { id: 'home-view', class: 'home', 'aria-label': 'Home', hidden: true }, scroller, panel);
+  // Enter and Space act on what has focus here; app.js would read them as event details and read-aloud.
+  root.addEventListener('keydown', stopActivation);
   pane.append(root);
 }
 
+function stopActivation(e) { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); }
 function onKey(e) {
   if (currentView() !== 'home') return;
   const tag = e.target?.tagName;
@@ -109,21 +119,17 @@ function onKey(e) {
 }
 
 // ------------------------------------------------------------ data
-let loading = null;
-async function load() {
-  if (loading) return loading;
-  loading = (async () => {
-    try {
-      const r = await call('/api/workstreams?cards=1');
-      st.list = r.workstreams || []; st.sync = r.sync || null;
-      if (!st.sync?.ready && !st.setup) st.setup = await call('/api/workstreams/setup').catch(e => ({ suggest: { error: e.message } }));
-      st.loaded = true; st.stale = false; st.error = null;
-    } catch (e) { st.error = e.message; st.loaded = true; }
-    finally { loading = null; }
-    if (currentView() === 'home') { render(); if (st.open) refreshOpen(); }
-  })();
-  return loading;
-}
+// One fetch at a time; a change that lands during one gets a fetch of its own after it.
+const load = coalesce(async () => {
+  st.stale = false;
+  try {
+    const r = await call('/api/workstreams?cards=1');
+    st.list = r.workstreams || []; st.sync = r.sync || null;
+    if (!st.sync?.ready && !st.setup) st.setup = await call('/api/workstreams/setup').catch(e => ({ suggest: { error: e.message } }));
+    st.loaded = true; st.error = null;
+  } catch (e) { st.error = e.message; st.loaded = true; }
+  if (currentView() === 'home') { render(); if (st.open) await refreshOpen(); }
+});
 
 let rerender = 0;
 /** The deck's sessions changed (app.js renderTree): redraw from what's here, no fetch. */
@@ -132,9 +138,14 @@ export function homeSessionsChanged() {
   rerender = requestAnimationFrame(() => { rerender = 0; render(); if (st.open && st.open.tab === 'sessions') drawTab(); });
 }
 let reloadT = null;
+const changed = new Set();
 /** workstreams.changed from the server: fetch again, now if Home shows, else when it next does. */
-export function homeWorkstreamsChanged() {
+export function homeWorkstreamsChanged(e) {
   st.stale = true;
+  // Which workstreams changed, so the open one keeps its Files and Vault reads unless it is one.
+  let d = null; try { d = e?.data ? JSON.parse(e.data) : e; } catch { /* no detail */ }
+  for (const slug of [d?.slug, d?.was].filter(Boolean)) changed.add(slug);
+  if (!d?.slug && !d?.was) changed.add('*');
   if (currentView() !== 'home') return;
   clearTimeout(reloadT); reloadT = setTimeout(load, 150);
 }
@@ -145,7 +156,12 @@ function render() {
   drawBar();
   if (st.error) { grid.replaceChildren(h('div', { class: 'hm-empty muted' }, `Workstreams: ${st.error}`)); return; }
   if (!st.loaded) return;
-  if (!st.sync?.ready) { grid.replaceChildren(setupCard()); return; }
+  if (!st.sync?.ready) {
+    // A session tick must not wipe what is being typed into the setup card.
+    const cur = grid.querySelector('.hm-setup');
+    if (cur && (cur.contains(document.activeElement) || [...cur.querySelectorAll('input')].some(i => i.value))) return;
+    grid.replaceChildren(setupCard()); return;
+  }
   const all = sessions();
   const map = workstreamMap(st.list, all);
   const cards = orderCards(cardStates(st.list, all, { sigOf: ctx.sigOf, map }), { all: st.all });
@@ -156,11 +172,19 @@ function render() {
   patch(grid, out);
   chips().then(m => m?.watchRefs?.(cards.flatMap(c => prsOf(c))));
 }
-/** Replace the grid's children, keeping a card that holds an open form or focus. */
+/** Replace the grid's children, keeping a card that holds an open form, and focus where it was. */
 function patch(el, nodes) {
   const keep = el.querySelector('.hm-card.editing');
   if (keep) { const i = nodes.findIndex(n => n.dataset?.key === keep.dataset.key); if (i >= 0) nodes[i] = keep; }
+  const f = document.activeElement;
+  const was = el.contains(f) ? f.closest('[data-key]') : null;
+  const focusables = (c) => [...c.querySelectorAll('button, a[href], [tabindex]')];
+  const at = was && was !== f ? focusables(was).indexOf(f) : -1;
   el.replaceChildren(...nodes);
+  if (!was || was === keep) return;
+  const now = el.querySelector(`[data-key="${CSS.escape(was.dataset.key)}"]`);
+  const target = (at >= 0 && now ? focusables(now)[at] : null) || now;
+  target?.focus({ preventScroll: true });
 }
 
 function drawBar() {
@@ -215,7 +239,7 @@ function card(w) {
   const live = [...w.live].sort((a, b) => (b.sig === 'input' || b.sig === 'error') - (a.sig === 'input' || a.sig === 'error'));
   const el = h('article', { class: `hm-card${w.needs ? ' needs' : ''}${w.status !== 'active' ? ` st-${w.status}` : ''}`, role: 'listitem', tabindex: '0', dataset: { key: w.slug },
     'aria-label': `${w.title}${w.needs ? ', needs you' : ''}`,
-    onclick: () => openCard(w.slug, el), onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); openCard(w.slug, el); } } },
+    onclick: () => openCard(w.slug, el), onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); e.stopPropagation(); openCard(w.slug, el); } } },
     h('div', { class: 'hm-c-h' },
       h('h3', { class: 'hm-t', title: w.title }, w.title),
       h('span', { class: 'hm-badges' }, badges.map(fn => { try { return fn(w); } catch { return null; } })),
@@ -250,7 +274,8 @@ function newCard() {
 // ------------------------------------------------------------ assigning and creating
 async function assign(anchor, s) {
   const m = await picker();
-  if (m?.openWorkstreamPicker) return m.openWorkstreamPicker(anchor, { sessionId: s.id });
+  // It assigns before onPick; workstreams.changed redraws, the reload here is for a missed event.
+  if (m?.openWorkstreamPicker) return m.openWorkstreamPicker(anchor, { sessionId: s.id, current: null, none: false, onPick: () => homeWorkstreamsChanged() });
   pickFallback(anchor, s);
 }
 /** Without #35's picker: a select of the open workstreams. */
@@ -264,16 +289,16 @@ function pickFallback(anchor, s) {
     catch (err) { toast(`Assign failed: ${err.message}`); }
   } }, open.length ? [sel, h('button', { class: 'btn primary sm' }, 'Assign')] : h('span', { class: 'muted' }, 'No open workstreams yet.'));
   pop.addEventListener('toggle', (e) => { if (e.newState === 'closed') pop.remove(); });
+  pop.addEventListener('keydown', stopActivation);
   document.body.append(pop);
   const r = anchor.getBoundingClientRect();
   pop.style.top = `${Math.min(r.bottom + 4, innerHeight - 80)}px`; pop.style.left = `${Math.max(8, Math.min(r.left - 120, innerWidth - 320))}px`;
   pop.showPopover(); sel.focus();
 }
 
-async function newWorkstream(btn) {
-  const m = await picker();
-  if (m?.openWorkstreamPicker) return m.openWorkstreamPicker(btn, { sessionId: null, create: true });
-  // Inline: the card becomes a short form; Enter creates, Esc puts the card back.
+function newWorkstream(btn) {
+  // Inline, not #35's picker: that opens on the list of existing ones, a step too many here.
+  // The card becomes a short form; Enter creates and opens it, Esc puts the card back.
   const title = h('input', { class: 'field', placeholder: 'Title', 'aria-label': 'Title', required: true, spellcheck: 'false' });
   const goal = h('input', { class: 'field', placeholder: 'Goal, in a line', 'aria-label': 'Goal' });
   const form = h('form', { class: 'hm-card hm-new editing', dataset: { key: '~new' }, onsubmit: async (e) => {
@@ -365,7 +390,8 @@ async function refreshOpen() {
   try { o.detail = await call(`/api/workstreams/${enc(o.slug)}`); }
   catch (e) { panel.replaceChildren(h('div', { class: 'hm-x-load' }, ib('i-left', 'Back (Esc)', closeCard, { cls: 'hm-back' }), ` ${e.message}`)); return; }
   if (st.open !== o) return;
-  o.extra = {};
+  if (changed.has(o.slug) || changed.has('*')) o.extra = {};
+  changed.clear();
   drawOpen();
 }
 
@@ -392,7 +418,7 @@ function drawOpen() {
 }
 function tabCounts(w) {
   const notes = parseNotes(w.notes).length;
-  return { sessions: new Set([...(w.sessions || []), ...(w.records || [])]).size || null, decisions: decisionGroups(w.decisions).active.length || null,
+  return { sessions: sessionRows(w.sessions, w.records, ctx.byId).count || null, decisions: decisionGroups(w.decisions).active.length || null,
     files: w.files?.length || null, notes: notes || null, links: w.links?.length || null, vault: w.vault?.length || null };
 }
 
@@ -411,7 +437,7 @@ function overview(w) {
   return [
     ...SECTIONS.map(([k, label]) => h('section', { class: 'hm-sec' }, h('h4', {}, label), editable(k, w[k], { md: true, placeholder: `Add ${label.toLowerCase()}` }))),
     h('section', { class: 'hm-sec' }, h('h4', {}, 'Pinned'), editable('pinned', (w.pinned || []).join(', '), { single: true, placeholder: 'Issues, a milestone: #12, v2, …',
-      view: () => (w.pinned || []).length ? h('div', { class: 'hm-prs' }, w.pinned.map(p => pinChip(p))) : null })),
+      view: () => { const p = st.open?.detail?.pinned || []; return p.length ? h('div', { class: 'hm-prs' }, p.map(pinChip)) : null; } })),
     w.created ? h('p', { class: 'hm-meta muted' }, `Started ${new Date(w.created).toLocaleDateString()} · updated ${since(Date.parse(w.updated))} ago`) : null,
   ];
 }
@@ -426,7 +452,8 @@ function pinChip(p) {
  * A field shown as text; click (or Enter) turns it into an editor. Blur or
  * ⌘Enter (Enter on one-line fields) commits a PATCH; Esc puts it back.
  */
-function editable(field, value, { tag = 'div', single = false, md = false, cls = '', placeholder = '', view = null } = {}) {
+function editable(field, value, opts = {}) {
+  const { tag = 'div', single = false, md = false, cls = '', placeholder = '', view = null } = opts;
   const text = value ?? '';
   const shown = view?.() || (text ? (md ? h('div', { class: 'md', html: markdown(text) }) : text) : h('span', { class: 'hm-ph' }, placeholder));
   const el = h(tag, { class: `hm-ed ${cls}`, tabindex: '0', role: 'button', title: 'Click to edit', dataset: { field },
@@ -447,8 +474,11 @@ function editable(field, value, { tag = 'div', single = false, md = false, cls =
       const ok = await commit({ [field]: patchVal }, el);
       el.classList.remove('editing');
       if (!ok) { el.replaceChildren(shown); return; }
-      drawOpen();
-      panel.querySelector(`.hm-ed[data-field="${field}"]`)?.classList.add('saved');
+      // Only this field redraws: another one may be open for editing.
+      const d = st.open?.detail || {};
+      const fresh = editable(field, field === 'pinned' ? (d.pinned || []).join(', ') : d[field], opts);
+      el.replaceWith(fresh);
+      fresh.classList.add('saved');
     };
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
@@ -470,7 +500,7 @@ async function commit(patchBody, el) {
     if (r.redactions?.length) toast(`Saved, with ${plural(r.redactions.length, 'secret')} redacted`);
     const i = st.list.findIndex(x => x.slug === o.slug);
     if (i >= 0) st.list[i] = { ...st.list[i], ...pick(r.workstream, ['title', 'status', 'updated', 'goal', 'next', 'pinned']) };
-    if (el?.tagName === 'SELECT') drawOpen();
+    if (el?.tagName === 'SELECT' && !panel.querySelector('.hm-ed.editing')) drawOpen();
     return true;
   } catch (e) { toast(`Save failed: ${e.message}`); return false; }
 }
@@ -478,16 +508,11 @@ const pick = (o, keys) => Object.fromEntries(keys.filter(k => o?.[k] !== undefin
 
 // ---- Sessions: live ones on top, then the rest of the assigned, then wrap-up records.
 function sessionsTab(w) {
-  const ids = w.sessions || [];
-  const known = ids.map(id => ctx.byId(id)).filter(Boolean)
-    .sort((a, b) => isLive(b) - isLive(a) || (b.statusUpdatedAt || b.mtime || 0) - (a.statusUpdatedAt || a.mtime || 0));
-  const records = (w.records || []).map(parseRecord).filter(r => !r.id8 || !known.some(s => s.id.replace(/[^A-Za-z0-9]/g, '').startsWith(r.id8)))
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const recFor = (s) => (w.records || []).map(parseRecord).find(r => r.id8 && s.id.replace(/[^A-Za-z0-9]/g, '').startsWith(r.id8));
+  const { known, recordOf, records } = sessionRows(w.sessions, w.records, ctx.byId);
   if (!known.length && !records.length) return h('p', { class: 'hm-empty muted' }, 'No sessions yet. Assign one from the Unaffiliated card, or from a session’s header.');
   return h('ul', { class: 'hm-rows' },
     known.map(s => {
-      const sig = isLive(s) ? ctx.sigOf(s) : 'ended'; const rec = recFor(s);
+      const sig = isLive(s) ? ctx.sigOf(s) : 'ended'; const rec = recordOf.get(s.id);
       return h('li', { class: 'hm-row link', onclick: () => ctx.open(s.id), title: 'Open the session' },
         h('span', { class: `dot sig-${sig}`, title: SIG_LABEL[sig] }), ctx.backend(s),
         h('span', { class: 'hm-row-t' }, s.title, rec ? h('span', { class: 'hm-tagl', title: rec.file }, 'wrapped up') : null),
@@ -543,16 +568,8 @@ function filesTab(w, body) {
 }
 const absPath = (f) => String(f.path || '').startsWith('/') ? f.path : String(f.repo || '').startsWith('/') ? `${f.repo.replace(/\/$/, '')}/${f.path}` : null;
 
-let fileDlg = null;
-async function openFile(abs, label) {
-  fileDlg ??= document.body.appendChild(h('dialog', { class: 'dialog wide history vault vf hm-file', onclick: (e) => { if (e.target === fileDlg) fileDlg.close(); } }));
-  let f; try { f = await call(`/api/file?path=${enc(abs)}`); } catch (e) { f = { error: e.message }; }
-  const fctx = { api: { openEditor: (p, line) => call('/api/open-editor', 'POST', { path: p, line }).catch(e => toast(`Open in editor failed: ${e.message}`)) } };
-  fileDlg.replaceChildren(h('div', { class: 'hist-f' },
-    h('div', { class: 'hist-h' }, h('span', { class: 'muted mono' }, label), h('span', { class: 'spacer' }), ib('i-x', 'Close (Esc)', () => fileDlg.close(), { size: 12 })),
-    h('div', { class: 'vault-fv' }, renderFileView({ ...f, abs }, fctx))));
-  if (!fileDlg.open) fileDlg.showModal();
-}
+/** Files open in the Vault's file dialog (vault.js): one file view, media included. */
+const openFile = (abs, label) => vaultFile({ path: abs, rel: label }, null, { back: false });
 
 // ---- Notes: dated, newest first, each with its source.
 function notesTab(w) {
@@ -578,24 +595,28 @@ function linksTab(w) {
   return ul;
 }
 
-// ---- Vault: this workstream's local items (its <slug>/ folder, and the record's pointers).
+// ---- Vault: this workstream's local items: its <slug>/ area, and the record's pointers, each checked.
 function vaultTab(w) {
   const o = st.open;
   if (!o.extra.vault) {
     o.extra.vault = { loading: true };
-    call('/api/vault').then(v => { if (st.open !== o) return; o.extra.vault = v; if (o.tab === 'vault') drawTab(); })
+    call(`/api/home/vault/${enc(w.slug)}`).then(v => { if (st.open !== o) return; o.extra.vault = v; if (o.tab === 'vault') drawTab(); })
       .catch(e => { o.extra.vault = { error: e.message }; if (o.tab === 'vault' && st.open === o) drawTab(); });
   }
   const v = o.extra.vault;
   if (v.loading) return h('p', { class: 'hm-empty muted' }, 'Loading…');
   if (v.error) return h('p', { class: 'note err' }, `Vault: ${v.error}`);
-  const pointers = new Set((w.vault || []).map(p => p.rel || p.path || p));
-  const items = (v.items || []).filter(it => !it.dir && (it.rel.startsWith(`${w.slug}/`) || pointers.has(it.rel)));
-  const missing = [...pointers].filter(p => typeof p === 'string' && !items.some(it => it.rel === p));
-  if (!items.length && !missing.length) return h('p', { class: 'hm-empty muted' }, 'Nothing in the Vault for this workstream.');
+  const pointed = new Set((v.pointers || []).map(p => p.path));
+  const items = (v.items || []).filter(it => !pointed.has(it.rel));
+  if (!items.length && !v.pointers?.length) return h('p', { class: 'hm-empty muted' }, 'Nothing in the Vault for this workstream.');
+  const STATE = { missing: 'Not in this machine’s Vault', changed: 'Changed since it was recorded' };
   return h('ul', { class: 'hm-rows' },
+    (v.pointers || []).map(p => h('li', { class: `hm-row file${p.state === 'missing' ? '' : ' link'}`, title: STATE[p.state] || p.path,
+      onclick: p.state === 'missing' ? null : () => openFile(p.abs, p.path) },
+      svgUse(p.state === 'missing' ? 'i-alert' : 'i-vault', 13), h('span', { class: `hm-row-t mono${p.state === 'missing' ? ' muted' : ''}` }, p.path),
+      h('span', { class: 'hm-why muted' }, p.title || ''), h('span', { class: 'hm-ago' }, p.state === 'changed' ? 'changed' : ''), h('span', {}))),
     items.map(it => h('li', { class: 'hm-row file link', onclick: () => openFile(it.path, it.rel), title: it.meta?.title || it.rel },
       svgUse('i-vault', 13), h('span', { class: 'hm-row-t mono' }, it.rel), h('span', { class: 'hm-why muted' }, it.meta?.title || ''), h('span', {}),
       h('span', { class: 'hm-ago' }, since(it.meta?.savedAt ? Date.parse(it.meta.savedAt) : it.mtime)))),
-    missing.map(p => h('li', { class: 'hm-row file', title: 'Not in this machine’s Vault' }, svgUse('i-vault', 13), h('span', { class: 'hm-row-t mono muted' }, p), h('span', {}), h('span', {}), h('span', {}))));
+    v.truncated ? h('li', { class: 'hm-empty muted' }, `The first ${items.length} of this workstream’s Vault folder.`) : null);
 }

@@ -1,6 +1,6 @@
 // Home (public/home.js, #33): the card order, the Unaffiliated card, the records
 // the expanded view reads (public/homemodel.js), and the list route's ?sessions
-// and ?cards (lib/routes/workstreams.mjs). A local bare repo stands in for GitHub.
+// and ?cards (lib/routes/workstreams.mjs), and the Vault tab route (lib/routes/home.mjs). A local bare repo stands in for GitHub.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { workstreamMap, cardStates, orderCards, unaffiliated, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles } from '../public/homemodel.js';
+import { workstreamMap, cardStates, orderCards, unaffiliated, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles, sessionRows, coalesce } from '../public/homemodel.js';
+import { storeFor } from '../lib/workstreams.mjs';
 import { loadRoutes, matchRoute } from '../lib/routes.mjs';
 import { DeckState } from '../lib/deckstate.mjs';
 
@@ -53,8 +54,9 @@ test('cards use app.js’s signal when given one; a hidden or ended session is n
 
 test('the session → workstream map: a summary’s own field (#35) wins over the list', () => {
   const list = [{ slug: 'a', ids: ['s1', 's2'] }, { slug: 'b', ids: [] }];
-  const map = workstreamMap(list, [{ id: 's1', workstream: 'b' }, { id: 's2', workstream: null }, { id: 's3' }]);
+  const map = workstreamMap(list, [{ id: 's1', workstream: { slug: 'b', title: 'B' } }, { id: 's2', workstream: null }, { id: 's3' }]);
   assert.deepEqual([...map], [['s1', 'b']]);
+  assert.deepEqual([...workstreamMap(list, [{ id: 's2', workstream: 'b' }])], [['s1', 'a'], ['s2', 'b']], 'a bare slug works too');
   assert.deepEqual([...workstreamMap(list, [])], [['s1', 'a'], ['s2', 'a']]);
 });
 
@@ -129,12 +131,69 @@ test('the list route: ?sessions=1 adds session ids, ?cards=1 what a card shows',
     assert.equal(w.goal, undefined);
     [w] = (await call('GET', '/api/workstreams?sessions=1')).body.workstreams;
     assert.deepEqual([w.ids.sort(), w.sessions, w.live, w.counts], [['s1', 's2'], 2, 1, undefined]);
+    // Cards are read cheaply: no full store.get (which parses every decision) per workstream.
+    const store = storeFor(path.join(deck.dir, 'workstreams'));
+    const get = store.get; let gets = 0;
+    store.get = (...a) => { gets++; return get.apply(store, a); };
     [w] = (await call('GET', '/api/workstreams?cards=1')).body.workstreams;
+    store.get = get;
+    assert.equal(gets, 0);
     assert.deepEqual(w.ids.sort(), ['s1', 's2']);
     assert.deepEqual([w.goal, w.next, w.pinned, w.links], ['Cards for workstreams', 'Screenshots', [], []]);
-    assert.deepEqual(w.counts, { decisions: 1, notes: 2, files: 0, records: 0, vault: 0 }, 'superseded decisions are not counted');
+    assert.deepEqual(w.counts, { decisions: 2, notes: 2, files: 0, records: 0, vault: 0 }, 'decision files counted, notes by their bullets');
   } finally {
     env.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
     server.close();
   }
+});
+
+test('the Sessions tab: a wrapped-up session still listed is one row, and the count is the rows', () => {
+  const byId = (id) => ({ ab12cd34ef: live('ab12cd34ef', 'working'), zz99: recent('zz99', 5) })[id];
+  const r = sessionRows(['zz99', 'ab12cd34ef', 'gone'], ['sessions/2026-10-30-old-one-ff00ff00.md', 'sessions/2026-10-31-the-live-one-ab12cd34.md', 'sessions/2026-11-01-recent-zz99.md'], byId);
+  assert.deepEqual(r.known.map(s => s.id), ['ab12cd34ef', 'zz99'], 'live first; an id the deck no longer lists is left out');
+  assert.equal(r.recordOf.get('ab12cd34ef').title, 'the live one');
+  assert.equal(r.recordOf.get('zz99').title, 'recent');
+  assert.deepEqual(r.records.map(x => x.title), ['old one']);
+  assert.equal(r.count, 3);
+  assert.equal(sessionRows([], [], byId).count, 0);
+});
+
+test('coalesce: a call during a run is folded into one more run, never dropped', async () => {
+  let runs = 0; let release; const gates = [];
+  const run = coalesce(async () => { runs++; await new Promise(r => gates.push(r)); });
+  const first = run();
+  const second = run(); const third = run();   // both arrive mid-run
+  assert.equal(second, first, 'callers share the one promise');
+  assert.equal(third, first);
+  while (gates.length || runs < 2) { await new Promise(r => setImmediate(r)); (release = gates.shift()) && release(); }
+  await first;
+  assert.equal(runs, 2, 'one extra run for the two calls that landed mid-run');
+  const again = run(); while (gates.length || runs < 3) { await new Promise(r => setImmediate(r)); (release = gates.shift()) && release(); }
+  await again;
+  assert.equal(runs, 3, 'a call after it finished runs afresh');
+});
+
+test('the Vault tab route: the workstream’s pointers checked one by one, and its own folder', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-home-v-')));
+  const deck = new DeckState(path.join(root, 'state'));
+  const { vaultFor } = await import('../lib/vault.mjs');
+  const vault = vaultFor(deck);
+  const src = path.join(root, 'notes.txt'); fs.writeFileSync(src, 'kept locally\n');
+  const saved = await vault.saveFile(src, { workstream: 'ws-a', title: 'a note' });
+  const kept = await vault.pointer(saved.path);
+  fs.mkdirSync(path.join(deck.dir, 'workstreams', 'ws-a'), { recursive: true });
+  fs.writeFileSync(path.join(deck.dir, 'workstreams', 'ws-a', 'vault.json'), JSON.stringify([kept, { ...kept, path: 'ws-a/gone.txt', title: 'gone' }]));
+  let body = null;
+  const [route] = (await loadRoutes(path.join(import.meta.dirname, '..', 'lib', 'routes'), { send: (res, code, b) => { body = { code, ...b }; }, deck }))
+    .filter(r => r.from === 'home.mjs');
+  await route.handler({}, {}, { m: [null, 'ws-a'] });
+  assert.equal(body.code, 200);
+  assert.deepEqual(body.pointers.map(p => [p.path, p.state]), [[saved.rel, 'ok'], ['ws-a/gone.txt', 'missing']]);
+  assert.deepEqual(body.items.map(i => i.rel), [saved.rel]);
+  assert.equal(body.items[0].meta.title, 'a note');
+  fs.appendFileSync(saved.path, 'edited\n');
+  await route.handler({}, {}, { m: [null, 'ws-a'] });
+  assert.equal(body.pointers[0].state, 'changed');
+  await route.handler({}, {}, { m: [null, '..%2Fx'] });
+  assert.equal(body.code, 400);
 });

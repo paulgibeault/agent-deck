@@ -13,13 +13,17 @@ export const isLive = (s) => s?.kind !== 'agent' && s?.bucket === 'active' && !s
 const baseSig = (s) => !s?.alive ? 'ended' : s.glance?.signal || (s.status === 'busy' ? 'working' : 'done');
 
 /**
- * session id → workstream slug. A summary's own `workstream` (#35) wins, null
- * included (unassigned); otherwise the list's `ids` (GET /api/workstreams?sessions=1).
+ * session id → workstream slug. A summary's own `workstream` (#35: { slug, title }
+ * or null for none) wins; otherwise the list's `ids` (GET /api/workstreams?sessions=1).
  */
 export function workstreamMap(list, sessions = []) {
   const map = new Map();
   for (const w of list || []) for (const id of w.ids || []) map.set(id, w.slug);
-  for (const s of sessions) if (s && 'workstream' in s) { if (s.workstream) map.set(s.id, s.workstream); else map.delete(s.id); }
+  for (const s of sessions) {
+    if (!s || !('workstream' in s)) continue;
+    const slug = typeof s.workstream === 'string' ? s.workstream : s.workstream?.slug;
+    if (slug) map.set(s.id, slug); else map.delete(s.id);
+  }
   return map;
 }
 
@@ -113,4 +117,36 @@ export function groupFiles(files) {
   const by = new Map();
   for (const f of files || []) { const r = f.repo || ''; (by.get(r) || by.set(r, []).get(r)).push(f); }
   return [...by].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/**
+ * The Sessions tab's rows: the assigned sessions the deck knows (live first,
+ * then by last activity), then wrap-up records of sessions not among them.
+ * A wrapped-up session that is still listed is one row, not two.
+ */
+export function sessionRows(ids, records, byId) {
+  const id8 = (id) => String(id).replace(/[^A-Za-z0-9]/g, '').slice(0, 8);
+  const known = (ids || []).map(byId).filter(Boolean)
+    .sort((a, b) => isLive(b) - isLive(a) || (b.statusUpdatedAt || b.mtime || 0) - (a.statusUpdatedAt || a.mtime || 0));
+  const recs = (records || []).map(parseRecord);
+  const recordOf = new Map(known.map(s => [s.id, recs.find(r => r.id8 && id8(s.id) === r.id8) || null]));
+  const rest = recs.filter(r => !r.id8 || !known.some(s => id8(s.id) === r.id8)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return { known, recordOf, records: rest, count: known.length + rest.length };
+}
+
+/**
+ * Run `fn` one at a time: a call while it runs is not dropped but folded into
+ * one more run after it, so a change that lands mid-fetch is fetched too.
+ */
+export function coalesce(fn) {
+  let running = null; let again = false;
+  const run = () => {
+    if (running) { again = true; return running; }
+    running = (async () => {
+      try { do { again = false; await fn(); } while (again); }
+      finally { running = null; }
+    })();
+    return running;
+  };
+  return run;
 }
