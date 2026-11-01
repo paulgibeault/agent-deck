@@ -1,7 +1,7 @@
 // public/files.js — the Files tab: a lazy, git-aware tree of the session's
 // folder with find-as-you-type, and a details view that renders each kind of
 // file the way it reads best (images, markdown, JSON, config, CSV, code…).
-import { h, svgUse, ib, copyBtn, fmtTokens, ago, basename, markdown, codeBlock, langFor, highlightIn, headerFor, section } from './events.js';
+import { h, svgUse, ib, copyBtn, fmtTokens, ago, basename, markdown, codeBlock, langFor, highlightIn, headerFor, section, fileActions } from './events.js';
 
 // ------------------------------------------------------------ file kinds
 const KINDS = {
@@ -461,6 +461,7 @@ export function renderFileView(file, ctx) {
     ib('i-link', 'Copy path', (e) => { navigator.clipboard?.writeText(file.abs); e.currentTarget.classList.add('done'); }, { size: 14 }),
     !MEDIA.has(kind) && file.content != null ? copyBtn(() => text, 'Copy contents') : null,
     ctx.api ? ib('i-open', 'Open in editor', () => ctx.api.openEditor(file.abs, 1), { size: 14 }) : null,
+    ...(file.error ? [] : fileActions({ path: file.abs, sessionId: ctx.sessionId })),
   ];
   const tag = h('span', { class: 'tic lab' }, glyph(kind), h('span', {}, label));
   root.append(headerFor({ tag, title: file.rel || file.abs.replace(/^\/Users\/[^/]+/, '~'), nav: false, meta, actions }));

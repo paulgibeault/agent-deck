@@ -1308,3 +1308,19 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .req-role { font-size: 11px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
 .req-role::first-letter { text-transform: uppercase; }
 .req-tools { font-size: 11px; color: var(--fg2); overflow-wrap: anywhere; padding-top: 4px; }
+
+/* The Vault dialog (vault.js): the history list's rows, indented by folder depth. */
+.vault .hist-h h2 { display: inline-flex; align-items: center; gap: 6px; }
+.vault-row { grid-template-columns: 16px minmax(0, 1fr) 14px 52px; padding-left: calc(8px + var(--d, 0) * 16px); cursor: default; }
+.vault-row a.tt { color: inherit; text-decoration: none; }
+.vault-row a.tt:hover { text-decoration: underline; }
+.vault-row.dir .tt { font-weight: 400; color: var(--fg2); }
+.vault-row .r { text-align: right; font-size: 11.5px; color: var(--muted); }
+.vault-src { display: inline-flex; color: var(--muted); }
+.vault-warn { margin: 6px 0; display: flex; align-items: center; gap: 4px; }
+.vault-ic.warn { color: var(--err); }
+.vault-row.file { cursor: pointer; }
+.vault-row.heavy .tt { color: var(--muted); font-style: italic; }
+.vault-trunc { font-size: 12px; }
+.dialog.vault.vf { width: min(900px, calc(100vw - 32px)); }
+.vault-fv { max-height: min(640px, calc(100vh - 160px)); overflow: auto; margin-top: 8px; }

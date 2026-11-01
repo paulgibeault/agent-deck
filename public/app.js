@@ -13,6 +13,7 @@ import { headerRows, headerEditing, fitHeader } from './header.js';
 import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
 import { registerView, showView } from './views.js';
 import './models.js';
+import './vault.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -2252,6 +2253,7 @@ function openLaunch() {
   const cwds = [...new Set([...state.snapshot.active, ...state.snapshot.recent].map(s => s.cwd).filter(Boolean))].slice(0, 20);
   $('ns-cwds').replaceChildren(...cwds.map(c => h('option', { value: c })));
   $('ns-cwd').value = prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
+  delete $('ns-cwd').dataset.once;
   $('ns-name').value = '';
   modelOptions($('ns-model'));
   $('ns-model').value = prefs.launchModel || '';
@@ -2322,7 +2324,7 @@ $('ns-form').addEventListener('submit', async (e) => {
   $('ns-go').textContent = 'Starting…';
   try {
     const st = await api.post('/api/launch', body);
-    prefs.launchCwd = body.cwd;
+    if (!$('ns-cwd').dataset.once) prefs.launchCwd = body.cwd;   // a Vault launch (vault.js) is not the new default
     prefs.launchPerm = body.permissionMode; prefs.launchHarness = body.harness; savePrefs(); renderModelPicker();
     state.deck.set(st.id, st);
     $('ns-prompt').value = ''; launchFiles.clear();
@@ -2918,7 +2920,7 @@ async function loadFiles() {
 const MEDIA_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico|pdf|mp3|wav|ogg|m4a|flac|mp4|webm|mov)$/i;
 async function openFile(path, line = null, info = {}) {
   pickEvent(); state.detailsKey = `file:${path}`; syncDetailsPane();
-  const ctx = { ...detailCtx(), root: files.root, openPath: (p) => openPathFromLink(p) };
+  const ctx = { ...detailCtx(), root: files.root, openPath: (p) => openPathFromLink(p), sessionId: state.selected };
   const rel = info.rel ?? (files.root && path.startsWith(files.root + '/') ? path.slice(files.root.length + 1) : null);
   try {
     const f = await api.get(`/api/file?path=${encodeURIComponent(path)}${MEDIA_EXT.test(path) ? '&meta=1' : ''}`);
