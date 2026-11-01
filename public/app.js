@@ -15,6 +15,8 @@ import { registerView, showView } from './views.js';
 import { launchOpen, launchCwdChanged, launchCollect, launchDone } from './launch.js';
 import './models.js';
 import './vault.js';
+import { railFilter } from './wsattach.js';
+import { workstreamsChanged } from './wspicker.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 
 const $ = (id) => document.getElementById(id);
@@ -159,6 +161,7 @@ function connect() {
   es.addEventListener('shell.output', (e) => shellOutput(JSON.parse(e.data)));
   es.addEventListener('shell.exit', (e) => shellExit(JSON.parse(e.data)));
   es.addEventListener('stars.changed', (e) => applyStarsChanged(JSON.parse(e.data)));
+  es.addEventListener('workstreams.changed', (e) => workstreamsChanged(JSON.parse(e.data)));
   es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
 }
 function setConn(on) {
@@ -514,7 +517,8 @@ function matchesQuery(s, q) {
     || (s.subagents || []).some(a => a.title?.toLowerCase().includes(q))
     || (s.spawned || []).some(id => state.byId.get(id)?.title?.toLowerCase().includes(q));
 }
-const matchesTree = (s) => matchesQuery(s, state.treeFilter);
+const inWorkstream = railFilter(() => renderTree());   // the rail's filter by workstream (wsattach.js)
+const matchesTree = (s) => matchesQuery(s, state.treeFilter) && inWorkstream(s);
 
 /**
  * The rail's buckets. The server sorts by process: alive, recent file,
@@ -2267,7 +2271,7 @@ function openLaunch() {
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
   cwdSent = $('ns-cwd').value.trim();
-  launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected });
+  launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected, workstream: state.byId.get(state.selected)?.workstream || null });
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
 }

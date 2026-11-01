@@ -27,6 +27,8 @@ const SHELL = [
   '/stars.js',
   '/said.js',
   '/launch.js',
+  '/wspicker.js',
+  '/wsattach.js',
   '/styles.css',
   '/manifest.webmanifest',
   '/vendor/highlight.min.js',

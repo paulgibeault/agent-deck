@@ -1342,3 +1342,35 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 /* Hidden while no section in it shows anything. */
 .ns-x:not(:has(> .ns-sec:not(:empty))) { display: none; }
 .ns-sec:empty { display: none; }
+
+/* Workstreams (#35): the picker (wspicker.js), the launch section, header and rail (wsattach.js). */
+.wsp { width: 280px; }
+.wsp-q { margin: 2px 2px 4px; }
+.wsp-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow: auto; }
+.wsp-foot { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.wsp-st { font-size: 11px; }
+.wsp-form { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
+.wsp-form .field { width: 100%; font-family: var(--sans); }
+.wsp-fa { display: flex; justify-content: flex-end; gap: 6px; }
+.ns-ws { display: flex; align-items: center; gap: 10px; }
+.ns-ws-l { font-size: 11.5px; font-weight: 500; color: var(--fg2); }
+.ns-ws-b { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--bg0); color: var(--fg); font-size: 12.5px; max-width: 280px; }
+.ns-ws-b > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ns-ws-b svg { color: var(--muted); flex: none; }
+.ns-ws-b.none { color: var(--muted); }
+.ns-ws-b:hover { background: var(--hover); }
+.ns-ws-o { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: var(--fg2); }
+.ns-ws-c { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.ns-ws-p { margin-top: 6px; }
+.ns-ws-p > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; color: var(--fg2); }
+.ns-ws-n { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ns-ws-n.over { color: var(--err-fg); }
+#ns-form .ns-ws-t { width: 100%; height: auto; min-height: 120px; margin-top: 6px; padding: 8px 10px; line-height: 1.45; resize: vertical; }
+.sh-ws-add { opacity: .7; }
+.sh-ws-add:hover { opacity: 1; }
+.rail-ws { min-width: 22px; height: 22px; margin-right: -6px; }
+.rail-ws[aria-pressed="true"] { color: var(--info); }
+.wsp .mm-i.hl { background: var(--hover); }
+.sh-ws-w { display: inline-flex; align-items: center; }
+.sh-ws-more { min-width: 16px; width: 16px; opacity: 0; }
+.sh-ws-w:hover .sh-ws-more, .sh-ws-more:focus-visible { opacity: 1; }

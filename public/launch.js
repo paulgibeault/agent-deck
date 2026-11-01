@@ -2,7 +2,7 @@
 // section and its own fields to the launch without editing app.js.
 //   registerLaunchSection({
 //     slot: 'cwd' | 'prompt',         // after the folder field, or above the prompt
-//     open(el, ctx),                  // the dialog opened: fill `el` (yours alone); ctx = { cwd(), selected }
+//     open(el, ctx),                  // the dialog opened: fill `el` (yours alone); ctx = { cwd(), selected, workstream }
 //     cwdChanged(cwd, el),            // the folder field changed (typed, picked, or set by another feature)
 //     collect(body) => patch,         // before /api/launch: return fields to merge in (or throw to stop with a message)
 //     launched(state, body),          // it started
