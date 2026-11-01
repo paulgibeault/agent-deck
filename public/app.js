@@ -138,7 +138,7 @@ function connect() {
   es = new EventSource('/api/stream');
   es.onopen = () => { setConn(true); hideLaunch(); if (state.selected) catchUp(state.selected); for (const id of state.expanded) catchUp(id); };
   es.onerror = () => { setConn(false); watchBackend(); };
-  es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.server = { startedAt: d.serverStartedAt, version: d.version }; state.narrator = d.narrator || state.narrator; reportView(); });
+  es.addEventListener('hello', (e) => { const d = JSON.parse(e.data); state.clientId = d.clientId; state.server = { startedAt: d.serverStartedAt, version: d.version }; state.narrator = d.narrator || state.narrator; reportView(); loadConfig(); });
   es.addEventListener('sessions.snapshot', (e) => applySnapshot(JSON.parse(e.data)));
   es.addEventListener('attention.snapshot', (e) => { state.attention = JSON.parse(e.data); });
   es.addEventListener('attention', (e) => { const a = JSON.parse(e.data); state.attention.log = [...state.attention.log, a].slice(-100); narrate(a); });
@@ -2278,7 +2278,10 @@ function renderModelPicker() {
 }
 $('tb-model').addEventListener('change', (e) => { prefs.launchModel = e.target.value; savePrefs(); renderModelPicker(); });
 renderModelPicker();
-api.get('/api/config').then(r => { cliModel = r.cliModel; if (r.harnesses?.length) harnesses = r.harnesses; renderModelPicker(); renderQuota(); }).catch(() => {});
+/** The CLI's model and the agents the backend can launch; again on every connect, since the app can open before the backend is up. */
+function loadConfig() {
+  api.get('/api/config').then(r => { cliModel = r.cliModel; if (r.harnesses?.length) harnesses = r.harnesses; renderModelPicker(); renderQuota(); }).catch(() => {});
+}
 
 /** Show the launch dialog's fields for one harness: its permission modes, and a model pick only where it takes one. */
 function renderLaunchHarness(name, perm) {

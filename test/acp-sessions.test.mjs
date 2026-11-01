@@ -294,6 +294,45 @@ test('ACP session: stop closes it, a send resumes it under the same id, shutdown
   assert.deepEqual(log.slice(-2), ['session/close', 'eof'], 'sessions closed before the agent exits');
 });
 
+test('ACP session: after a backend restart its sessions are listed again, and a send brings back their history', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-acp-restart-'));
+  const env = { FAKE_ACP_STORE: path.join(dir, 'fake-store.json') };
+  const store = path.join(dir, 'agents.json');
+  const first = deck(t, env, { store });
+  const id = (await first.agents.launch({ cwd, prompt: 'hello' })).id;
+  await until(first.agents, () => id, x => x.status === 'idle');
+  await first.agents.shutdown();
+  first.agents.flush();   // as server.mjs does on exit
+
+  // Wired as server.mjs does it: the stored sessions listed, a wake with no events replays.
+  let index;
+  const second = deck(t, env, { store, wakeable: (x) => index.files.has(x) ? { cwd: index.cwdOf(x), replay: !index.loaded.get(x)?.state.events.length, title: index.loaded.get(x)?.state.meta.title } : { error: 'unknown session' } });
+  index = second.index;
+  const list = await second.agents.storedStreams();
+  assert.deepEqual(list.map(x => [x.id, x.harness, x.cwd, x.title]), [[id, 'fake', cwd, 'hello']]);
+  for (const x of list) index.addStream(x.id, { cwd: x.cwd, title: x.title, at: Date.parse(x.updatedAt) });
+  assert.equal(index.summary(id).title, 'hello');
+  assert.equal(index.summary(id).alive, false);
+
+  await second.agents.send(id, 'are you back?');
+  await until(second.agents, () => id, x => x.alive && x.status === 'idle' && x.turns === 1);
+  assert.ok(second.methods().includes('session/load'));
+  const texts = index.events(id).events.filter(e => e.kind === 'prompt' || e.kind === 'text').map(e => e.text);
+  assert.deepEqual(texts, ['hello', 'Fake reply to: hello', 'are you back?', 'Fake reply to: are you back?']);
+  assert.equal(index.summary(id).title, 'hello', 'the wake keeps the title it was listed with');
+  const evs = index.events(id).events;
+  assert.deepEqual(evs.filter(e => e.kind === 'prompt').map(e => [e.text, !!e.replayed]), [['hello', true], ['are you back?', false]], 'history is marked, so no snapshots are taken for it');
+
+  // Stopped and woken again (no replay now): a new mapper, ids that do not land on the earlier turn's.
+  await second.agents.stop(id);
+  await until(second.agents, () => id, x => !x.alive);
+  await second.agents.send(id, 'third');
+  await until(second.agents, () => id, x => x.alive && x.status === 'idle' && x.turns === 1);
+  const all = index.events(id).events;
+  assert.equal(new Set(all.map(e => e.id)).size, all.length, 'every event keeps its own id');
+  assert.deepEqual(all.filter(e => e.kind === 'prompt').map(e => e.text), ['hello', 'are you back?', 'third']);
+});
+
 test('ACP session: an agent that cannot start fails the launch with its error', async (t) => {
   const index = new SessionIndex({ claudeDir: fs.mkdtempSync(path.join(os.tmpdir(), 'deck-acp-home-')) });
   const agents = new AgentManager({ drivers: { fake: new AcpDriver({ bin: path.join(cwd, 'no-such-acp') }) } });
