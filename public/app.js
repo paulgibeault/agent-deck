@@ -18,6 +18,7 @@ import './vault.js';
 import { railFilter } from './wsattach.js';
 import { workstreamsChanged } from './wspicker.js';
 import './ghchips.js';
+import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged } from './home.js';
 
@@ -164,6 +165,7 @@ function connect() {
   es.addEventListener('shell.exit', (e) => shellExit(JSON.parse(e.data)));
   es.addEventListener('stars.changed', (e) => applyStarsChanged(JSON.parse(e.data)));
   es.addEventListener('workstreams.changed', (e) => workstreamsChanged(JSON.parse(e.data)));
+  es.addEventListener('worktrees.setup', (e) => onWorktreeSetup(JSON.parse(e.data)));
   es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
   es.addEventListener('workstreams.changed', homeWorkstreamsChanged);
   es.addEventListener('hello', homeWorkstreamsChanged);
