@@ -1759,7 +1759,7 @@ function briefFoot(id, s, pb, i, all) {
     } else if (phase === 'turn') foot.append(h('span', { class: 'bf-n', title: rule }, 'next: on new activity'));
     else foot.append(h('span', { class: 'bf-n' }, 'final'));
   }
-  // The household model's tunnel to the model host is down: offer to heal it.
+  // The household model's tunnel to its host is down: offer to heal it.
   if (state.narrator.enabled && TUNNEL_ERR.test(pb?.error || state.narrator.error?.message || '')) {
     foot.append(ib('i-plug', 'Heal the SSH tunnel to the model host', healTunnel, { size: 12, cls: 'err', disabled: healing || null }));
   }
