@@ -67,6 +67,7 @@ Flags and environment:
 | `DECK_ASK_MODEL` | `DECK_LLM_MODEL`, or `sonnet` with `claude` | model for Ask about this |
 | `DECK_CLAUDE_BIN` | `claude` | CLI used for `claude -p` model calls and `/usage` |
 | `DECK_AGENT_BIN` | `claude` | CLI used for deck-launched sessions |
+| `DECK_GH` | `gh` | GitHub CLI the workstreams repo setup uses (point it at a stand-in to try the flow offline; the repo is cloned to `$DECK_STATE_DIR/workstreams`) |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | unset | Microsoft neural voices for Read aloud (or set them in its settings) |
 | `DECK_STATE_DIR` | `~/.agent-deck` | launch token, hidden sessions, the delete trash, Kokoro voices |
 
