@@ -2266,6 +2266,7 @@ function openLaunch() {
   $('ns-err').hidden = true;
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
+  cwdSent = $('ns-cwd').value.trim();
   launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected });
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
@@ -2316,8 +2317,11 @@ $('hist-list').addEventListener('click', (e) => { const li = e.target.closest('.
 $('history').addEventListener('click', (e) => { if (e.target === $('history')) $('history').close(); });
 $('ns-cancel').onclick = () => $('new-session').close();
 // Sections that depend on the folder (worktrees, workstreams) follow it as it changes.
-$('ns-cwd').addEventListener('change', () => launchCwdChanged($('ns-cwd').value.trim()));
-$('ns-cwd').addEventListener('input', () => launchCwdChanged($('ns-cwd').value.trim()));
+// Once per settled value: typing waits for a pause, a pick or a set value goes at once.
+let cwdTimer = null, cwdSent = null;
+const cwdNow = () => { clearTimeout(cwdTimer); const v = $('ns-cwd').value.trim(); if (v !== cwdSent) { cwdSent = v; launchCwdChanged(v); } };
+$('ns-cwd').addEventListener('change', cwdNow);
+$('ns-cwd').addEventListener('input', () => { clearTimeout(cwdTimer); cwdTimer = setTimeout(cwdNow, 350); });
 const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), clip: $('ns-clip'), file: $('ns-file'), drop: $('ns-form'), toast });
 $('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
 $('ns-form').addEventListener('submit', async (e) => {
