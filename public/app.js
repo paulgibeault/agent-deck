@@ -9,7 +9,7 @@ import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
 import { createProcView, pidLinkEl } from './procs.js';
-import { headerRows } from './header.js';
+import { headerRows, headerEditing, fitHeader } from './header.js';
 import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
 import { registerView, showView } from './views.js';
 import './models.js';
@@ -1271,6 +1271,7 @@ async function select(id) {
 // ------------------------------------------------------------ session header + brief
 function renderHeader() {
   const id = state.selected; if (!id) return;
+  if (headerEditing(id)) return;   // the title is being renamed; redrawing would lose the field
   const c = state.cache.get(id); const s = state.byId.get(id) || c?.summary;
   const el = $('shead');
   if (!s) { el.replaceChildren(h('div', { class: 'muted' }, 'Loading…')); $('nowslot').replaceChildren(); return; }
@@ -1283,6 +1284,7 @@ function renderHeader() {
   const out = [...headerRows(headerCtx(id, s, b, st)), renderBriefBox(id, s, b)].filter(Boolean);
 
   patchChildren(el, out);
+  fitHeader(el);
   if (card.id === 'details') showDetailsCard(detailsBtn(), true);
   applyRing();
 }
@@ -1292,7 +1294,8 @@ function headerCtx(id, s, b, st) {
   return {
     id, s, brief: b, status: st, sig: sigOf(s), isAgent,
     deck: isAgent ? null : deckOf(id),
-    place: s.cwd && !isAgent ? placeOf(id) : null,
+    // A subagent shows its parent's place, unless it works in a folder (a worktree) of its own.
+    place: s.cwd ? placeOf(isAgent && s.cwd === state.byId.get(s.parentId)?.cwd ? s.parentId : id) : null,
     actor: actorOf(s), resume: !isAgent && resumeCommand(s),
     session: (x) => state.byId.get(x),
     backendLabel: (harness) => backendOfHarness(harnessOf(harness)).label,
@@ -1301,7 +1304,8 @@ function headerCtx(id, s, b, st) {
     backendChip: () => backendChip(s),
     contextRing: () => contextRing(b?.context || s.glance?.context),
     detailsBtn,
-    act: { select, close: closeSession, reopen: reopenSession, delete: deleteSession, stop: stopSession, setTab, openEditor: (p) => api.openEditor(p) },
+    act: { select, close: closeSession, reopen: reopenSession, delete: deleteSession, stop: stopSession, setTab, openEditor: (p) => api.openEditor(p),
+      rename: (x, title) => api.post(`/api/sessions/${sid(x)}/title`, { title }).catch((e) => { toast(`Rename failed: ${e.message}`); throw e; }), refresh: renderHeader },
   };
 }
 
@@ -1325,7 +1329,7 @@ function placeOf(id) {
   if ((!c || c.key !== key || Date.now() - c.at > (c.r?.pending ? 3000 : 30_000)) && !place.inflight.has(id)) {
     place.inflight.add(id);
     api.get(`/api/sessions/${sid(id)}/place`)
-      .then((r) => { const was = JSON.stringify(c?.r); place.data.set(id, { r, at: Date.now(), key }); if (id === state.selected && was !== JSON.stringify(r)) renderHeader(); })
+      .then((r) => { const was = JSON.stringify(c?.r); place.data.set(id, { r, at: Date.now(), key }); if ((id === state.selected || state.byId.get(state.selected)?.parentId === id) && was !== JSON.stringify(r)) renderHeader(); })
       .catch(() => place.data.set(id, { r: c?.r || null, at: Date.now(), key }))
       .finally(() => place.inflight.delete(id));
   }
