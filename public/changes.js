@@ -3,6 +3,7 @@
 import { h, svgUse, ib, fmtTime, oneLine, headerFor, section, renderDiff, parseUnified, langFor, copyBtn, editOps } from './events.js';
 import { classify, toolCommand } from './classify.js';
 import { fileKind, glyph, viewSwitch } from './files.js';
+import { fileStar } from './stars.js';
 
 export { editOps };
 
@@ -57,8 +58,8 @@ function diffBar(add, del) {
 }
 const stat = (add, del) => h('span', { class: 'dstat' }, add ? h('span', { class: 'add-n' }, `+${add}`) : null, del ? h('span', { class: 'del-n' }, `−${del}`) : null);
 
-/** The by-turn list. `onFile(turn, file)` and `onShell(ev)` open details. */
-export function renderTurnList(root, turns, { selected = null, collapsed = new Set(), onFile, onShell, onToggle } = {}) {
+/** The by-turn list. `onFile(turn, file)` and `onShell(ev)` open details; `sid` gives files their stars. */
+export function renderTurnList(root, turns, { selected = null, collapsed = new Set(), onFile, onShell, onToggle, sid = null } = {}) {
   if (!turns.length) { root.replaceChildren(h('div', { class: 'pad muted' }, 'No file changes in this session yet.')); return; }
   const out = [];
   for (const t of turns) {
@@ -83,7 +84,7 @@ export function renderTurnList(root, turns, { selected = null, collapsed = new S
         f.deleted ? h('span', { class: 'ct-del', title: 'deleted in this turn' }, 'deleted') : null,
         f.binary ? h('span', { class: 'ct-x' }, 'binary') : null,
         f.edits.length > 1 ? h('span', { class: 'ct-x', title: `${f.edits.length} edits in this turn` }, `×${f.edits.length}`) : null,
-        stat(f.add, f.del), diffBar(f.add, f.del)));
+        stat(f.add, f.del), diffBar(f.add, f.del), fileStar(sid, f.path, f.rel)));
     }
     for (const ev of t.shell) {
       const c = classify(ev);
