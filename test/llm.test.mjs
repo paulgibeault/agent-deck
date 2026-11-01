@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { openaiTransport, transportFromEnv } from '../lib/llm.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { openaiTransport, transportFromEnv, tunnelTrouble } from '../lib/llm.mjs';
 import { Narrator } from '../lib/narrator.mjs';
 
 /** A tiny OpenAI-compatible server: `handle(body, res)` answers each POST. */
@@ -68,10 +71,37 @@ test('openai transport: a refused connection is retryable, so a dropped tunnel d
   const s = await fakeServer(() => {});
   const url = s.url;
   await s.close();
-  const n = new Narrator({ llm: openaiTransport({ url, model: 'm' }) });
+  // No open-act client here, whatever this machine has.
+  const n = new Narrator({ llm: openaiTransport({ url, model: 'm', tunnelConf: path.join(os.tmpdir(), 'deck-no-open-act.conf') }) });
   await assert.rejects(n.run({ system: 's', prompt: 'p', model: 'm' }), (e) => /unreachable: ECONNREFUSED/.test(e.message) && !e.fatal);
   assert.equal(n.blocked(), false);
   assert.equal(n.status().error.fatal, false);
+});
+
+test('openai transport: a refused connection on the open-act tunnel port says the tunnel is down', async () => {
+  const s = await fakeServer(() => {});
+  const url = s.url;
+  await s.close();
+  const conf = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-llm-')), 'client.conf');
+  fs.writeFileSync(conf, `# comment\nNODE_HOST=gpu-node.example\nLOCAL_PORT=${new URL(url).port}\nMODEL2_ID=x\n`);
+  const n = new Narrator({ llm: openaiTransport({ url, model: 'm', tunnelConf: conf }) });
+  await assert.rejects(n.run({ system: 's', prompt: 'p', model: 'm' }), (e) => /open-act tunnel to gpu-node\.example is down/.test(e.message) && /heal-tunnel\.sh/.test(e.message) && !e.fatal);
+});
+
+test('tunnelTrouble: a dropped connection means the node\'s model is down; other ports and hosts are not the tunnel', () => {
+  const conf = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'deck-llm-')), 'client.conf');
+  fs.writeFileSync(conf, 'NODE_HOST=gpu-node.example\nLOCAL_PORT=8080   # forwarded\n');
+  const down = tunnelTrouble('http://127.0.0.1:8080/v1', 'UND_ERR_SOCKET', conf);
+  assert.match(down, /model server on gpu-node\.example is not answering/);
+  assert.doesNotMatch(down, /open-act tunnel/, 'healing the tunnel cannot fix this, so the heal button stays away');
+  assert.match(tunnelTrouble('http://[::1]:8080/v1', 'ECONNREFUSED', conf), /tunnel to gpu-node\.example is down/);
+  assert.equal(tunnelTrouble('http://127.0.0.1:9999/v1', 'ECONNREFUSED', conf), null);
+  assert.equal(tunnelTrouble('http://example.com:8080/v1', 'ECONNREFUSED', conf), null);
+  assert.equal(tunnelTrouble('http://127.0.0.1:8080/v1', 'ECONNREFUSED', conf + '.missing'), null, 'no open-act client, no hint');
+  // No LOCAL_PORT: 8080, as heal-tunnel.sh assumes; a URL without a port is not that.
+  fs.writeFileSync(conf, 'NODE_HOST=gpu-node.example\n');
+  assert.match(tunnelTrouble('http://127.0.0.1:8080/v1', 'ECONNREFUSED', conf), /is down/);
+  assert.equal(tunnelTrouble('http://localhost/v1', 'ECONNREFUSED', conf), null);
 });
 
 test('openai transport: a slow server times out, non-fatal, and frees its slot', async () => {
