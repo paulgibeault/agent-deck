@@ -96,6 +96,8 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     const card = h('div', { class: 'turn-card' });
     card.append(tagEl(ev, { c }), h('span', { class: 'body', title: ev.text }, oneLine(ev.text.replace(/<[^>]+>/g, ' '), 300)));
     if (ev.origin && ev.origin !== 'human' && ev.origin !== 'sdk') card.append(h('span', { class: 'chip' }, ev.origin));
+    // A message the deck had the session pass on to one of its subagents.
+    if (ev.to) card.append(h('span', { class: 'chip', title: `For the subagent ${ev.to.title || ev.to.id}; passed on with SendMessage` }, svgUse('i-agent', 10), ` ${oneLine(ev.to.title || ev.to.id, 30)}`));
     if (turn?.queuedMs >= 1000) card.append(h('span', { class: 'chip', title: 'Sent while the agent was busy; waited in the queue' }, svgUse('i-history', 10), ` ${fmtMs(turn.queuedMs)}`));
     if (ev.attachments?.length) card.append(h('span', { class: 'chip', title: ev.attachments.map(attLabel).join('\n') }, svgUse('i-clip', 10), ` ${ev.attachments.length}`));
     card.append(h('span', { class: 'meta' }, turn?.meta || fmtTime(ev.ts)), askMini());
@@ -639,7 +641,7 @@ export function renderDetails(ev, detail, ctx) {
   } else if (ev.kind === 'thinking') {
     body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
   } else if (ev.kind === 'prompt') {
-    body.append(section('Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
+    body.append(section(ev.to ? `For the subagent ${ev.to.title || ev.to.id}` : 'Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
     if (ev.attachments?.length) body.append(section('Attachments', {}, renderPromptAttachments(ev)));
   } else if (ev.kind === 'tool') {
     const path = t.paths?.[0] || t.diff?.file || t.input.file_path || t.input.notebook_path || null;

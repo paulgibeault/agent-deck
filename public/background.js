@@ -122,11 +122,10 @@ export function renderTaskDetails(t, out, ctx) {
   // A Monitor reports through its events; it has no output file of its own.
   if (t.outputFile || t.kind !== 'monitor') body.append(renderOutput(out, t, alive, ctx));
   const kill = st === 'running' ? ctx.killTask?.(t) : null;
-  if ((ctx.askStop || kill) && st === 'running') {
+  if (kill) {
     body.append(h('div', { class: 'bg-stop' },
-      kill ? h('button', { type: 'button', class: 'btn sm danger', onclick: kill }, 'Stop it') : null,
-      ctx.askStop ? h('button', { type: 'button', class: 'btn sm', onclick: () => ctx.askStop(t) }, 'Ask the agent to stop it') : null,
-      h('span', { class: 'muted' }, kill ? 'Stop sends SIGTERM to the command and everything it started.' : 'Queues a prompt; the deck has not found the task’s process.')));
+      h('button', { type: 'button', class: 'btn sm danger', onclick: kill }, 'Stop it'),
+      h('span', { class: 'muted' }, kill.note || 'Stop sends SIGTERM to the command and everything it started.')));
   }
   return root;
 }
