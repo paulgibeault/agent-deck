@@ -4,7 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openaiTransport, transportFromEnv, tunnelTrouble } from '../lib/llm.mjs';
+import { openaiTransport, transportsFromEnv, tunnelTrouble } from '../lib/llm.mjs';
 import { Narrator } from '../lib/narrator.mjs';
 
 /** A tiny OpenAI-compatible server: `handle(body, res)` answers each POST. */
@@ -113,25 +113,31 @@ test('openai transport: a slow server times out, non-fatal, and frees its slot',
   } finally { await s.close(); }
 });
 
-test('Narrator: at most two calls in flight', async () => {
+test('Narrator: one local call in flight by default, two with DECK_LLM_CONCURRENCY=2', async () => {
   let inFlight = 0, peak = 0;
   const s = await fakeServer((body, res) => { inFlight++; peak = Math.max(peak, inFlight); setTimeout(() => { inFlight--; json(res, 200, reply('ok')); }, 30); });
   try {
     const n = new Narrator({ llm: openaiTransport({ url: s.url, model: 'm' }) });
-    await Promise.all([1, 2, 3, 4, 5].map(() => n.run({ system: 's', prompt: 'p', model: 'm' })));
+    await Promise.all([1, 2, 3].map(() => n.run({ system: 's', prompt: 'p', model: 'm' })));
+    assert.equal(peak, 1, 'the local server may serve one request at a time');
+    peak = 0;
+    const n2 = new Narrator({ llm: openaiTransport({ url: s.url, model: 'm' }), env: { DECK_LLM_CONCURRENCY: '2' } });
+    await Promise.all([1, 2, 3, 4, 5].map(() => n2.run({ system: 's', prompt: 'p', model: 'm' })));
     assert.equal(peak, 2);
-    assert.equal(n.calls, 5);
+    assert.equal(n2.calls, 5);
   } finally { await s.close(); }
 });
 
-test('transportFromEnv: the household model unless DECK_LLM=claude', () => {
-  const h = transportFromEnv({});
+test('transportsFromEnv: the household model by default; DECK_LLM picks the first-run backend for every class', () => {
+  const h = transportsFromEnv({}).local;
   assert.equal(h.name, 'openai');
   assert.equal(h.label, 'openai http://127.0.0.1:8080/v1');
   assert.equal(h.defaultModel, 'qwen3.6-35b-a3b');
-  const t = transportFromEnv({ DECK_LLM: 'openai', DECK_LLM_URL: 'http://h:1/v1', DECK_LLM_MODEL: 'q' });
+  const t = transportsFromEnv({ DECK_LLM_URL: 'http://h:1/v1', DECK_LLM_MODEL: 'q' }).local;
   assert.equal(t.defaultModel, 'q');
-  assert.equal(transportFromEnv({ DECK_LLM: 'claude' }).name, 'claude');
-  assert.equal(new Narrator({ llm: transportFromEnv({ DECK_LLM: 'claude' }) }).briefModel, process.env.DECK_BRIEF_MODEL || 'haiku');
-  assert.throws(() => transportFromEnv({ DECK_LLM: 'gpt' }), /claude or openai/);
+  assert.equal(transportsFromEnv({}).claude.name, 'claude');
+  const env = { DECK_LLM: 'claude' };
+  assert.equal(new Narrator({ transports: transportsFromEnv(env), env }).briefModel, 'haiku');
+  assert.equal(new Narrator({ transports: transportsFromEnv({}), env: {} }).effective('brief').transport, 'local');
+  assert.throws(() => new Narrator({ transports: transportsFromEnv({}), env: { DECK_LLM: 'gpt' } }), /claude or openai/);
 });
