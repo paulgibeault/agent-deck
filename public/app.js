@@ -9,6 +9,9 @@ import { attachable, guardWindowDrops } from './attach.js';
 import { createNarration } from './narration.js';
 import { renderStrip, renderTable, renderTaskDetails, renderOutput, taskState, taskTitle } from './background.js';
 import { createProcView, pidLinkEl } from './procs.js';
+import { headerRows } from './header.js';
+import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
+import { registerView, showView } from './views.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -217,15 +220,15 @@ function renderMainMenu() {
       if (lim.status === 'rejected' || tone === 'warn') items.push(h('p', { class: `mm-note ${tone}` }, lim.status === 'rejected' ? 'Limited: new turns are refused until a window resets.' : 'Filling up.'));
     }
   }
-  items.push(h('hr'),
-    menuItem(svgUse('i-plus', 13), 'New session', openLaunch, { kbd: 'n' }),
-    menuItem(svgUse('i-history', 13), 'All sessions', openHistory, { kbd: 'h' }),
-    menuItem(svgUse('i-proc', 13), 'Processes', () => openProcs(), { kbd: 'p' }),
-    menuItem(h('span', { class: 'mono' }, '?'), 'Keyboard shortcuts', () => $('keys').showModal(), { kbd: '?' }),
-    h('hr'),
-    menuItem(svgUse('i-power', 13), 'Restart backend…', confirmRestart, { cls: 'danger', disabled: restarting }));
+  items.push(...menuItems());
   $('main-menu').replaceChildren(...items);
 }
+// The deck's views, then the backend itself; features add theirs with registerMenuItem (menu.js).
+registerMenuItem({ group: 'views', order: 10, icon: 'i-plus', text: 'New session', fn: openLaunch, kbd: 'n' });
+registerMenuItem({ group: 'views', order: 10, icon: 'i-history', text: 'All sessions', fn: openHistory, kbd: 'h' });
+registerMenuItem({ group: 'views', order: 10, icon: 'i-proc', text: 'Processes', fn: () => openProcs(), kbd: 'p' });
+registerMenuItem({ group: 'views', order: 10, icon: () => h('span', { class: 'mono' }, '?'), text: 'Keyboard shortcuts', fn: () => $('keys').showModal(), kbd: '?' });
+registerMenuItem({ group: 'backend', order: 90, icon: 'i-power', text: 'Restart backend…', fn: confirmRestart, cls: 'danger', disabled: () => restarting });
 // What each backend used today (lib/daily.mjs): read from the transcripts when the menu opens.
 let today = null;
 function loadToday() {
@@ -1223,11 +1226,18 @@ $('overview').addEventListener('click', (e) => {
 function goOverview() {
   state.selected = null; state.cursor = null;
   prefs.selected = null; savePrefs();
+  showView('sessions');
   $('session-view').hidden = true; $('overview').hidden = false;
   showDetailsEmpty();
   renderTree(); renderOverview(); reportView();
 }
 $('home').onclick = goOverview;
+// The main pane's default view (views.js): the overview, or the open session.
+registerView('sessions', {
+  mount: () => { $('overview').hidden = !!state.selected; $('session-view').hidden = !state.selected; },
+  unmount: () => { $('overview').hidden = true; $('session-view').hidden = true; },
+});
+showView('sessions');
 
 // ------------------------------------------------------------ selection
 async function select(id) {
@@ -1236,6 +1246,7 @@ async function select(id) {
   state.selected = id;
   if (changed) { state.cursor = null; state.briefAt = null; setLive(true, true); }
   prefs.selected = id; savePrefs();
+  showView('sessions');
   $('overview').hidden = true; $('session-view').hidden = false;
   renderTree();
   reportView();
@@ -1263,44 +1274,34 @@ function renderHeader() {
   const el = $('shead');
   if (!s) { el.replaceChildren(h('div', { class: 'muted' }, 'Loading…')); $('nowslot').replaceChildren(); return; }
   const b = c?.brief; const phase = phaseOf(s);
-  const isAgent = s.kind === 'agent';
-
-  const win = h('div', { class: 'sh-win' });
   const st = statusOf(s, b, phase);
-  if (s.hidden) win.append(ib('i-reuse', 'Reopen (move it out of Closed)', reopenSession));
-  else win.append(ib('i-x', isAgent ? 'Back to parent session' : 'Close (move it to Closed)', closeSession));
-  // Only a session with a transcript file can be deleted; a streamed one (ACP) has none to move.
-  if (!isAgent && !s.stream) win.append(ib('i-trash', s.alive ? 'Running sessions cannot be deleted' : 'Delete session…', deleteSession, { cls: 'danger', disabled: s.alive || null }));
-  const top = h('div', { class: 'sh-top' }, h('span', { class: `dot sig-${sigOf(s)}${st.quiet ? ' quiet' : ''}`, title: st.head }), h('h1', { title: s.title }, s.title || id));
-  if (isAgent) {
-    const parent = state.byId.get(s.parentId);
-    top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.parentId) }, `subagent of ${parent?.title || s.parentId}`));
-  } else if (s.spawnedBy && state.byId.has(s.spawnedBy)) {
-    top.append(h('button', { type: 'button', class: 'sh-parent', onclick: () => select(s.spawnedBy) }, `sub-task of ${state.byId.get(s.spawnedBy).title}`));
-  }
-  const d = isAgent ? null : deckOf(id);
-  // The permission mode shows only when it is not the default (asks before acting).
-  if (d?.alive) { if (d.permissionMode !== 'default') top.append(h('span', { class: 'sh-mode', title: `Launched by the deck · pid ${d.pid} · permissions: ${d.permissionMode}` }, PERM_LABEL[d.permissionMode] || d.permissionMode)); }
-  else if (!isAgent && s.alive) top.append(h('span', { class: 'sh-mode', title: 'Observe only: launched outside the deck, so the deck can read it but not drive it' }, svgUse('i-eye', 14)));
-  if (!isAgent) top.append(backendChip(s));
-  top.append(h('span', { class: 'spacer' }));
-  // Where, which model, tokens and cost: one hover away rather than a line of figures under the brief.
-  const ctxRing = contextRing(b?.context || s.glance?.context);
-  if (ctxRing) top.append(ctxRing);
-  top.append(detailsBtn());
-  if (d?.alive) top.append(ib('i-power', `End the ${actorOf(s)} session now. It ends by itself after 30 minutes idle, and the next prompt starts it again.`, stopSession, { cls: 'subtle' }));
-  const resume = !isAgent && resumeCommand(s);
-  if (resume) top.append(ib('i-copy', `Copy resume command: ${resume}`, (e) => { navigator.clipboard?.writeText(resume); flashDone(e.currentTarget); }));
-  top.append(win);
 
   // The status line sits in the prompt panel, right above the text box: whose
   // move it is, next to where you would make yours.
   $('nowslot').replaceChildren(renderNow(st, phase));
-  const out = [top, placeRow(s, b), renderBriefBox(id, s, b)].filter(Boolean);
+  const out = [...headerRows(headerCtx(id, s, b, st)), renderBriefBox(id, s, b)].filter(Boolean);
 
   patchChildren(el, out);
   if (card.id === 'details') showDetailsCard(detailsBtn(), true);
   applyRing();
+}
+/** What the header's slot renderers (header.js) get to read and do. */
+function headerCtx(id, s, b, st) {
+  const isAgent = s.kind === 'agent';
+  return {
+    id, s, brief: b, status: st, sig: sigOf(s), isAgent,
+    deck: isAgent ? null : deckOf(id),
+    place: s.cwd && !isAgent ? placeOf(id) : null,
+    actor: actorOf(s), resume: !isAgent && resumeCommand(s),
+    session: (x) => state.byId.get(x),
+    backendLabel: (harness) => backendOfHarness(harnessOf(harness)).label,
+    permLabel: (mode) => PERM_LABEL[mode] || mode,
+    tilde,
+    backendChip: () => backendChip(s),
+    contextRing: () => contextRing(b?.context || s.glance?.context),
+    detailsBtn,
+    act: { select, close: closeSession, reopen: reopenSession, delete: deleteSession, stop: stopSession, setTab, openEditor: (p) => api.openEditor(p) },
+  };
 }
 
 // ------------------------------------------------------------ session title bar: backend and place
@@ -1312,9 +1313,9 @@ function backendChip(s) {
     onclick: (e) => openBackendMenu(e.currentTarget) }, svgUse(BACKEND_ICON[be.kind] || 'i-be-other', 12), h('span', {}, be.label));
 }
 
-// Folder, worktree, branch, and the GitHub issues and PRs the session worked
-// on (lib/ghrefs.mjs). Git facts are fetched at most every 30s; titles and
-// states from gh may land a moment later.
+// Where the session's folder is (git, worktree, GitHub refs), for the header's
+// repo, place and refs slots. Git facts are fetched at most every 30s; titles
+// and states from gh may land a moment later.
 const place = { data: new Map(), inflight: new Set() };
 function placeOf(id) {
   const s = state.byId.get(id);
@@ -1329,64 +1330,9 @@ function placeOf(id) {
   }
   return c?.r || null;
 }
-const GH_ICON = { pr: 'i-pr', issue: 'i-issue' };
-const GH_STATE = { open: 'Open', closed: 'Closed', merged: 'Merged' };
-const REVIEW = { approved: 'Approved', changes_requested: 'Changes requested', review_required: 'Review required' };
-/** "5 passed · 1 failed: lint" for a PR's checks. */
-function checksText(c) {
-  if (!c) return null;
-  return [c.passed ? `${c.passed} passed` : null, c.failed ? `${c.failed} failed${c.failing.length ? `: ${c.failing.slice(0, 4).join(', ')}` : ''}` : null, c.pending ? `${c.pending} running` : null].filter(Boolean).join(' · ');
-}
-function ghChip(r, repo) {
-  const num = `${repo && r.repo.toLowerCase() !== repo.toLowerCase() ? r.repo.split('/')[1] : ''}#${r.number}`;
-  const what = `${r.kind === 'pr' ? 'Pull request' : 'Issue'} ${num}`;
-  // The branch's own PR also says how its CI and review stand; the dot is its CI.
-  const ci = r.state === 'open' ? r.checks?.state : null;
-  const tip = [[r.branch ? `${what} · this branch` : what, r.draft ? 'Draft' : r.state ? GH_STATE[r.state] || r.state : null].filter(Boolean).join(' · '),
-    r.title, r.checks ? `Checks: ${checksText(r.checks)}` : null, r.review ? `Review: ${REVIEW[r.review] || r.review}` : null].filter(Boolean).join('\n');
-  return h('a', { class: `sh-chip gh st-${r.state || 'unknown'}${r.branch ? ' cur' : ''}${r.draft ? ' draft' : ''}`, href: r.url, target: '_blank', rel: 'noopener', title: tip },
-    svgUse(r.state === 'merged' ? 'i-merge' : GH_ICON[r.kind] || 'i-issue', 12), h('span', {}, num),
-    ci ? h('i', { class: `ci ci-${ci}`, 'aria-label': `CI ${ci}` }) : null,
-    r.review === 'approved' && r.state === 'open' ? svgUse('i-check', 10) : null);
-}
-const GH_SHOWN = 6;
-function placeRow(s, b) {
-  if (!s.cwd) return null;
-  const p = s.kind === 'agent' ? null : placeOf(s.id);
-  const chip = (icon, text, title, onclick, cls = '') => h(onclick ? 'button' : 'span', { type: onclick ? 'button' : null, class: `sh-chip${cls ? ' ' + cls : ''}`, title, onclick }, svgUse(icon, 12), h('span', {}, text));
-  const row = h('div', { class: 'sh-place' });
-  row.append(chip('i-folder', tilde(s.cwd), `Folder: ${s.cwd} · click for its files`, () => setTab('files'), 'fld'),
-    ib('i-open', 'Open the folder in the editor', () => api.openEditor(s.cwd), { cls: 'sh-ed', size: 12 }));
-  if (p?.worktree) row.append(chip('i-worktree', `worktree of ${basename(p.worktree.main)}`, `A linked git worktree of ${tilde(p.worktree.main)}`, null));
-  // The branch the session recorded; the folder may have moved on since (git's word when it hasn't recorded one).
-  const now = p?.branch || (p?.detached ? `detached ${p.detached}` : null);
-  const branch = (b?.branch || s.gitBranch || s.worktreeBranch || '').replace(/^HEAD$/, '') || now;
-  if (branch) row.append(chip('i-branch', branch, `Branch ${branch}${now && now !== branch ? ` · the folder is now on ${now}` : ''} · click for its changes`, () => setTab('changes'), 'br'));
-  // Before gh answers, the PR the transcript links still shows.
-  const refs = p?.refs || (s.pr?.url ? [{ kind: 'pr', number: s.pr.number, url: s.pr.url, repo: s.pr.repo || '' }] : []);
-  const repo = p?.github?.repo || null;
-  row.append(...refs.slice(0, GH_SHOWN).map(r => ghChip(r, repo)));
-  // A branch with work on it and no PR yet: GitHub's compare page, ready to open one.
-  const prBranch = p?.prBranch ?? p?.branch;
-  if (repo && prBranch && !p.pending && prBranch !== p.defaultBranch && !refs.some(r => r.branch))
-    row.append(h('a', { class: 'sh-chip new-pr', href: `${p.github.url}/compare/${encodeURIComponent(prBranch)}?expand=1`, target: '_blank', rel: 'noopener',
-      title: `Open a pull request for ${prBranch} on GitHub` }, svgUse('i-plus', 11), h('span', {}, 'PR')));
-  if (refs.length > GH_SHOWN) row.append(h('span', { class: 'sh-chip more', title: refs.slice(GH_SHOWN).map(r => `${r.kind === 'pr' ? 'PR' : 'Issue'} #${r.number}${r.title ? ` ${r.title}` : ''}`).join('\n') }, `+${refs.length - GH_SHOWN}`));
-  const l = s.lineage;
-  if (l?.from) row.append(chip('i-move', `from ${backendOfHarness(harnessOf(l.from.harness)).label}`, `Moved here from “${state.byId.get(l.from.id)?.title || l.from.id}” ${ago(Date.now() - l.from.at)} ago · click to open it`, () => select(l.from.id), 'mv'));
-  if (l?.to) row.append(chip('i-move', `moved to ${backendOfHarness(harnessOf(l.to.harness)).label}`, `Continued as “${state.byId.get(l.to.id)?.title || l.to.id}” · click to open it`, () => select(l.to.id), 'mv'));
-  return row;
-}
 
 // ------------------------------------------------------------ menus
 // Popover menus: the main menu (the status dot) and the backend menu (the chip in a session's title bar).
-function menuItem(icon, text, fn, { kbd = null, disabled = false, checked = null, cls = '', title = null } = {}) {
-  return h('button', { type: 'button', class: `mm-i${cls ? ' ' + cls : ''}`, role: checked == null ? 'menuitem' : 'menuitemradio', 'aria-checked': checked == null ? null : String(checked),
-    disabled: disabled || null, title, onclick: (e) => { e.currentTarget.closest('[popover]')?.hidePopover(); fn(); } },
-    h('span', { class: 'mm-ic' }, icon), h('span', { class: 'mm-t' }, text),
-    checked ? h('span', { class: 'mm-chk' }, svgUse('i-check', 12)) : kbd ? h('kbd', {}, kbd) : null);
-}
-const menuSec = (text, extra = null) => h('div', { class: 'mm-sec' }, h('span', {}, text), extra);
 function showMenu(pop, anchor, align = 'left') {
   const r = anchor.getBoundingClientRect();
   pop.style.top = `${r.bottom + 6}px`;

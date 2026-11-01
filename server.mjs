@@ -28,6 +28,7 @@ import { ProcessMonitor } from './lib/procs.mjs';
 import { handoffPrompt, returnPrompt } from './lib/handoff.mjs';
 import { refsFromEvents, GitHubInfo } from './lib/ghrefs.mjs';
 import { DailyUsage } from './lib/daily.mjs';
+import { loadRoutes, matchRoute } from './lib/routes.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -298,6 +299,11 @@ async function planMove(id, { harness, note = '' }) {
 }
 
 // --------------------------------------------------------------- routes
+// What a lib/routes/*.mjs module is handed (lib/routes.mjs).
+const featureRoutes = await loadRoutes(path.join(__dirname, 'lib', 'routes'), {
+  root: __dirname, send, readBody, deck, index, agents, briefs, narrator, broadcast, scheduleSnapshot, narratorEnabled: NARRATOR,
+});
+
 async function route(req, res, url) {
   const p = url.pathname;
   const q = url.searchParams;
@@ -318,15 +324,6 @@ async function route(req, res, url) {
     send(res, 200, { ok: true, startedAt: STARTED });
     setTimeout(restart, 100);
     return;
-  }
-  // Heal the open-act tunnel to the model host (scripts/heal-tunnel.sh); exit code says how it went.
-  if (p === '/api/tunnel/heal' && req.method === 'POST') {
-    const child = spawn('/bin/sh', [path.join(__dirname, 'scripts', 'heal-tunnel.sh')], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    child.stdout.on('data', d => { out += d; });
-    child.stderr.on('data', d => { out += d; });
-    const code = await new Promise(r => { child.on('error', () => r(-1)); child.on('close', r); });
-    return send(res, 200, { ok: code === 0, code, output: out.trim() });
   }
   if (p === '/api/health') return send(res, 200, { ok: true, startedAt: STARTED, clients: clients.size, loaded: index.loaded.size });
   if (p === '/api/sessions' && req.method === 'GET') return send(res, 200, snapshot());
@@ -602,6 +599,9 @@ async function route(req, res, url) {
       return send(res, 200, { ok: true, editor: EDITOR_CMD, target });
     } catch (e) { return send(res, 500, { error: e.message }); }
   }
+  // Feature routes (lib/routes/*.mjs) come after the core ones, which they cannot shadow.
+  const hit = matchRoute(featureRoutes, req.method, p);
+  if (hit) return hit.route.handler(req, res, { url, q, m: hit.m });
   return send(res, 404, { error: 'not found' });
 }
 

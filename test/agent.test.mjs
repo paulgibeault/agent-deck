@@ -275,3 +275,24 @@ test('send now merges only the session\'s own prompts; messages for subagents st
   const q = agents.publicState(id).queue;
   assert.deepEqual(q.map(x => x.to?.id || null), [null, 'afake0001'], 'the relay waits behind the merged prompt');
 });
+
+test('features can listen to a launched session\'s process', async (t) => {
+  const agents = new AgentManager({ bin: FAKE });
+  t.after(() => agents.stopAll());
+  const seen = [];
+  agents.on('proc', ({ id, harness, proc }) => { seen.push({ id, harness }); proc.on('result', () => seen.push('result')); });
+  const st = await agents.launch({ cwd, prompt: 'hello' });
+  assert.deepEqual(seen[0], { id: st.id, harness: 'claude' });
+  await until(agents, st.id, s => s.status === 'idle');
+  assert.ok(seen.includes('result'));
+});
+
+test('a proc listener that throws does not break the launch', async (t) => {
+  const agents = new AgentManager({ bin: FAKE });
+  t.after(() => agents.stopAll());
+  t.mock.method(console, 'error', () => {});
+  agents.on('proc', () => { throw new Error('feature bug'); });
+  const st = await agents.launch({ cwd, prompt: 'hello' });
+  const s = await until(agents, st.id, x => x.status === 'idle');
+  assert.equal(s.turns, 1, 'the first prompt still went out');
+});
