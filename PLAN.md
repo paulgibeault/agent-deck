@@ -11,7 +11,7 @@ Written 2026-09-30 after inspecting a live Claude Code 2.1.284 install on macOS.
 
 ## Decisions (agreed)
 
-1. **Lives in its own repo:** `~/code/agent-deck`. Not tied to any project.
+1. **Lives in its own repo:** `agent-deck`. Not tied to any project.
 2. **Prompt pane scope:** full control for sessions the dashboard launches
    (documented stream-json / Agent SDK interface); observe-only for sessions
    launched from the desktop app or a terminal. Protocol work favors standards
