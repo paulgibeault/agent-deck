@@ -12,6 +12,9 @@
 //
 // FAKE_ACP_LOG=<file> appends every method it receives, so a test can check
 // what arrived and in what order. FAKE_ACP_STUBBORN=1 ignores the end of stdin.
+// FAKE_ACP_STORE=<file> keeps each finished turn, so a later process can
+// list the sessions (session/list) and replay one (session/load), as opencode
+// keeps them on disk.
 import fs from 'node:fs';
 
 const log = (m) => { if (process.env.FAKE_ACP_LOG) fs.appendFileSync(process.env.FAKE_ACP_LOG, m + '\n'); };
@@ -20,6 +23,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const update = (sessionId, u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: u } });
 
 const sessions = new Map();   // sessionId -> { cwd, active, cancel }
+const STORE = process.env.FAKE_ACP_STORE;
+const stored = () => { try { return JSON.parse(fs.readFileSync(STORE, 'utf8')); } catch { return []; } };
 let nextSession = 1;
 let nextRequest = 0;          // agent -> client ids start at 0, as opencode's do
 const waiting = new Map();    // our request id -> resolve(reply)
@@ -57,6 +62,21 @@ const methods = {
     return { configOptions: configOptions() };
   },
   'session/close': ({ sessionId }) => { sessions.delete(sessionId); return {}; },
+  'session/list': () => {
+    const by = new Map();
+    for (const t of stored()) by.set(t.sessionId, { sessionId: t.sessionId, cwd: t.cwd, title: by.get(t.sessionId)?.title || t.text, updatedAt: t.at });
+    return { sessions: [...by.values()].reverse() };
+  },
+  'session/load': ({ sessionId, cwd }) => {
+    const turns = stored().filter(t => t.sessionId === sessionId);
+    if (!turns.length) throw Object.assign(new Error(`Session not found: ${sessionId}`), { code: -32602 });
+    turns.forEach((t, i) => {
+      update(sessionId, { sessionUpdate: 'user_message_chunk', messageId: `u${i}`, content: { type: 'text', text: t.text } });
+      if (t.reply) update(sessionId, { sessionUpdate: 'agent_message_chunk', messageId: `a${i}`, content: { type: 'text', text: t.reply } });
+    });
+    sessions.set(sessionId, { cwd, active: false, cancel: null });
+    return { configOptions: configOptions() };
+  },
   'session/prompt': (p) => prompt(p),
 };
 
@@ -140,6 +160,7 @@ async function prompt({ sessionId, prompt: blocks }) {
       update(sessionId, { sessionUpdate: 'agent_message_chunk', messageId: msgId, content: { type: 'text', text: reply.slice(0, 5) } });
       update(sessionId, { sessionUpdate: 'agent_message_chunk', messageId: msgId, content: { type: 'text', text: reply.slice(5) } });
     }
+    if (STORE) fs.writeFileSync(STORE, JSON.stringify([...stored(), { sessionId, cwd: s.cwd, text, reply, at: new Date().toISOString() }]));
     update(sessionId, { sessionUpdate: 'usage_update', used: 8307, size: 65536, cost: { amount: 0, currency: 'USD' } });
     return { stopReason, usage: { inputTokens: 1919, outputTokens: 18, totalTokens: 8307 }, _meta: {} };
   } finally {
