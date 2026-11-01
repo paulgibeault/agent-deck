@@ -12,6 +12,7 @@ import { createProcView, pidLinkEl } from './procs.js';
 import { headerRows, headerEditing, fitHeader } from './header.js';
 import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
 import { registerView, showView } from './views.js';
+import { launchOpen, launchCwdChanged, launchCollect, launchDone } from './launch.js';
 import './models.js';
 import './vault.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
@@ -2265,6 +2266,7 @@ function openLaunch() {
   $('ns-err').hidden = true;
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
+  launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected });
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
 }
@@ -2313,23 +2315,35 @@ $('hist-q').addEventListener('keydown', (e) => {
 $('hist-list').addEventListener('click', (e) => { const li = e.target.closest('.hist-row'); if (li) pickHistory(li.dataset.id); });
 $('history').addEventListener('click', (e) => { if (e.target === $('history')) $('history').close(); });
 $('ns-cancel').onclick = () => $('new-session').close();
+// Sections that depend on the folder (worktrees, workstreams) follow it as it changes.
+$('ns-cwd').addEventListener('change', () => launchCwdChanged($('ns-cwd').value.trim()));
+$('ns-cwd').addEventListener('input', () => launchCwdChanged($('ns-cwd').value.trim()));
 const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), clip: $('ns-clip'), file: $('ns-file'), drop: $('ns-form'), toast });
 $('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
 $('ns-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const hn = harnessOf($('ns-harness').value);
-  const body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: hn.models ? $('ns-model').value : '', permissionMode: $('ns-perm').value, name: $('ns-name').value.trim(), harness: hn.name };
+  let body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: hn.models ? $('ns-model').value : '', permissionMode: $('ns-perm').value, name: $('ns-name').value.trim(), harness: hn.name };
   if (launchFiles.busy()) { toast('Still reading the attachments…'); return; }
   const files = launchFiles.payload();
   if (files.length) body.attachments = files;
   if (!body.prompt.trim() && !files.length) { $('ns-prompt').focus(); return; }
   $('ns-go').disabled = true; $('ns-err').hidden = true;
   $('ns-go').textContent = 'Starting…';
+  // The pilot's own choices, before any section changes them (a worktree is not the new default folder).
+  const chosen = { cwd: body.cwd, permissionMode: body.permissionMode, harness: body.harness };
+  try { body = await launchCollect(body); }
+  catch (err) {
+    $('ns-err').textContent = err.message; $('ns-err').hidden = false;
+    $('ns-go').disabled = false; $('ns-go').textContent = 'Start session';
+    return;
+  }
   try {
     const st = await api.post('/api/launch', body);
-    if (!$('ns-cwd').dataset.once) prefs.launchCwd = body.cwd;   // a Vault launch (vault.js) is not the new default
-    prefs.launchPerm = body.permissionMode; prefs.launchHarness = body.harness; savePrefs(); renderModelPicker();
+    if (!$('ns-cwd').dataset.once) prefs.launchCwd = chosen.cwd;   // a Vault launch (vault.js) is not the new default
+    prefs.launchPerm = chosen.permissionMode; prefs.launchHarness = chosen.harness; savePrefs(); renderModelPicker();
     state.deck.set(st.id, st);
+    launchDone(st, body);
     $('ns-prompt').value = ''; launchFiles.clear();
     $('new-session').close();
     if (state.byId.has(st.id) && state.selected === st.id) { renderHeader(); renderQueue(); focusCompose(); }

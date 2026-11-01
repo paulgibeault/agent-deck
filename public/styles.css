@@ -1336,3 +1336,9 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .vault-trunc { font-size: 12px; }
 .dialog.vault.vf { width: min(900px, calc(100vw - 32px)); }
 .vault-fv { max-height: min(640px, calc(100vh - 160px)); overflow: auto; margin-top: 8px; }
+
+/* New session dialog: slots features fill (public/launch.js). */
+.ns-x { margin: 6px 0 2px; }
+/* Hidden while no section in it shows anything. */
+.ns-x:not(:has(> .ns-sec:not(:empty))) { display: none; }
+.ns-sec:empty { display: none; }

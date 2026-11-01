@@ -29,6 +29,7 @@ import { handoffPrompt, returnPrompt } from './lib/handoff.mjs';
 import { refsFromEvents, GitHubInfo } from './lib/ghrefs.mjs';
 import { DailyUsage } from './lib/daily.mjs';
 import { loadRoutes, matchRoute } from './lib/routes.mjs';
+import { onLaunch, beforeLaunch, failedLaunch, afterLaunch } from './lib/launch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -301,7 +302,7 @@ async function planMove(id, { harness, note = '' }) {
 // --------------------------------------------------------------- routes
 // What a lib/routes/*.mjs module is handed (lib/routes.mjs).
 const featureRoutes = await loadRoutes(path.join(__dirname, 'lib', 'routes'), {
-  root: __dirname, send, readBody, deck, index, agents, briefs, narrator, broadcast, scheduleSnapshot, narratorEnabled: NARRATOR,
+  root: __dirname, send, readBody, deck, index, agents, briefs, narrator, broadcast, scheduleSnapshot, narratorEnabled: NARRATOR, onLaunch,
 });
 
 async function route(req, res, url) {
@@ -373,11 +374,27 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/launch' && req.method === 'POST') {
-    const { cwd, prompt, attachments, model, permissionMode, name, harness } = await readBody(req, PROMPT_BODY_LIMIT);
+    let body;
     try {
-      const st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined, harness: harness || undefined });
-      return send(res, 200, st);
-    } catch (e) { return send(res, 400, { error: e.message }); }
+      const raw = await readBody(req, PROMPT_BODY_LIMIT);
+      // Checked before the hooks, so none of them acts on a launch that cannot start.
+      if (!raw?.prompt?.trim() && !raw?.attachments?.length) throw new Error('a first prompt is required');
+      if (!raw.cwd || !fs.existsSync(raw.cwd) || !fs.statSync(raw.cwd).isDirectory()) throw new Error(`not a directory: ${raw.cwd}`);
+      // Features shape the launch from their own fields (lib/launch.mjs).
+      body = await beforeLaunch(raw);
+    } catch (e) { return send(res, e.code === 413 ? 413 : 400, { error: e.message }); }
+    let st;
+    try {
+      const { cwd, prompt, attachments, model, permissionMode, name, harness } = body;
+      st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined, harness: harness || undefined });
+    } catch (e) {
+      await failedLaunch(body, e);
+      return send(res, 400, { error: e.message });
+    }
+    send(res, 200, st);
+    // The session is up; what features do with it does not hold the page.
+    afterLaunch(st, body);
+    return;
   }
 
   let m;
