@@ -154,6 +154,7 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
     }
     case 'system':
       if (ev.subtype === 'task' && ev.status) chips.append(h('span', { class: `chip ${ev.status === 'completed' ? 'ok' : ev.status === 'failed' ? 'err' : 'st-ended'}` }, ev.status));
+      if (ev.subtype === 'api_error' && ev.retry) chips.append(h('span', { class: `chip${ev.recovered ? '' : ' err'}`, title: ev.recovered ? `Answered after ${ev.retry} failed attempt${ev.retry === 1 ? '' : 's'}` : ev.gaveUp ? `Stopped after ${ev.retry} attempt${ev.retry === 1 ? '' : 's'}` : `Attempt ${ev.retry}${ev.retryInMs != null ? `; next in ${fmtMs(ev.retryInMs)}` : ''}` }, `↻ ${ev.retry}`));
       break;
   }
   if (chips.childNodes.length) row.append(chips);
