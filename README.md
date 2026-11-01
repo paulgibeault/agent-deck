@@ -454,6 +454,15 @@ voices then appear under Voice. More in Microsoft's
 - **Shell.** Pilot's command runner: pick a cwd (defaults to the selected
   session's), run a command, see streamed stdout/stderr, exit code and
   duration, kill long runs. History with ↑/↓.
+- **Vault.** A local-only place for files, scratch code and artifacts that
+  should never reach GitHub: a git repo with no remote at
+  `~/.agent-deck/vault/` (`loose/` and one folder per workstream). The vault
+  glyph beside a file or image in the details pane copies it in, with a
+  `.meta.json` note of where it came from; a clashing name gets `-2`, never
+  an overwrite. The menu's **Vault** lists it and starts sessions inside it.
+  The deck refuses to add a remote, blocks pushes with a hook, and warns if
+  one appears. **Backup** is not handled here: Time Machine (or whatever
+  backs up your home folder) covers `~/.agent-deck`.
 
 ## Layout and security
 
@@ -469,6 +478,7 @@ lib/ask.mjs           Ask about this: scope resolution + answer
 lib/deckstate.mjs     hidden sessions, delete trash
 lib/gitinfo.mjs       status / diff / log, and a session's place (root, worktree, branch, GitHub repo)
 lib/ghrefs.mjs        GitHub issues and PRs a session worked on; titles via `gh`
+lib/vault.mjs         the Vault: local-only git repo, append-only saves, workstream pointers
 lib/handoff.mjs       the first prompt of a session moved to another backend (or back)
 lib/daily.mjs         today's tokens and cost per backend, read incrementally
 lib/shell.mjs         pilot shell runner

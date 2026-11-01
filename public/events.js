@@ -570,6 +570,13 @@ export function section(title, { actions = [], ask = null, note = null } = {}, .
   return h('section', { class: 'dsec' }, head, ...children);
 }
 
+// Buttons features add beside a file or image in the details (Save to Vault).
+// fn(target) → node or null; target is { path } or { sessionId, eventId, image }, plus where it came from.
+const fileActs = [];
+export const registerFileAction = (fn) => { fileActs.push(fn); };
+export const fileActions = (target) => fileActs.map(fn => fn(target));
+const imageActs = (ev, list) => list.flatMap((im, i) => fileActions({ sessionId: ev.sessionId, eventId: ev.id, image: im.index, label: list.length > 1 ? `image ${i + 1}` : 'image' }));
+
 export function headerFor({ tag, chips = [], title, meta = [], nav = true, raw = null, actions = [] }) {
   const head = h('div', { class: 'dhead' });
   const row = h('div', { class: 'dh-row' }, tag, ...chips.filter(Boolean), h('span', { class: 'spacer' }));
@@ -643,18 +650,21 @@ export function renderDetails(ev, detail, ctx) {
     body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
   } else if (ev.kind === 'prompt') {
     body.append(section(ev.to ? `For the subagent ${ev.to.title || ev.to.id}` : 'Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
-    if (ev.attachments?.length) body.append(section('Attachments', {}, renderPromptAttachments(ev)));
+    if (ev.attachments?.length) body.append(section('Attachments', { actions: imageActs(ev, ev.attachments.filter(a => a.kind === 'image' && a.kept !== false)) }, renderPromptAttachments(ev)));
   } else if (ev.kind === 'tool') {
     const path = t.paths?.[0] || t.diff?.file || t.input.file_path || t.input.notebook_path || null;
     const cmd = toolCommand(t);
     // By kind, so any harness's tools render; Claude's tools with richer inputs refine it.
     const view = ['Edit', 'MultiEdit', 'Write', 'Agent'].includes(t.name) ? t.name
       : cmd != null ? 'execute' : t.kind === 'read' && path ? 'read' : t.kind === 'edit' && (t.diff?.newText != null || t.diff?.textOmitted) ? 'edit' : t.name;
+    // Save what the event shows (a whole written file); else the file as it is now.
+    const shown = view === 'Write' ? t.input.content : view === 'edit' && !t.diff.textOmitted ? t.diff.newText : null;
+    const fa = path ? fileActions({ path, cwd: ctx.cwd, content: typeof shown === 'string' ? shown : undefined, sessionId: ev.sessionId, eventId: ev.id }) : [];
     switch (view) {
       case 'Edit': {
         const ops = lineDiff(t.input.old_string ?? '', t.input.new_string ?? '');
         const start = detail?.toolUseResult?.structuredPatch?.[0]?.oldStart ?? t.meta?.structuredPatch?.[0]?.oldStart ?? 1;
-        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, start, ctx.api), copyBtn(t.input.new_string ?? '', 'Copy the new text')], ask: evSpec('Edit', 'this change') },
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, start, ctx.api), copyBtn(t.input.new_string ?? '', 'Copy the new text'), ...fa], ask: evSpec('Edit', 'this change') },
           renderSideBySide(ops, { lang: langFor(path), startA: start, startB: detail?.toolUseResult?.structuredPatch?.[0]?.newStart ?? start })));
         if (t.input.replace_all) body.append(h('div', { class: 'note' }, 'replace_all'));
         break;
@@ -664,7 +674,7 @@ export function renderDetails(ev, detail, ctx) {
         break;
       }
       case 'Write': {
-        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), copyBtn(t.input.content ?? '')], ask: evSpec('Written file', 'this file') }, codeBlock(t.input.content ?? '', langFor(path))));
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), copyBtn(t.input.content ?? ''), ...fa], ask: evSpec('Written file', 'this file') }, codeBlock(t.input.content ?? '', langFor(path))));
         break;
       }
       case 'edit': {
@@ -672,13 +682,13 @@ export function renderDetails(ev, detail, ctx) {
         const d = t.diff;
         const content = d.textOmitted ? h('div', { class: 'note' }, `Too large to show here: +${d.add} −${d.del} lines.`)
           : d.oldText == null ? codeBlock(d.newText ?? '', langFor(path)) : renderSideBySide(editOps(ev, null), { lang: langFor(path) });
-        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), d.newText != null ? copyBtn(d.newText, 'Copy the new text') : null], ask: evSpec(d.oldText == null ? 'Written file' : 'Edit', 'this change') }, content));
+        body.append(section(relPath(path, ctx.cwd), { actions: [openBtn(path, 1, ctx.api), d.newText != null ? copyBtn(d.newText, 'Copy the new text') : null, ...fa], ask: evSpec(d.oldText == null ? 'Written file' : 'Edit', 'this change') }, content));
         if (t.isError && resultText) body.append(section('Result (error)', {}, h('pre', { class: 'plain out err' }, resultText)));
         break;
       }
       case 'read': {
         const { text, start } = stripReadNumbers(resultText);
-        body.append(section(relPath(path, ctx.cwd), { actions: [loading, openBtn(path, start, ctx.api), copyBtn(text)], ask: evSpec('Read', 'this file') },
+        body.append(section(relPath(path, ctx.cwd), { actions: [loading, openBtn(path, start, ctx.api), copyBtn(text), ...fa], ask: evSpec('Read', 'this file') },
           t.result?.images?.length ? renderImages(ev, ctx) : codeBlock(text, langFor(path), { start })));
         break;
       }
@@ -709,7 +719,7 @@ export function renderDetails(ev, detail, ctx) {
       }
       default: {
         body.append(section('Input', { actions: [copyBtn(() => JSON.stringify(t.input, null, 2))], ask: evSpec('Input', 'this input') }, h('pre', { class: 'plain' }, JSON.stringify(t.input, null, 2))));
-        if (t.result?.images?.length) body.append(section('Images', {}, renderImages(ev, ctx)));
+        if (t.result?.images?.length) body.append(section('Images', { actions: imageActs(ev, t.result.images) }, renderImages(ev, ctx)));
         if (resultText || !t.pending) body.append(section(t.isError ? 'Result (error)' : 'Result', { actions: [loading, copyBtn(resultText)], ask: evSpec('Result', 'this result') },
           h('pre', { class: 'plain out' + (t.isError ? ' err' : '') }, resultText || '(empty)')));
         if (t.pending) body.append(h('div', { class: 'note' }, 'running…'));
