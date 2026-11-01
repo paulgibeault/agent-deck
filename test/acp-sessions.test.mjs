@@ -11,7 +11,7 @@ import { AcpEvents } from '../lib/acp-events.mjs';
 import { SessionState } from '../lib/transcript.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
 import { AgentManager } from '../lib/agent.mjs';
-import { AcpDriver } from '../lib/harness/acp.mjs';
+import { AcpDriver, hopelessRetry } from '../lib/harness/acp.mjs';
 import { ClaudeDriver } from '../lib/harness/claude.mjs';
 import { loadHarnesses } from '../lib/harnesses.mjs';
 import { classify } from '../public/classify.js';
@@ -44,6 +44,25 @@ function deck(t, env = {}, opts = {}) {
   t.after(() => agents.shutdown());
   return { agents, index, acp, methods: () => fs.readFileSync(log, 'utf8').trim().split('\n') };
 }
+
+test('acp-events: opencode retries become one api_error per turn, updated in place', () => {
+  const m = new AcpEvents();
+  const retry = (attempt) => m.update({ sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': attempt == null ? null
+    : { attempt, nextRetryAt: new Date(Date.now() + 5000).toISOString(), error: { type: 'provider.internal', message: 'image input is not supported', status: 500 } } } }).events;
+  const [a] = retry(1);
+  assert.deepEqual(retry(null), [], 'a cleared retry says nothing');
+  const [b] = retry(2);
+  assert.equal(a.id, b.id);
+  assert.equal(b.kind, 'system');
+  assert.equal(b.subtype, 'api_error');
+  assert.equal(b.error, true);
+  assert.equal(b.text, '500 image input is not supported');
+  assert.equal(b.retry, 2);
+  assert.ok(b.retryInMs > 0 && b.retryInMs <= 5000);
+  m.turnEnd({ stopReason: 'cancelled' });
+  assert.notEqual(retry(1)[0].id, a.id, 'the next turn gets its own');
+  assert.equal(m.update({ sessionUpdate: 'session_info_update', title: 'x' }).events[0].kind, 'raw', 'other session info stays raw');
+});
 
 test('acp-events: chunks merge by messageId, tool calls finish in place, usage and config become meta', () => {
   const m = new AcpEvents();
@@ -162,6 +181,53 @@ test('ACP session: launch, streamed events in the index, a permission answered i
   assert.equal(s.held, true);
   agents.queueOp(id, { op: 'resume' });
   s = await until(agents, cur, x => x.status === 'idle' && !x.queue.length && x.turns === 5);
+});
+
+test('ACP session: a model error that can only repeat ends the turn as an error, not a retry loop', async (t) => {
+  const { agents, index } = deck(t);
+  const st = await agents.launch({ cwd, prompt: 'retry with an image' });
+  const s = await until(agents, () => st.id, x => x.status === 'idle');
+  assert.equal(s.lastResult.isError, true);
+  assert.match(s.lastResult.error, /image input is not supported/);
+  const evs = index.events(st.id).events;
+  const errs = evs.filter(e => e.subtype === 'api_error');
+  assert.equal(errs.length, 1, 'one row, not one per attempt');
+  assert.equal(errs[0].retry, 1, 'stopped on the first failure');
+  assert.equal(errs[0].gaveUp, true);
+  assert.match(errs[0].text, /start a new session/i);
+  assert.equal(evs.at(-1).text, 'failed');
+  assert.equal(index.brief(st.id).signal, 'error');
+});
+
+test('ACP session: giving up on a hopeless retry holds the queue, as Stop does', async (t) => {
+  const { agents } = deck(t);
+  const st = await agents.launch({ cwd, prompt: 'retry with an image' });
+  agents.send(st.id, 'and then this');   // queued behind the failing turn
+  const s = await until(agents, () => st.id, x => x.status === 'idle');
+  assert.equal(s.lastResult.isError, true);
+  assert.equal(s.held, true, 'not sent into the same failure');
+  assert.deepEqual(s.queue.map(x => x.text), ['and then this']);
+});
+
+test('acp-events: a retry the model recovers from stops being an error; a later failure gets its own row', () => {
+  const m = new AcpEvents();
+  const fail = (attempt) => m.update({ sessionUpdate: 'session_info_update', _meta: { 'opencode/retry': { attempt, nextRetryAt: new Date(Date.now() + 1000).toISOString(), error: { message: 'overloaded', status: 503 } } } }).events[0];
+  const a = fail(1);
+  const [rec, text] = m.update({ sessionUpdate: 'agent_message_chunk', messageId: 'm1', content: { type: 'text', text: 'hi' } }).events;
+  assert.equal(rec.id, a.id);
+  assert.equal(rec.error, false);
+  assert.equal(rec.recovered, true);
+  assert.equal(text.kind, 'text');
+  assert.equal(m.update({ sessionUpdate: 'agent_message_chunk', messageId: 'm1', content: { type: 'text', text: '!' } }).events.length, 1, 'said once');
+  assert.notEqual(fail(1).id, a.id);
+});
+
+test('hopelessRetry: what can only repeat, or too many tries', () => {
+  assert.equal(hopelessRetry({ status: 500, text: '500 image input is not supported', retry: 1 }), true);
+  assert.equal(hopelessRetry({ status: 400, text: '400 bad request', retry: 1 }), true);
+  assert.equal(hopelessRetry({ status: 429, text: '429 rate limited', retry: 1 }), false);
+  assert.equal(hopelessRetry({ status: 503, text: '503 overloaded', retry: 2 }), false);
+  assert.equal(hopelessRetry({ status: 503, text: '503 overloaded', retry: 4 }), true);
 });
 
 test('ACP session: an edit and a command arrive as kind-classified tools with diff text', async (t) => {
