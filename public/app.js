@@ -14,6 +14,7 @@ import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
 import { registerView, showView } from './views.js';
 import './models.js';
 import './vault.js';
+import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -156,6 +157,8 @@ function connect() {
   es.addEventListener('deck.update', (e) => onDeck(JSON.parse(e.data)));
   es.addEventListener('shell.output', (e) => shellOutput(JSON.parse(e.data)));
   es.addEventListener('shell.exit', (e) => shellExit(JSON.parse(e.data)));
+  es.addEventListener('stars.changed', (e) => applyStarsChanged(JSON.parse(e.data)));
+  es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
 }
 function setConn(on) {
   if (restarting) return;
@@ -2427,6 +2430,9 @@ function buildRows() {
   let hits = 0;
   const push = (ev, depth, turn = null) => {
     if (turns.hidden.has(ev.id)) return;
+    // Starred: only what the pilot starred or tagged (stars.js), prompts included.
+    if (state.starredOnly && (ev.kind === 'turn_end' || !starOf(ev.sessionId, ev.id))) return;
+    if (state.starredOnly && ev.kind === 'prompt') { if (evMatches(ev, q)) rows.push({ ev, depth, turn }); return; }
     if (ev.kind === 'turn_end' && !allKinds()) return;
     if (ev.kind === 'prompt' && narrowed) { if (!hits) return; hits = 0; rows.push({ ev, depth, turn }); return; }
     if (ev.kind !== 'prompt' && ev.kind !== 'turn_end' && !keepKind(ev)) return;
@@ -2434,13 +2440,17 @@ function buildRows() {
     hits++;
     rows.push({ ev, depth, turn });
   };
+  // The Starred count covers what the filter would show: inline subagent events too.
+  let starred = 0;
+  const tally = (ev) => { if (ev.kind !== 'turn_end' && !turns.hidden.has(ev.id) && starOf(ev.sessionId, ev.id)) starred++; };
   // Newest first. Inline subagent events sit directly under their Agent row.
   for (let i = c.events.length - 1; i >= 0; i--) {
     const ev = c.events[i];
+    tally(ev);
     push(ev, 0, turns.get(ev.id) || null);
     if (ev.kind === 'tool' && ev.tool.agentId && state.expanded.has(ev.tool.agentId)) {
       const ac = state.cache.get(ev.tool.agentId);
-      if (ac?.loaded) for (let j = ac.events.length - 1; j >= 0; j--) push(ac.events[j], 1);
+      if (ac?.loaded) for (let j = ac.events.length - 1; j >= 0; j--) { tally(ac.events[j]); push(ac.events[j], 1); }
       else rows.push({ ev: { id: `loading:${ev.tool.agentId}`, kind: 'system', subtype: 'loading', text: 'loading subagent events…', ts: null, sessionId: ev.tool.agentId }, depth: 1 });
     }
   }
@@ -2448,7 +2458,7 @@ function buildRows() {
   for (let i = 0; i < rows.length; i++) { offsets[i] = y; y += rowHeight(rows[i].ev); }
   state.rows = rows; state.offsets = offsets; state.total = y;
   $('events-count').textContent = rows.length;
-  const counts = { errors: 0 };
+  const counts = { errors: 0, starred };
   for (const ev of c.events) {
     if (turns.hidden.has(ev.id) || ev.kind === 'turn_end') continue;
     if (isErr(ev)) counts.errors++;
@@ -2480,7 +2490,7 @@ function renderRows(jump = false) {
   vspacer.style.height = `${state.total + 12}px`;
   if (jump || state.live) vlist.scrollTop = 0; // newest rows live at the top
   if (!n) {
-    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || !allKinds() ? 'No events match.' : 'No events yet.') : 'Loading…'));
+    vrows.replaceChildren(h('div', { class: 'pad muted' }, state.cache.get(state.selected)?.loaded ? (state.filter || !allKinds() || state.starredOnly ? 'No events match.' : 'No events yet.') : 'Loading…'));
     return;
   }
   const first = rowIndexAt(Math.max(0, vlist.scrollTop - 200));
@@ -2553,8 +2563,10 @@ function setKinds(ks) {
   if ($('kind-pop').matches(':popover-open')) renderKindPop();
   scheduleRows(true);
 }
+const STARRED = { icon: 'i-star-5', fam: 'star', label: 'Starred' };
 function pickKind(k) {
-  if (k === 'all') return setKinds([]);
+  if (k === 'starred') { state.starredOnly = !state.starredOnly; return setKinds([...state.kinds]); }
+  if (k === 'all') { state.starredOnly = false; return setKinds([]); }
   if (allKinds()) return setKinds([k]);
   const ks = new Set(state.kinds); ks.has(k) ? ks.delete(k) : ks.add(k);
   setKinds([...ks]);
@@ -2564,9 +2576,9 @@ function paintKind() {
   const on = FILTERS.filter(f => state.kinds.has(f.k));
   const all = allKinds();
   const more = !all && on.length > 3 ? [h('span', { class: 'kb-more' }, `+${on.length - 3}`)] : [];
-  $('kind-ico').replaceChildren(...(all ? [glyph(FILTER_ALL)] : on.slice(0, 3).map(glyph)), ...more);
-  const btn = $('kind-btn'); btn.classList.toggle('on', !all);
-  btn.title = `Showing: ${kindsLabel()}`; btn.setAttribute('aria-label', btn.title);
+  $('kind-ico').replaceChildren(...(state.starredOnly ? [glyph(STARRED)] : []), ...(all && !state.starredOnly ? [glyph(FILTER_ALL)] : all ? [] : on.slice(0, 3).map(glyph)), ...more);
+  const btn = $('kind-btn'); btn.classList.toggle('on', !all || !!state.starredOnly);
+  btn.title = `Showing: ${state.starredOnly ? 'Starred · ' : ''}${kindsLabel()}`; btn.setAttribute('aria-label', btn.title);
 }
 function renderKindPop() {
   const n = state.kindCounts || {};
@@ -2578,7 +2590,8 @@ function renderKindPop() {
   const total = FILTERS.reduce((t, f) => t + (f.k === 'errors' ? 0 : n[f.k] || 0), 0);
   $('kind-pop').classList.toggle('some', !all);
   $('kind-pop').replaceChildren(item(FILTER_ALL, 'all', all, total), h('span', { class: 'kp-sep', role: 'separator' }),
-    ...FILTERS.filter(f => n[f.k] || state.kinds.has(f.k) && !all).map(f => item(f, f.k, !all && state.kinds.has(f.k), n[f.k])));
+    ...FILTERS.filter(f => n[f.k] || state.kinds.has(f.k) && !all).map(f => item(f, f.k, !all && state.kinds.has(f.k), n[f.k])),
+    h('span', { class: 'kp-sep', role: 'separator' }), item(STARRED, 'starred', !!state.starredOnly, n.starred));
   return $('kind-pop');
 }
 $('kind-pop').addEventListener('toggle', (e) => {
@@ -2602,6 +2615,7 @@ $('kind-pop').addEventListener('keydown', (e) => {
   items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
 });
 paintKind();
+onStarsChange(() => scheduleRows()); // the Starred filter and its count
 $('follow').onclick = () => setLive(true);
 $('ev-filter').oninput = (e) => { state.filter = e.target.value; scheduleRows(); };
 
@@ -2971,7 +2985,7 @@ function renderChanges() {
       h('td', {}, h('span', { class: 'st-x', title: `index: ${f.x} · worktree: ${f.y}` }, st)),
       h('td', { title: f.from ? `renamed from ${f.from}` : f.path }, f.path),
       h('td', { class: 'num add-n' }, f.added ?? (f.binary ? 'bin' : '')), h('td', { class: 'num del-n' }, f.deleted ?? ''),
-      h('td', {}, ib('i-open', 'Open in editor', (e) => { e.stopPropagation(); api.openEditor(`${c.root}/${f.path}`, 1); }, { size: 13 }))));
+      h('td', {}, ib('i-open', 'Open in editor', (e) => { e.stopPropagation(); api.openEditor(`${c.root}/${f.path}`, 1); }, { size: 13 }), fileStar(state.selected, `${c.root}/${f.path}`, f.path))));
   }
   table.append(tb);
   const commits = h('div', { class: 'commits' }, h('div', { class: 'sec-t', style: 'padding: 6px 14px 4px' }, 'Recent commits'));
@@ -3018,7 +3032,7 @@ function renderTurns(fetchSnap = true) {
   ct.turns = turnChanges(c.events, cwd, ct.snap);
   const root = $('changes-turns'); const top = root.scrollTop;
   renderTurnList(root, ct.turns, {
-    selected: ct.selected, collapsed: ct.collapsed,
+    selected: ct.selected, collapsed: ct.collapsed, sid: state.selected,
     onToggle: (n) => { ct.collapsed.has(n) ? ct.collapsed.delete(n) : ct.collapsed.add(n); renderTurns(false); },
     onFile: (t, f) => openTurnFile(t, f),
     onShell: (ev) => { ct.selected = `ev:${ev.id}`; renderTurns(false); pickEvent(); showEventDetails(ev); },

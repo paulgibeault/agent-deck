@@ -2,6 +2,7 @@
 // folder with find-as-you-type, and a details view that renders each kind of
 // file the way it reads best (images, markdown, JSON, config, CSV, code…).
 import { h, svgUse, ib, copyBtn, fmtTokens, ago, basename, markdown, codeBlock, langFor, highlightIn, headerFor, section, fileActions } from './events.js';
+import { fileStar } from './stars.js';
 
 // ------------------------------------------------------------ file kinds
 const KINDS = {
@@ -198,6 +199,7 @@ export function createFilesView({ list, crumbs, find, api, onOpen, openEditor, o
     if (t) row.append(h('span', { class: `ftouch ${t.writes ? 'w' : 'r'}`, title: [t.reads ? `read ${t.reads}×` : '', t.writes ? `wrote ${t.writes}×` : '', t.lastTs ? ago(Date.now() - Date.parse(t.lastTs)) + ' ago' : ''].filter(Boolean).join(' · ') }));
     else if (e.dir && st.touchedDirs.has(e.path) && !r.open) row.append(h('span', { class: 'ftouch dimr', title: 'this session touched files in here' }));
     if (e.git) row.append(h('span', { class: `fgit g-${e.git}`, title: e.dir ? 'has changes' : GIT[e.git] }, e.dir ? '•' : e.git));
+    if (!e.dir) { const star = fileStar(st.sid, e.outside ? e.path : abs(e.path), e.path); if (star) row.append(star); }
     return row;
   }
   function render() {

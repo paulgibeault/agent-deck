@@ -81,6 +81,8 @@ export const ROW_HEIGHTS = { prompt: 50, turn_end: 34, default: 30 };
 export const rowHeight = (ev) => ROW_HEIGHTS[ev.kind] || ROW_HEIGHTS.default;
 
 // ------------------------------------------------------------ Events rows
+// Features add to every row from their own module: fn(row, ev), run first, on the empty row.
+export const rowHooks = [];
 /**
  * One row for the virtualized Events list. `turn` carries turn numbering for
  * prompt rows ({ n, meta }) and the summary for turn_end rows ({ text }).
@@ -91,6 +93,7 @@ export function renderRow(ev, { depth = 0, selected = false, agentStatus = null,
   const row = h('div', { class: `row k-${ev.kind} f-${c.fam}${ev.answer ? ' answer' : ''}${selected ? ' selected' : ''}${isErr ? ' error' : ''}`, dataset: { id: ev.id, seq: ev.seq, sid: ev.sessionId } });
   row.style.setProperty('--depth', depth);
   row.style.height = rowHeight(ev) + 'px';
+  for (const fn of rowHooks) fn(row, ev);
 
   if (ev.kind === 'prompt') {
     const card = h('div', { class: 'turn-card' });
