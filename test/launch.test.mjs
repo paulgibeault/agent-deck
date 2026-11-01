@@ -35,3 +35,14 @@ test('launch hooks: failed lets a before undo what it made', async (t) => {
   await failedLaunch(body, new Error('the CLI did not start'));
   assert.equal(made.size, 0);
 });
+
+test('launch hooks: a later before that throws undoes the earlier ones', async (t) => {
+  const made = new Set();
+  const offs = [
+    onLaunch({ before: () => { made.add('wt'); return { cwd: '/r/wt' }; }, failed: () => made.delete('wt') }),
+    onLaunch({ before: () => { throw new Error('unknown workstream'); } }),
+  ];
+  t.after(() => offs.forEach(off => off()));
+  await assert.rejects(beforeLaunch({ cwd: '/r', prompt: 'go' }), /unknown workstream/);
+  assert.equal(made.size, 0, 'the worktree the first hook made was undone');
+});
