@@ -17,6 +17,7 @@ import './models.js';
 import './vault.js';
 import { railFilter } from './wsattach.js';
 import { workstreamsChanged } from './wspicker.js';
+import './ghchips.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged } from './home.js';
 
@@ -1576,6 +1577,7 @@ function statusOf0(s, b, phase) {
   const subs = g.subagents?.running || 0;
   const subsTxt = subs ? `${subs} subagent${subs === 1 ? '' : 's'} running` : null;
   const waited = g.need?.since ? ago(Date.now() - Date.parse(g.need.since)) : g.idleMs != null ? ago(g.idleMs) : null;
+  if (sig === 'input' && g.need?.kind === 'review') return { sig, who: 'you', icon: 'i-pr', head: 'Review feedback', text: g.need.text, right: '' };
   if (sig === 'input' && (permLine(s.id) || g.need?.kind === 'permission')) return { sig, who: 'you', icon: 'i-hand', head: 'Needs your permission', text: permLine(s.id)?.replace(/^Wants to use /, '') || g.need.text, right: driveOf(s.id)?.alive ? 'answer below' : waited ? `waiting ${waited}` : '' };
   if (sig === 'input') return { sig, who: 'you', icon: 'i-q', head: `${actor} asked you`, text: (g.need?.text || g.lastText || '') + where, right: waited ? `waiting ${waited}` : '' };
   if (sig === 'error' && g.need?.kind === 'ci') return { sig, who: 'you', icon: 'i-ci', head: 'CI is red', text: g.need.text, right: '' };

@@ -470,13 +470,31 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .sh-top.c1 .sh-be { padding: 0 6px; }
 button.sh-chip:hover, a.sh-chip:hover { background: var(--hover); color: var(--fg); text-decoration: none; }
 .sh-chip.gh { font-variant-numeric: tabular-nums; }
-.sh-chip.gh.st-open svg { color: var(--ok); } .sh-chip.gh.st-merged svg { color: var(--ask); } .sh-chip.gh.st-closed svg { color: var(--err); }
 .sh-chip.gh.cur { box-shadow: inset 0 0 0 1px var(--line2); }
+.sh-chip.gh.rel { margin-left: -5px; }
 .sh-chip.more { color: var(--muted); cursor: help; }
-.sh-chip.gh.draft svg { color: var(--muted); }
-.sh-chip .ci { width: 6px; height: 6px; border-radius: 3px; margin-left: 1px; }
-.sh-chip .ci-success { background: var(--ok); } .sh-chip .ci-failure { background: var(--err); } .sh-chip .ci-pending { background: var(--work); animation: pulse 1.4s ease-in-out infinite; }
-.sh-chip.gh > svg:last-child:not(:first-child) { color: var(--ok); }
+/* GitHub chips (ghchips.js): the glyph's colour is the state, GitHub's own; the CI glyph's shape says as much as its colour. */
+.gh.st-open > svg { color: var(--ok); } .gh.st-draft > svg, .gh.st-not-planned > svg { color: var(--muted); }
+.gh.st-merged > svg, .gh.issue.st-closed > svg { color: var(--ask); } .gh.pr.st-closed > svg { color: var(--err); }
+.gh .ci { flex: none; align-self: flex-start; margin: 1px 0 0 -3px; font: 700 9px/1 var(--sans); font-style: normal; }
+.ci.ci-success { color: var(--ok); } .ci.ci-failure { color: var(--err); }
+.ci.ci-pending { width: 6px; height: 6px; margin-top: 2px; border-radius: 3px; background: var(--work); animation: pulse 1.4s ease-in-out infinite; }
+.gh-mini { display: inline-flex; align-items: center; gap: 3px; padding: 0 3px; color: var(--fg2); font-size: 11px; font-variant-numeric: tabular-nums; text-decoration: none; white-space: nowrap; }
+.gh-mini:hover { color: var(--fg); text-decoration: none; }
+.gh-card { position: fixed; inset: auto; margin: 0; width: max-content; max-width: 340px; padding: 10px 12px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg1); color: var(--fg);
+  box-shadow: 0 10px 30px rgb(0 0 0 / .18), 0 2px 6px rgb(0 0 0 / .08); font-size: 12px; }
+.gh-card:popover-open { display: flex; flex-direction: column; gap: 5px; }
+.ghc-h { display: flex; align-items: center; gap: 6px; }
+.ghc-st { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; text-transform: capitalize; }
+.ghc-t { font-weight: 600; line-height: 1.35; }
+.ghc-m { display: flex; gap: 8px; }
+.ghc-m:empty { display: none; }
+.ghc-warn { color: var(--need-fg); } .ghc-err { color: var(--err-fg); }
+.ghc-ci { display: flex; align-items: center; gap: 6px; }
+.ghc-ci .ci { margin: 0; align-self: center; font-size: 11px; }
+.ghc-fails { margin: 0; padding-left: 18px; }
+.ghc-fails a { color: var(--err-fg); }
+.ghc-fix { align-self: flex-start; margin-top: 3px; }
 .sh-chip.new-pr { color: var(--muted); } .sh-chip.new-pr:hover { color: var(--info-fg); }
 .sh-chip.mv svg { color: var(--info); }
 

@@ -32,6 +32,8 @@ const SHELL = [
   '/home.js',
   '/homemodel.js',
   '/home.css',
+  '/ghpoll.js',
+  '/ghchips.js',
   '/styles.css',
   '/manifest.webmanifest',
   '/vendor/highlight.min.js',

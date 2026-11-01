@@ -1,0 +1,68 @@
+{
+  "nodes": {
+    "octo-example/widgets#34": {
+      "__typename": "PullRequest", "number": 34, "title": "Fix widget alignment on narrow screens", "url": "https://github.com/octo-example/widgets/pull/34",
+      "state": "OPEN", "isDraft": false, "merged": false, "headRefName": "12-fix-widget", "mergeable": "CONFLICTING", "reviewDecision": "CHANGES_REQUESTED",
+      "author": { "login": "octocat" },
+      "closingIssuesReferences": { "nodes": [{ "number": 12, "repository": { "nameWithOwner": "octo-example/widgets" } }] },
+      "reviews": { "totalCount": 2 },
+      "reviewThreads": { "nodes": [{ "isResolved": false, "comments": { "totalCount": 2 } }, { "isResolved": false, "comments": { "totalCount": 1 } }, { "isResolved": true, "comments": { "totalCount": 3 } }] },
+      "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": [
+        { "__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "https://github.com/octo-example/widgets/actions/runs/9001/job/1", "checkSuite": { "workflowRun": { "databaseId": 9001 } } },
+        { "__typename": "CheckRun", "name": "test (node 20)", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "https://github.com/octo-example/widgets/actions/runs/9001/job/2", "checkSuite": { "workflowRun": { "databaseId": 9001 } } },
+        { "__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/octo-example/widgets/actions/runs/9001/job/3", "checkSuite": { "workflowRun": { "databaseId": 9001 } } }
+      ] } } } }] }
+    },
+    "octo-example/widgets#35": {
+      "__typename": "PullRequest", "number": 35, "title": "Draft: new widget theme", "url": "https://github.com/octo-example/widgets/pull/35",
+      "state": "OPEN", "isDraft": true, "merged": false, "headRefName": "theme", "mergeable": "MERGEABLE", "reviewDecision": "REVIEW_REQUIRED",
+      "author": { "login": "hubot" }, "closingIssuesReferences": { "nodes": [] }, "reviews": { "totalCount": 0 }, "reviewThreads": { "nodes": [] },
+      "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": [
+        { "__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": null, "detailsUrl": "https://github.com/octo-example/widgets/actions/runs/9002/job/1", "checkSuite": { "workflowRun": { "databaseId": 9002 } } },
+        { "__typename": "StatusContext", "context": "deploy/preview", "state": "PENDING", "targetUrl": "https://example.com/preview" }
+      ] } } } }] }
+    },
+    "octo-example/widgets#36": {
+      "__typename": "PullRequest", "number": 36, "title": "Speed up widget rendering", "url": "https://github.com/octo-example/widgets/pull/36",
+      "state": "MERGED", "isDraft": false, "merged": true, "headRefName": "fast-render", "mergeable": "UNKNOWN", "reviewDecision": "APPROVED",
+      "author": { "login": "octocat" }, "closingIssuesReferences": { "nodes": [{ "number": 13, "repository": { "nameWithOwner": "octo-example/widgets" } }] },
+      "reviews": { "totalCount": 1 }, "reviewThreads": { "nodes": [] },
+      "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": [
+        { "__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/octo-example/widgets/actions/runs/9003/job/1", "checkSuite": { "workflowRun": { "databaseId": 9003 } } }
+      ] } } } }] }
+    },
+    "octo-example/widgets#37": {
+      "__typename": "PullRequest", "number": 37, "title": "Experiment: canvas widgets", "url": "https://github.com/octo-example/widgets/pull/37",
+      "state": "CLOSED", "isDraft": false, "merged": false, "headRefName": "canvas", "mergeable": "UNKNOWN", "reviewDecision": null,
+      "author": { "login": "hubot" }, "closingIssuesReferences": { "nodes": [] }, "reviews": { "totalCount": 0 }, "reviewThreads": { "nodes": [] },
+      "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
+    },
+    "octo-example/widgets#38": {
+      "__typename": "PullRequest", "number": 38, "title": "Docs: widget API", "url": "https://github.com/octo-example/widgets/pull/38",
+      "state": "OPEN", "isDraft": false, "merged": false, "headRefName": "docs", "mergeable": "MERGEABLE", "reviewDecision": "APPROVED",
+      "author": { "login": "octocat" }, "closingIssuesReferences": { "nodes": [] }, "reviews": { "totalCount": 1 }, "reviewThreads": { "nodes": [] },
+      "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": [
+        { "__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://github.com/octo-example/widgets/actions/runs/9004/job/1", "checkSuite": { "workflowRun": { "databaseId": 9004 } } }
+      ] } } } }] }
+    },
+    "octo-example/widgets#12": {
+      "__typename": "Issue", "number": 12, "title": "Widgets overlap on phones", "url": "https://github.com/octo-example/widgets/issues/12",
+      "state": "OPEN", "stateReason": null, "author": { "login": "hubot" }
+    },
+    "octo-example/widgets#13": {
+      "__typename": "Issue", "number": 13, "title": "Rendering is slow", "url": "https://github.com/octo-example/widgets/issues/13",
+      "state": "CLOSED", "stateReason": "COMPLETED", "author": { "login": "octocat" }
+    },
+    "octo-example/widgets#14": {
+      "__typename": "Issue", "number": 14, "title": "Support IE6", "url": "https://github.com/octo-example/widgets/issues/14",
+      "state": "CLOSED", "stateReason": "NOT_PLANNED", "author": { "login": "hubot" }
+    }
+  },
+  "branches": { "octo-example/widgets@12-fix-widget": 34 },
+  "milestones": {
+    "octo-example/widgets%3": { "title": "v2.0", "url": "https://github.com/octo-example/widgets/milestone/3", "state": "OPEN", "number": 3, "open": { "totalCount": 4 }, "closed": { "totalCount": 9 } }
+  },
+  "logs": {
+    "9001": "lint\tRun npm run lint\t2026-11-01T10:00:01.1234567Z > widgets@1.0.0 lint\nlint\tRun npm run lint\t2026-11-01T10:00:02.1234567Z src/widget.js:42:7  error  'width' is assigned a value but never used  no-unused-vars\nlint\tRun npm run lint\t2026-11-01T10:00:02.2234567Z \u001b[31m✖ 1 problem (1 error, 0 warnings)\u001b[0m\ntest (node 20)\tRun npm test\t2026-11-01T10:00:05.1234567Z not ok 3 - widget fits a 320px screen\ntest (node 20)\tRun npm test\t2026-11-01T10:00:05.2234567Z   expected: 320\ntest (node 20)\tRun npm test\t2026-11-01T10:00:05.3234567Z   actual: 336\ntest (node 20)\tRun npm test\t2026-11-01T10:00:06.1234567Z ##[error]Process completed with exit code 1.\n"
+  }
+}
