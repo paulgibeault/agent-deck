@@ -37,6 +37,8 @@ const SHELL = [
   '/worktrees.js',
   '/worktrees.css',
   '/wtpick.js',
+  '/wrapup.js',
+  '/wrapup.css',
   '/styles.css',
   '/manifest.webmanifest',
   '/vendor/highlight.min.js',

@@ -99,8 +99,12 @@ export function parseNotes(md) {
   return out.reverse();
 }
 
-/** A wrap-up record's path, sessions/<date>-<title-slug>-<id8>.md → { date, title, id8 }. */
+/**
+ * A wrap-up record → { file, date, title, id8, … }: the detail's { file, date, title,
+ * session, summary } (#36), or a bare path, sessions/<date>-<title-slug>-<id8>.md.
+ */
 export function parseRecord(file) {
+  if (file && typeof file === 'object') return { ...file, date: file.date || null, title: file.title || String(file.file || ''), id8: file.session ? String(file.session).replace(/[^A-Za-z0-9]/g, '').slice(0, 8) : null };
   const m = /(?:^|\/)(\d{4}-\d{2}-\d{2})-(.*)-([A-Za-z0-9]{1,8})\.md$/.exec(String(file || ''));
   if (!m) return { file, date: null, title: String(file || ''), id8: null };
   return { file, date: m[1], title: m[2].replace(/-/g, ' '), id8: m[3] };

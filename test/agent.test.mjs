@@ -140,8 +140,12 @@ test('sending to a session that is not running resumes it; queued prompts outliv
   agents.stop(id);
   await until(agents, id, x => x.status === 'exited');
 
-  // A plain send starts it again, with the mode it last ran with and the model passed in.
+  // A plain send starts it again, with the mode it last ran with and the model passed in; beforeWake runs first.
+  const woke = [];
+  agents.beforeWake = async (x) => { woke.push([x, agents.running(x)]); };
   const item = await agents.send(id, 'are you back?', undefined, { model: 'haiku' });
+  assert.deepEqual(woke, [[id, false]]);
+  agents.beforeWake = null;
   assert.equal(item.text, 'are you back?');
   st = await until(agents, id, x => x.alive && x.status === 'idle');
   assert.equal(st.resumed, true);

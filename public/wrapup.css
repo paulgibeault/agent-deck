@@ -1,0 +1,78 @@
+/* public/wrapup.css — wrap-up (wrapup.js): the header flag, the rail's
+   wrapped filter, and the wrap-up dialog. */
+
+/* A merged PR is the cue: the flag takes the done colour, with a soft ring. */
+.ib.wu-btn.merged { color: var(--ok); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.ib.wu-btn.done svg { fill: currentColor; fill-opacity: .25; }
+.rail-wrapped[aria-pressed="true"] { color: var(--ok-fg); }
+
+.dialog.wu-dlg { width: min(720px, calc(100vw - 32px)); max-width: none; padding: 14px 18px 12px; }
+.wu-f { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 80px); }
+.wu-h { display: flex; align-items: center; gap: 8px; }
+.wu-h > svg { color: var(--ok); flex: none; }
+.wu-h h2 { margin: 0 !important; font-size: 15px; }
+.wu-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg2); font-size: 13px; min-width: 0; }
+.wu-h .spacer { flex: 1; }
+
+.wu-pre { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wu-pc { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; font-size: 12.5px; background: var(--bg2); }
+.wu-pc > svg { flex: none; color: var(--muted); }
+.wu-pc.warn > svg { color: var(--need); }
+.wu-pc.err > svg { color: var(--err); }
+.wu-pc-t { flex: 1; min-width: 0; }
+.wu-pc-a { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.wu-pc .btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.wu-opt { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.wu-opt input { margin: 0; accent-color: var(--info); }
+.wu-opt.safe { color: var(--ok-fg); }
+.wu-opt.risky { color: var(--err-fg); }
+.wu-opts { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+
+.wu-body { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.wu-facts { margin: 0 !important; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.wu-fu { padding: 0 6px; border-radius: 4px; font-size: 11px; color: var(--info-fg); background: color-mix(in srgb, var(--info) 12%, transparent); }
+.wu-model { display: flex; align-items: center; gap: 10px; }
+.wu-model .btn svg { color: var(--ask, var(--info)); }
+.wu-model-s { font-size: 12px; }
+.wu-model-s.err { color: var(--err-fg); }
+
+.wu-sec { display: flex; flex-direction: column; gap: 3px; }
+.wu-sec h3 { margin: 0 0 2px; font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.wu-item { display: flex; align-items: flex-start; gap: 8px; padding: 3px 4px; border-radius: 6px; }
+.wu-item:hover { background: var(--hover); }
+.wu-item.off .wu-item-b { opacity: .55; }
+.wu-ck { margin: 7px 0 0; accent-color: var(--info); flex: none; }
+.wu-item-b { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.wu-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wu-in { width: 100%; height: 26px; font-family: inherit; font-size: 12.5px; padding: 0 8px; }
+.wu-in.ta { height: auto; padding: 5px 8px; resize: vertical; line-height: 1.45; }
+.wu-why { flex: 0 1 40%; }
+.wu-path { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
+.wu-or { flex: none; display: inline-flex; color: var(--muted); }
+.wu-or.or-star, .wu-or.or-star-model { color: var(--work); --star-fill: currentColor; }
+.wu-or.or-model { color: var(--ask, var(--info)); }
+.wu-sup { flex: none; height: 22px; padding: 0 6px; border: 1px solid var(--line2); border-radius: 5px; background: var(--bg1); color: var(--fg2); font-size: 11px; font-family: var(--mono); }
+.wu-item.conflict { box-shadow: inset 3px 0 0 var(--need); background: color-mix(in srgb, var(--need) 7%, transparent); }
+.wu-item.conflict.resolved { box-shadow: inset 3px 0 0 var(--line2); background: none; }
+.wu-conf { font-size: 12px; }
+.wu-conf svg { color: var(--need); vertical-align: -1px; }
+.wu-link { color: var(--info-fg); }
+.wu-st { color: var(--muted); }
+.wu-st.st-merged { color: var(--ask-fg, var(--info-fg)); }
+
+.wu-wt { padding: 5px 8px; border-radius: 6px; background: var(--bg2); font-size: 12.5px; }
+.wu-wt > .wu-row > svg { color: var(--muted); }
+.wu-wt-b { font-size: 12px; }
+.wu-wt.st-dirty, .wu-wt.st-unmerged, .wu-wt.st-unknown { box-shadow: inset 3px 0 0 var(--need); }
+.wu-warn { margin: 4px 0 0 !important; font-size: 11.5px; color: var(--need-fg) !important; }
+
+.wu-red ul { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.wu-red li svg { color: var(--need); vertical-align: -1px; }
+.wu-rec summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.wu-md { margin-top: 6px; padding: 8px 10px; border-radius: 6px; background: var(--bg0); border: 1px solid var(--line); font-size: 12.5px; max-height: 280px; overflow: auto; }
+
+.wu-done ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.wu-done li svg { color: var(--ok); vertical-align: -1px; }
+.wu-done p { margin: 10px 0 0 !important; font-size: 12px; }
+.wu-f .dialog-a { align-items: center; }
+.wu-fin-err { flex: 1; margin: 0; }
