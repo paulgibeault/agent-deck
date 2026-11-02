@@ -399,7 +399,7 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .nowline .nl-t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; color: var(--fg2); }
 .nowline .nl-t.mono { font: 12px var(--mono); }
 .nowline .nl-e { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-.brief { display: flex; flex-direction: column; gap: 12px; margin-left: 6px; padding: 12px 14px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); }
+.brief { container-type: inline-size; display: flex; flex-direction: column; gap: 12px; margin-left: 6px; padding: 12px 14px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); }
 .brief-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brief-h h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--fg2); }
 .spin { width: 12px; height: 12px; border-radius: 6px; border: 2px solid var(--line2); border-top-color: var(--ok); animation: spin 1s linear infinite; flex: none; }
@@ -415,7 +415,10 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .prog-b span { height: 6px; border-radius: 3px; min-width: 4px; }
 .tone-done { background: var(--info); } .tone-active { background: var(--ok); } .tone-working { background: color-mix(in srgb, var(--ok) 45%, var(--bg2)); }
 .tone-todo { background: var(--line2); } .tone-failed { background: var(--err); }
-.dnn { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; }
+/* Completed · In progress · Planned; stacked when the pane is narrow. */
+.dnn { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+/* Stacked, an empty list says nothing, so it goes. */
+@container (max-width: 560px) { .dnn { grid-template-columns: minmax(0, 1fr); gap: 10px; } .dnn-p.empty { display: none; } }
 .dnn h3 { margin: 0 0 5px; font-size: 11px; font-weight: 500; color: var(--muted); }
 .dnn ul { margin: 0; padding: 0 0 0 14px; display: flex; flex-direction: column; gap: 3px; }
 .dnn p, .dnn li { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--fg2); }
