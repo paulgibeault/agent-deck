@@ -515,11 +515,11 @@ function sessionsTab(w) {
       const sig = isLive(s) ? ctx.sigOf(s) : 'ended'; const rec = recordOf.get(s.id);
       return h('li', { class: 'hm-row link', onclick: () => ctx.open(s.id), title: 'Open the session' },
         h('span', { class: `dot sig-${sig}`, title: SIG_LABEL[sig] }), ctx.backend(s),
-        h('span', { class: 'hm-row-t' }, s.title, rec ? h('span', { class: 'hm-tagl', title: rec.file }, 'wrapped up') : null),
+        h('span', { class: 'hm-row-t' }, s.title, rec ? h('span', { class: 'hm-tagl', title: rec.summary || rec.file }, 'wrapped up') : null),
         s.pr?.url ? refChip({ kind: 'pr', ...s.pr }, null) : h('span', {}),
         h('span', { class: 'hm-ago', title: [s.startedAt ? `started ${when(s.startedAt)}` : null, `last ${when(s.mtime)}`].filter(Boolean).join('\n') }, isLive(s) ? 'live' : since(s.mtime)));
     }),
-    records.map(r => h('li', { class: 'hm-row', title: r.file },
+    records.map(r => h('li', { class: 'hm-row', title: r.summary || r.file },
       h('span', { class: 'dot sig-ended' }), h('span', {}), h('span', { class: 'hm-row-t' }, r.title, h('span', { class: 'hm-tagl' }, 'wrap-up')), h('span', {}),
       h('span', { class: 'hm-ago' }, r.date || ''))));
 }

@@ -21,6 +21,7 @@ import './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged } from './home.js';
+import { wrappedFilter } from './wrapup.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -527,7 +528,8 @@ function matchesQuery(s, q) {
     || (s.spawned || []).some(id => state.byId.get(id)?.title?.toLowerCase().includes(q));
 }
 const inWorkstream = railFilter(() => renderTree());   // the rail's filter by workstream (wsattach.js)
-const matchesTree = (s) => matchesQuery(s, state.treeFilter) && inWorkstream(s);
+const notWrapped = wrappedFilter(() => renderTree());   // wrapped-up sessions leave the rail (wrapup.js)
+const matchesTree = (s) => matchesQuery(s, state.treeFilter) && inWorkstream(s) && notWrapped(s);
 
 /**
  * The rail's buckets. The server sorts by process: alive, recent file,
