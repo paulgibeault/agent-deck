@@ -209,6 +209,7 @@ function openRepoMenu(anchor, ctx, c) {
     h('div', { class: 'mm-h' }, svgUse(c.icon, 16), h('div', {}, h('b', {}, c.text), h('div', { class: 'muted mm-path' }, ctx.tilde(dir)))),
     c.url ? menuItem(svgUse('i-git', 13), 'Open on GitHub', () => window.open(c.url, '_blank', 'noopener')) : null,
     menuItem(svgUse('i-open', 13), 'Open in editor', () => ctx.act.openEditor(dir)),
+    c.url ? menuItem(svgUse('i-git', 13), 'Open in GitHub Desktop', () => { location.href = `x-github-client://openLocalRepo/${encodeURIComponent(dir)}`; }) : null,
     menuItem(svgUse('i-copy', 13), 'Copy path', () => navigator.clipboard?.writeText(dir)),
     ctx.isAgent ? null : menuItem(svgUse('i-folder', 13), 'Show its files', () => ctx.act.setTab('files')));
   const r = anchor.getBoundingClientRect();
@@ -240,46 +241,14 @@ registerHeaderSlot('place', (ctx) => {
 });
 
 // ------------------------------------------------------------ refs
-// The GitHub issues and PRs the session worked on (lib/ghrefs.mjs), and where
-// it moved from or to. #30 replaces this slot.
-const GH_ICON = { pr: 'i-pr', issue: 'i-issue' };
-const GH_STATE = { open: 'Open', closed: 'Closed', merged: 'Merged' };
-const REVIEW = { approved: 'Approved', changes_requested: 'Changes requested', review_required: 'Review required' };
-/** "5 passed · 1 failed: lint" for a PR's checks. */
-function checksText(c) {
-  if (!c) return null;
-  return [c.passed ? `${c.passed} passed` : null, c.failed ? `${c.failed} failed${c.failing.length ? `: ${c.failing.slice(0, 4).join(', ')}` : ''}` : null, c.pending ? `${c.pending} running` : null].filter(Boolean).join(' · ');
-}
-function ghChip(r, repo) {
-  const num = `${repo && r.repo.toLowerCase() !== repo.toLowerCase() ? r.repo.split('/')[1] : ''}#${r.number}`;
-  const what = `${r.kind === 'pr' ? 'Pull request' : 'Issue'} ${num}`;
-  // The branch's own PR also says how its CI and review stand; the dot is its CI.
-  const ci = r.state === 'open' ? r.checks?.state : null;
-  const tip = [[r.branch ? `${what} · this branch` : what, r.draft ? 'Draft' : r.state ? GH_STATE[r.state] || r.state : null].filter(Boolean).join(' · '),
-    r.title, r.checks ? `Checks: ${checksText(r.checks)}` : null, r.review ? `Review: ${REVIEW[r.review] || r.review}` : null].filter(Boolean).join('\n');
-  return h('a', { class: `sh-chip gh st-${r.state || 'unknown'}${r.branch ? ' cur' : ''}${r.draft ? ' draft' : ''}`, href: r.url, target: '_blank', rel: 'noopener', title: tip },
-    svgUse(r.state === 'merged' ? 'i-merge' : GH_ICON[r.kind] || 'i-issue', 12), h('span', {}, num),
-    ci ? h('i', { class: `ci ci-${ci}`, 'aria-label': `CI ${ci}` }) : null,
-    r.review === 'approved' && r.state === 'open' ? svgUse('i-check', 10) : null);
-}
-const GH_SHOWN = 6;
+// The GitHub issues and PRs are public/ghchips.js's (order 50); here, where
+// the session moved from or to, after them.
 registerHeaderSlot('refs', (ctx) => {
-  const { s, place: p, act } = ctx;
-  // A subagent's place is its parent's; the parent's refs stay in the parent's header.
+  const { s, act } = ctx;
   if (!s.cwd || ctx.isAgent) return null;
   const out = [];
-  // Before gh answers, the PR the transcript links still shows.
-  const refs = p?.refs || (s.pr?.url ? [{ kind: 'pr', number: s.pr.number, url: s.pr.url, repo: s.pr.repo || '' }] : []);
-  const repo = p?.github?.repo || null;
-  out.push(...refs.slice(0, GH_SHOWN).map(r => ghChip(r, repo)));
-  // A branch with work on it and no PR yet: GitHub's compare page, ready to open one.
-  const prBranch = p?.prBranch ?? p?.branch;
-  if (repo && prBranch && !p.pending && prBranch !== p.defaultBranch && !refs.some(r => r.branch))
-    out.push(h('a', { class: 'sh-chip new-pr', href: `${p.github.url}/compare/${encodeURIComponent(prBranch)}?expand=1`, target: '_blank', rel: 'noopener',
-      title: `Open a pull request for ${prBranch} on GitHub` }, svgUse('i-plus', 11), h('span', {}, 'PR')));
-  if (refs.length > GH_SHOWN) out.push(h('span', { class: 'sh-chip more', title: refs.slice(GH_SHOWN).map(r => `${r.kind === 'pr' ? 'PR' : 'Issue'} #${r.number}${r.title ? ` ${r.title}` : ''}`).join('\n') }, `+${refs.length - GH_SHOWN}`));
   const l = s.lineage;
   if (l?.from) out.push(chip('i-move', `from ${ctx.backendLabel(l.from.harness)}`, `Moved here from “${ctx.session(l.from.id)?.title || l.from.id}” ${ago(Date.now() - l.from.at)} ago · click to open it`, () => act.select(l.from.id), 'mv'));
   if (l?.to) out.push(chip('i-move', `moved to ${ctx.backendLabel(l.to.harness)}`, `Continued as “${ctx.session(l.to.id)?.title || l.to.id}” · click to open it`, () => act.select(l.to.id), 'mv'));
   return out;
-});
+}, { order: 80 });

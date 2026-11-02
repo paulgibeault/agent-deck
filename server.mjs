@@ -115,7 +115,7 @@ function usageToday() {
   if (claude !== 'claude' && r.backends.claude) { r.backends[claude] = r.backends.claude; delete r.backends.claude; }
   return r;
 }
-// Red CI on a live session's branch PR counts as needing the pilot. gh is
+// Red CI or unread review activity on a live session's branch PR (lib/ghrefs.mjs needOf) counts as needing the pilot. gh is
 // asked every couple of minutes for live sessions only; no model calls.
 const ci = new Map();          // sessionId -> { pr, url, failing }
 const places = new Map();      // cwd -> { at, value }: where a folder is, briefly cached
@@ -129,21 +129,25 @@ async function placeOf(cwd) {
 async function watchCi() {
   const live = index.snapshot().active.filter(s => s.cwd);
   const changed = [];
+  const asks = [];
   for (const s of live) {
-    let next = null;
     const where = await placeOf(s.cwd).catch(() => null);
     const repo = where?.github?.repo; const branch = where?.branch;
-    if (repo && branch && branch !== where.defaultBranch) {
-      const pr = await github.branchPr(repo, branch);
-      if (pr?.state === 'open' && pr.checks?.state === 'failure') next = { pr: pr.number, url: pr.url, failing: pr.checks.failing };
-    }
+    asks.push(repo && branch && branch !== where.defaultBranch ? { s, repo, branch } : { s });
+  }
+  // Every live session's branch PR in one gh call.
+  const withPr = asks.filter(a => a.repo);
+  const prs = await github.branchPrs(withPr);
+  for (const a of asks) {
+    const { s } = a;
+    const next = a.repo ? github.needOf(prs[withPr.indexOf(a)]) : null;
     if (JSON.stringify(next) !== JSON.stringify(ci.get(s.id) || null)) { next ? ci.set(s.id, next) : ci.delete(s.id); changed.push(s.id); }
   }
   for (const id of ci.keys()) if (!live.some(s => s.id === id)) { ci.delete(id); changed.push(id); }
   for (const id of changed) index.refresh(id);
   if (changed.length) scheduleSnapshot();
 }
-index.ci = (id) => ci.get(id) || null;
+index.ci = (id) => github.current(ci.get(id));   // review activity the pilot has looked at drops out
 setTimeout(() => watchCi().catch(() => {}), 5000).unref();
 setInterval(() => watchCi().catch(() => {}), 120_000).unref();
 // The process view: what the deck, its sessions and their tool calls are running.
@@ -302,7 +306,7 @@ async function planMove(id, { harness, note = '' }) {
 // --------------------------------------------------------------- routes
 // What a lib/routes/*.mjs module is handed (lib/routes.mjs).
 const featureRoutes = await loadRoutes(path.join(__dirname, 'lib', 'routes'), {
-  root: __dirname, send, readBody, deck, index, agents, briefs, narrator, broadcast, scheduleSnapshot, narratorEnabled: NARRATOR, onLaunch,
+  root: __dirname, send, readBody, deck, index, agents, briefs, narrator, broadcast, scheduleSnapshot, narratorEnabled: NARRATOR, onLaunch, github,
 });
 
 async function route(req, res, url) {
