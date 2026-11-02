@@ -59,6 +59,7 @@ function launchIn(dir) {
   if (!cwd) return;
   cwd.value = dir;
   cwd.dataset.once = '1';   // app.js leaves prefs.launchCwd as it was
+  cwd.dispatchEvent(new Event('change'));   // so launch sections (worktrees, workstreams) follow the folder
   document.getElementById('ns-prompt')?.focus();
 }
 async function scratch() {
