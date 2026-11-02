@@ -619,12 +619,19 @@ function narrateBrief(b) {
   const prev = state.briefs.get(b.id);
   if (b.brief?.summary && b.updatedAt && b.updatedAt !== prev?.updatedAt) narration.auto({ id: `brief:${b.id}:${b.updatedAt}`, sessionId: b.id, kind: 'brief', markdown: b.brief.summary });
 }
+/**
+ * A brief's three lists: [label, items]. In progress shows only while the
+ * session works: the brief refreshes on events, so between them the live
+ * status line is the truth about now.
+ */
+function briefLists(b, working = true) {
+  return [['Completed', b.done || []], ['In progress', working ? b.doing || [] : []], ['Planned', b.planned || []]];
+}
 function briefMarkdown(id) {
   const cur = state.briefs.get(id)?.brief;
   if (!cur) { const last = state.cache.get(id)?.brief?.lastText; return last ? `Last said: ${last}` : ''; }
   const parts = [cur.summary || ''];
-  if (cur.done?.length) parts.push('**Done so far**', cur.done.map(x => `- ${x}`).join('\n'));
-  if (cur.next) parts.push(`**Next:** ${cur.next}`);
+  for (const [label, items] of briefLists(cur)) if (items.length) parts.push(`**${label}**`, items.map(x => `- ${x}`).join('\n'));
   if (cur.watch?.text) parts.push(`**Watch:** ${cur.watch.text}`);
   return parts.filter(Boolean).join('\n\n');
 }
@@ -1635,7 +1642,7 @@ function renderBriefBox(id, s, b) {
   const cur = all[i]?.brief, prev = all[i + 1]?.brief;
   const foot = briefFoot(id, s, pb, i, all);
 
-  const key = JSON.stringify([id, pb?.updatedAt, pb?.pending, pb?.error, state.narrator.enabled, state.narrator.error?.message, prefs.briefCollapsed, i, all.length, nb ? null : b?.lastText]);
+  const key = JSON.stringify([id, pb?.updatedAt, pb?.pending, pb?.error, phaseOf(s) === 'working', state.narrator.enabled, state.narrator.error?.message, prefs.briefCollapsed, i, all.length, nb ? null : b?.lastText]);
   if (briefBoxCache?.key === key) { briefBoxCache.el.querySelector('.brief-f').replaceWith(foot); return briefBoxCache.el; }
   const landed = !i && briefBoxCache?.id === id && briefBoxCache.at && pb?.updatedAt > briefBoxCache.at;
 
@@ -1666,14 +1673,16 @@ function renderBriefBox(id, s, b) {
     }
     box.append(h('div', { class: 'prog' }, legend, bar));
   }
-  // Items this brief added over the one before it are marked, so a refresh
-  // reads as a change rather than a wholesale rewrite.
-  const isNew = (x) => prev && !prev.done.includes(x);
-  // No "now" column: the status line under the brief says what it is doing, live and free.
-  if (cur && (cur.done.length || cur.next)) {
-    box.append(h('div', { class: 'dnn' },
-      h('div', {}, h('h3', {}, 'Done so far'), cur.done.length ? h('ul', {}, ...cur.done.map(x => h('li', { class: isNew(x) ? 'new' : null, title: isNew(x) ? 'New since the previous brief' : null }, x))) : h('p', { class: 'muted' }, '—')),
-      h('div', {}, h('h3', {}, 'Next'), h('p', {}, cur.next || '—'))));
+  // Completed · In progress · Planned. Items this brief added over the one
+  // before it are marked, so a refresh reads as a change rather than a rewrite.
+  const lists = cur ? briefLists(cur, !i && phaseOf(s) === 'working') : [];
+  if (lists.some(([, items]) => items.length)) {
+    // New in this list since the previous brief: an item that moved from In progress to Completed counts.
+    const was = new Map(prev ? briefLists(prev).map(([label, items]) => [label, new Set(items)]) : []);
+    const isNew = (label, x) => prev && !was.get(label)?.has(x);
+    box.append(h('div', { class: 'dnn' }, ...lists.map(([label, items]) => h('div', { class: `dnn-p${items.length ? '' : ' empty'}` }, h('h3', {}, label),
+      items.length ? h('ul', {}, ...items.map(x => h('li', { class: isNew(label, x) ? 'new' : null, title: isNew(label, x) ? 'New since the previous brief' : null }, x)))
+        : h('p', { class: 'muted' }, '—')))));
   }
   if (cur?.watch) {
     const w = h('div', { class: 'watch' }, h('span', { class: 'wk' }, 'WATCH'), h('span', { class: 'wt' }, cur.watch.text));
