@@ -1,0 +1,131 @@
+/* public/home.css — Home (home.js): the workstream grid, its cards, the
+   expanded view, and the Home/Sessions toggle. Tokens from styles.css. */
+
+/* The toggle, beside the status dot. */
+.vt { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; margin-left: 4px; border: 0; border-radius: 6px; background: none; padding: 0; color: var(--muted); }
+.vt:hover { background: var(--hover); color: var(--fg); }
+
+.home { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.home[hidden] { display: none; }
+.hm-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px 24px 32px; }
+.hm-scroll[inert] { pointer-events: none; }
+.hm-bar { display: flex; align-items: center; gap: 8px; height: 28px; margin-bottom: 10px; color: var(--muted); }
+.hm-bar-t { display: inline-flex; align-items: center; gap: 6px; }
+.hm-warn { color: var(--need-fg); }
+.hm-q { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* 1 to 4 columns: a card is at least 260px, and never narrower than a quarter. */
+.hm-grid { --gap: 14px; display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(max(260px, calc((100% - 3 * var(--gap)) / 4)), 1fr)); align-items: start; }
+.hm-card { position: relative; display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 13px 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg1); text-align: left; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+.hm-card:hover { border-color: var(--line2); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
+.hm-card.needs { border-color: color-mix(in srgb, var(--need) 55%, var(--line)); box-shadow: inset 3px 0 0 var(--need); }
+.hm-card.st-paused, .hm-card.st-done, .hm-card.st-archived { background: var(--bg2); }
+.hm-card.st-done .hm-t, .hm-card.st-archived .hm-t { color: var(--fg2); }
+.hm-c-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hm-t { flex: 1; min-width: 0; margin: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-badges { display: inline-flex; gap: 4px; }
+.hm-badges:empty { display: none; }
+.hm-dots { display: inline-flex; align-items: center; gap: 1px; flex: none; }
+.hm-dot { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 8px; background: none; }
+.hm-dot:hover { background: var(--hover); }
+.hm-dot.big .dot { width: 11px; height: 11px; border-radius: 6px; }
+.hm-goal { margin: 0; color: var(--fg2); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-next { display: flex; gap: 5px; margin: 0; font-size: 12px; color: var(--fg); }
+.hm-next > svg { margin-top: 3px; color: var(--muted); }
+.hm-next > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hm-prs { display: flex; flex-wrap: wrap; gap: 4px; }
+.hm-pr { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: 5px; background: var(--bg2); color: var(--fg2); font: 11px var(--mono); }
+.hm-pr:hover { text-decoration: none; background: var(--bg3); }
+.hm-f { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.hm-st { text-transform: lowercase; }
+.hm-st.st-paused { color: var(--turn-fg); }
+.hm-ago { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hm-counts { display: inline-flex; gap: 9px; }
+.hm-n { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.hm-n svg { opacity: .8; }
+
+/* Unaffiliated: a short list of sessions, each with Assign. */
+.hm-un { cursor: default; background: transparent; border-style: dashed; }
+.hm-un:hover { box-shadow: none; }
+.hm-un-l { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.hm-un-l li { display: grid; grid-template-columns: 12px 1fr auto auto; align-items: center; gap: 8px; min-height: 24px; }
+.hm-un-t { min-width: 0; border: 0; background: none; padding: 0; text-align: left; font-size: 12.5px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-un-t:hover { text-decoration: underline; }
+.hm-assign { opacity: .75; }
+.hm-un-l li:hover .hm-assign, .hm-assign:focus-visible { opacity: 1; }
+.hm-pick:popover-open { display: flex; flex-direction: row; gap: 6px; width: auto; align-items: center; }
+
+/* + New workstream, and its inline form. */
+.hm-new { flex-direction: row; align-items: center; justify-content: center; gap: 6px; min-height: 64px; border-style: dashed; background: transparent; color: var(--muted); font-size: 12.5px; }
+.hm-new:hover { color: var(--fg); }
+form.hm-new { flex-direction: column; align-items: stretch; cursor: default; color: var(--fg); }
+form.hm-new .field { width: 100%; font-family: var(--sans); }
+form.hm-new.busy { opacity: .6; pointer-events: none; }
+.hm-new-a { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* First use: the repo. */
+.hm-setup { grid-column: 1 / -1; max-width: 620px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg1); display: flex; flex-direction: column; gap: 12px; }
+.hm-setup h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+.hm-setup p { margin: 0; line-height: 1.5; }
+.hm-setup code, .hm-cmd { font: 12px var(--mono); }
+.hm-setup-a { display: flex; gap: 8px; align-items: center; }
+.hm-setup-a .grow { flex: 1; }
+.hm-cmd { margin: 0 0 16px; padding: 8px 10px; border-radius: 8px; background: var(--bg0); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.hm-empty { margin: 10px 0; }
+
+/* The expanded view: covers the grid, which keeps its scroll underneath. */
+.hm-x { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; background: var(--bg0); }
+.hm-x[hidden] { display: none; }
+.hm-x-load { padding: 24px; display: flex; align-items: center; gap: 6px; }
+.hm-x-h { display: flex; align-items: center; gap: 10px; padding: 14px 24px 2px; min-width: 0; }
+.hm-x-t { flex: 0 1 auto; min-width: 0; margin: 0; font-size: 18px; font-weight: 650; }
+.hm-ed.hm-x-goal { margin: 0 24px 8px 54px; color: var(--fg2); }
+.hm-status { height: 26px; border: 1px solid var(--line2); border-radius: 6px; background: var(--bg1); color: var(--fg2); font-size: 12px; padding: 0 6px; }
+.hm-tabs { padding: 0 24px; background: transparent; }
+.hm-x-b { flex: 1; min-height: 0; overflow: auto; padding: 16px 24px 32px; }
+.hm-x-b > * { max-width: 920px; }
+.hm-sec { margin-bottom: 18px; }
+.hm-sec h4 { margin: 0 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.hm-meta { font-size: 11.5px; }
+
+/* Inline edits: text until clicked, then a field; a quiet flash once committed. */
+.hm-ed { border-radius: 6px; padding: 2px 6px; margin: 0 -6px; cursor: text; transition: background .6s; }
+.hm-ed:hover { background: var(--hover); }
+.hm-ed.editing { background: none; }
+.hm-ed.editing .field { width: 100%; font-family: var(--sans); font-size: 13px; }
+.hm-ed.editing textarea.field { height: auto; padding: 8px 10px; line-height: 1.5; resize: vertical; }
+.hm-ed.saved { animation: hm-saved 1.2s ease-out; }
+@keyframes hm-saved { from { background: color-mix(in srgb, var(--ok) 22%, transparent); } to { background: transparent; } }
+.hm-ph { color: var(--muted); font-style: italic; }
+.hm-ed .md > :first-child { margin-top: 0; } .hm-ed .md > :last-child { margin-bottom: 0; }
+
+/* Rows in the tabs. */
+.hm-rows, .hm-decs, .hm-notes { list-style: none; margin: 0; padding: 0; }
+.hm-row { display: grid; grid-template-columns: 14px 16px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 32px; padding: 3px 8px; border-radius: 6px; }
+.hm-row.file { grid-template-columns: 14px minmax(0, max-content) minmax(0, 1fr) auto auto; }
+.hm-row.link { cursor: pointer; }
+.hm-row.link:hover { background: var(--hover); }
+.hm-row-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-row-t.mono { font: 12px var(--mono); }
+.hm-why { min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-tagl { margin-left: 8px; font-size: 10.5px; color: var(--muted); }
+.hm-state { font-size: 11px; color: var(--muted); }
+.hm-state.st-open { color: var(--ok-fg); } .hm-state.st-merged { color: var(--ask-fg); }
+.hm-ci { color: var(--muted); } .hm-ci.ci-success, .hm-ci.ci-pass { color: var(--ok-fg); } .hm-ci.ci-failure, .hm-ci.ci-fail { color: var(--err-fg); } .hm-ci.ci-pending { color: var(--work-fg); }
+.hm-dec { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.hm-dec-h { display: flex; align-items: baseline; gap: 8px; }
+.hm-num { font: 11px var(--mono); color: var(--muted); }
+.hm-dec-b { margin: 2px 0 0 42px; color: var(--fg2); font-size: 12.5px; }
+.hm-dec.st-superseded b, .hm-dec.st-reverted b { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line2); }
+.hm-past { margin-top: 14px; }
+.hm-past summary { cursor: pointer; font-size: 12px; }
+.hm-src { min-width: 22px; height: 22px; }
+.hm-notes li { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.hm-notes .md p { margin: 0; }
+
+@media (max-width: 640px) {
+  .hm-scroll { padding: 12px 12px 24px; }
+  .hm-x-h, .hm-tabs, .hm-x-b { padding-left: 12px; padding-right: 12px; }
+  .hm-ed.hm-x-goal { margin-left: 6px; }
+  .hm-tabs { overflow-x: auto; }
+}

@@ -18,6 +18,7 @@ import './vault.js';
 import { railFilter } from './wsattach.js';
 import { workstreamsChanged } from './wspicker.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
+import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged } from './home.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -163,6 +164,8 @@ function connect() {
   es.addEventListener('stars.changed', (e) => applyStarsChanged(JSON.parse(e.data)));
   es.addEventListener('workstreams.changed', (e) => workstreamsChanged(JSON.parse(e.data)));
   es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
+  es.addEventListener('workstreams.changed', homeWorkstreamsChanged);
+  es.addEventListener('hello', homeWorkstreamsChanged);
 }
 function setConn(on) {
   if (restarting) return;
@@ -234,7 +237,7 @@ function renderMainMenu() {
 }
 // The deck's views, then the backend itself; features add theirs with registerMenuItem (menu.js).
 registerMenuItem({ group: 'views', order: 10, icon: 'i-plus', text: 'New session', fn: openLaunch, kbd: 'n' });
-registerMenuItem({ group: 'views', order: 10, icon: 'i-history', text: 'All sessions', fn: openHistory, kbd: 'h' });
+registerMenuItem({ group: 'views', order: 10, icon: 'i-history', text: 'All sessions', fn: openHistory, kbd: 'H' });
 registerMenuItem({ group: 'views', order: 10, icon: 'i-proc', text: 'Processes', fn: () => openProcs(), kbd: 'p' });
 registerMenuItem({ group: 'views', order: 10, icon: () => h('span', { class: 'mono' }, '?'), text: 'Keyboard shortcuts', fn: () => $('keys').showModal(), kbd: '?' });
 registerMenuItem({ group: 'backend', order: 90, icon: 'i-power', text: 'Restart backend…', fn: confirmRestart, cls: 'danger', disabled: () => restarting });
@@ -339,8 +342,11 @@ function start() {
   api.get('/api/briefs').then(r => { for (const [id, b] of Object.entries(r.briefs)) state.briefs.set(id, b); state.narrator = { ...state.narrator, ...r.narrator }; refreshBriefViews(); }).catch(() => {});
   api.get('/api/sessions').then(snap => {
     applySnapshot(snap);
-    if (prefs.selected && state.byId.has(prefs.selected)) select(prefs.selected);
-    else goOverview();
+    // A link (#s=<id>) opens its session; otherwise the one left open, unless Home was showing; with none, Home.
+    const link = new URLSearchParams(location.hash.slice(1)).get('s');
+    const want = link || prefs.selected;
+    if (want && state.byId.has(want)) { select(want); if (!link && homeShowing()) goHome(); }
+    else { goOverview(); goHome(); }
   }).catch(() => goOverview());
 }
 
@@ -539,6 +545,7 @@ function railLists() {
 }
 
 function renderTree() {
+  homeSessionsChanged();
   const snap = state.snapshot;
   const lists = railLists();
   for (const b of ['active', 'recent', 'closed']) {
@@ -1248,6 +1255,19 @@ registerView('sessions', {
   unmount: () => { $('overview').hidden = true; $('session-view').hidden = true; },
 });
 showView('sessions');
+// Home (home.js): workstream cards over the deck's live sessions.
+initHome({
+  sessions: () => [...state.snapshot.active, ...state.snapshot.recent, ...state.snapshot.closed],
+  byId: (id) => state.byId.get(id),
+  sigOf,
+  backend: (s) => backendGlyph(sessionHarness(s)),
+  open: (id, eventId = null) => {
+    if (!state.byId.has(id)) { toast('That session is no longer listed'); return; }
+    select(id).then(() => { const ev = eventId && findEvent(id, eventId); if (ev) jumpToSeq(ev.seq); });
+  },
+  back: () => state.selected ? select(state.selected) : goOverview(),
+  toast,
+});
 
 // ------------------------------------------------------------ selection
 async function select(id) {
@@ -2683,7 +2703,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'b') { e.preventDefault(); $('bell-pop').showPopover(); return; }
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
   if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
-  if (e.key === 'h') { e.preventDefault(); openHistory(); return; }
+  if (e.key === 'h') { e.preventDefault(); toggleHome(); return; }
+  if (e.key === 'H') { e.preventDefault(); openHistory(); return; }
   if (e.key === 'p') { e.preventDefault(); openProcs(); return; }
   if (e.key === 'm') { e.preventDefault(); openMainMenu(); return; }
   if (e.key === '[') { e.preventDefault(); setRailMin(!prefs.railMin); return; }

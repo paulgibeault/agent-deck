@@ -68,17 +68,21 @@ async function scratch() {
 
 // Media goes by URL; anything else needs its text.
 const MEDIA_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico|pdf|mp3|wav|ogg|m4a|flac|mp4|webm|mov)$/i;
-/** A Vault file in the deck's file view, inside the dialog; ← goes back to the list. */
-async function openFile(it, v) {
+/**
+ * A file ({ path, rel }) in the deck's file view, inside the Vault's dialog; ←
+ * goes back to the list. Home (home.js) opens its files here too, without ←.
+ */
+export async function openFile(it, v = null, { back = true } = {}) {
   const d = dialog();
   let f;
   try { f = await call(`/api/file?path=${encodeURIComponent(it.path)}${MEDIA_EXT.test(it.path) ? '&meta=1' : ''}`); } catch (e) { f = { error: e.message }; }
   const ctx = { api: { openEditor: (p, line) => call('/api/open-editor', { path: p, line }).catch(e => toast(`Open in editor failed: ${e.message}`)) } };
   d.classList.add('vf');
   d.replaceChildren(h('div', { class: 'hist-f' },
-    h('div', { class: 'hist-h' }, ib('i-left', 'Back to the Vault', () => openVault(it.rel, v), { size: 13 }),
+    h('div', { class: 'hist-h' }, back ? ib('i-left', 'Back to the Vault', () => openVault(it.rel, v), { size: 13 }) : null,
       h('span', { class: 'muted' }, it.rel), h('span', { class: 'spacer' }), ib('i-x', 'Close (Esc)', () => d.close(), { size: 12 })),
     h('div', { class: 'vault-fv' }, renderFileView({ ...f, abs: it.path, rel: it.rel }, ctx))));
+  if (!d.open) d.showModal();
 }
 
 function row(it, flash, v) {
