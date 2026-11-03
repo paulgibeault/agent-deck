@@ -20,7 +20,7 @@ import { workstreamsChanged } from './wspicker.js';
 import './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
-import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged } from './home.js';
+import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
 import { wrappedFilter } from './wrapup.js';
 
 const $ = (id) => document.getElementById(id);
@@ -471,7 +471,9 @@ function sessRow(s, nested = false, depth = 1) {
   const sub = isAgent || nested ? (meta ? [meta] : null)
     : [h('span', { class: 'fld', title: s.cwd ? `Folder: ${tilde(s.cwd)}` : 'Folder' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
   // No native tooltips: the hover card says all of it.
-  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, style: depth > 1 ? `--depth:${depth}` : null, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}` },
+  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, style: depth > 1 ? `--depth:${depth}` : null, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}`,
+    // Drag onto a workstream card on Home to move it there (home.js).
+    ...(isAgent || nested ? {} : { draggable: 'true', ondragstart: (e) => dragSession(e, s) }) },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
     h('span', { class: 't' }, h('span', { class: 'tt' }, s.title || s.id), sub ? h('span', { class: 'sub' }, ...sub) : null),
     h('span', { class: 'r' }, s.background ? h('span', { class: 'bgc', title: `${s.background} running in the background` }, svgUse('i-bg', 10), String(s.background)) : null,

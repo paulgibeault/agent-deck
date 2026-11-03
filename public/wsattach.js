@@ -117,22 +117,17 @@ registerHeaderSlot('workstream', (ctx) => {
     return ws ? h('span', { class: 'sh-ws', title: `Workstream ${nameOf(ws)} (its parent session’s)` }, svgUse('i-workstream', 13), h('span', {}, nameOf(ws))) : null;
   }
   const ws = s.workstream;
+  const homeOpen = async () => { const m = await homeModule(); m?.openWorkstream?.(ws.slug); };
   const pick = (anchor) => openWorkstreamPicker(anchor, {
     sessionId: ctx.id, current: ws?.slug ?? null,
+    actions: ws ? [{ label: `Open ${nameOf(ws)} on Home`, icon: 'i-home', fn: homeOpen }] : [],
     // Shown at once; the next snapshot says the same.
     onPick: (w) => { s.workstream = w; ctx.act.refresh?.(); },
   });
   if (!ws) return known.ready ? ib('i-workstream', 'Assign workstream', (e) => pick(e.currentTarget), { cls: 'sh-ws-add', size: 13, 'aria-haspopup': 'dialog' }) : null;
-  const open = async (e) => {
-    const anchor = e.currentTarget;
-    const m = await homeModule();
-    if (m?.openWorkstream) m.openWorkstream(ws.slug); else pick(anchor);
-  };
-  const change = (e) => { e.preventDefault(); pick(e.currentTarget.closest('.sh-ws-w') || e.currentTarget); };
-  return h('span', { class: 'sh-ws-w' },
-    h('button', { type: 'button', class: 'sh-ws', title: `Workstream ${nameOf(ws)}\nClick to open it · right-click to change`, onclick: open, oncontextmenu: change },
-      svgUse('i-workstream', 13), h('span', {}, nameOf(ws))),
-    ib('i-down', 'Change workstream', change, { cls: 'sh-ws-more', size: 10, 'aria-haspopup': 'dialog' }));
+  // The chip is a picker: click to move the session to another workstream (or none); opening it on Home is a row in it.
+  return h('button', { type: 'button', class: 'sh-ws sh-ws-pick', 'aria-haspopup': 'dialog', title: `Workstream ${nameOf(ws)}\nClick to change it or open it on Home`, onclick: (e) => pick(e.currentTarget) },
+    svgUse('i-workstream', 13), h('span', {}, nameOf(ws)), svgUse('i-down', 9));
 }, { replace: true });
 
 // ------------------------------------------------------------ rail filter

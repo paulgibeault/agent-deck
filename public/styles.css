@@ -1414,9 +1414,6 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .rail-ws { min-width: 22px; height: 22px; margin-right: -6px; }
 .rail-ws[aria-pressed="true"] { color: var(--info); }
 .wsp .mm-i.hl { background: var(--hover); }
-.sh-ws-w { display: inline-flex; align-items: center; }
-.sh-ws-more { min-width: 16px; width: 16px; opacity: 0; }
-.sh-ws-w:hover .sh-ws-more, .sh-ws-more:focus-visible { opacity: 1; }
 
 /* New session: the workstream row and the worktree choice, as chips in the form's second column. */
 .ns-x > .ns-sec > .ns-l { grid-column: 1; margin: 0; align-self: start; padding-top: 6px; }
@@ -1441,3 +1438,12 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ns .wt-pick.unchosen .wt-head { color: var(--need-fg); }
 .ns .wt-card.same { color: var(--fg2); }
 #ns-form .ns-name { font-family: var(--sans); }
+
+/* Moving sessions between workstreams: the header chip opens the picker; on Home, drag a session onto a card. */
+.sh-ws-pick > svg:last-child { opacity: .55; margin-left: -1px; }
+.sh-ws-pick:hover > svg:last-child { opacity: 1; }
+.home .hm-card.drop-on { outline: 2px dashed var(--info); outline-offset: 2px; background: color-mix(in srgb, var(--info) 7%, var(--bg1)); }
+.ws-dragging .home .hm-card:not(.hm-new) { transition: outline-color .1s; }
+.ws-dragging .home .hm-card:not(.hm-new):not(.drop-on) { outline: 1px dashed var(--line2); outline-offset: 2px; }
+.home [draggable="true"] { -webkit-user-drag: element; }
+.hm-un-l li[draggable="true"], .hm-row[draggable="true"] { cursor: grab; }
