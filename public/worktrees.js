@@ -58,13 +58,14 @@ function cards(plan, { selected, same = true, pick, thinking = false, modes = {}
     const m = /^(Continue from|Fresh from|Resume) (.+)$/.exec(c.label);
     return m ? [`${m[1]} `, h('b', {}, m[2])] : c.label;
   };
-  return h('div', { class: 'wt-pick' },
+  return h('div', { class: `wt-pick${selected ? '' : ' unchosen'}` },
     h('p', { class: 'wt-head' }, svgUse('i-worktree', 13), ' ',
-      `Shares a working tree with ${names}${occ.branch ? ` (${occ.branch})` : ''}. Start ${same ? 'this one' : 'it again'} in a worktree from:`,
+      same ? `${names} ${plan.with.length === 1 ? 'is' : 'are'} working in this folder${occ.branch ? ` on ${occ.branch}` : ''}. ${selected ? 'A worktree keeps them apart.' : 'Choose where this one starts.'}`
+        : `Shares a working tree with ${names}${occ.branch ? ` (${occ.branch})` : ''}. Start it again in a worktree from:`,
       thinking ? h('span', { class: 'wt-thinking', title: 'Asking the model which base fits' }, ' …') : null),
     h('div', { class: 'wt-cards', role: 'radiogroup', 'aria-label': 'Where the new worktree starts' },
       ...plan.candidates.map(c => radio(c.id, emph(c), c.facts, { cand: c, title: c.kind === 'head' && c.dirty ? 'Uncommitted changes stay where they are; pick “Fork the working copy” to bring them' : null })),
-      same ? radio('same', 'Use the same folder anyway', null, { cls: 'same', title: 'Both sessions edit the same files' }) : null),
+      same ? radio('same', 'Same folder', null, { cls: 'same', title: 'No worktree: both sessions edit the same files' }) : null),
     sug?.error ? h('p', { class: 'note' }, 'No suggestion this time; choose one.') : null);
 }
 
@@ -85,7 +86,7 @@ function drawLaunch() {
   if (e?.state === 'failed') { L.el.replaceChildren(h('p', { class: 'note err' }, svgUse('i-alert', 12), ` Could not check this folder for other sessions: ${e.error}`)); return; }
   const plan = planOf(L.cwd);
   if (!plan?.conflict) { L.el.replaceChildren(); return; }
-  L.el.replaceChildren(cards(plan, { selected: chosenOf(plan, L.picked), thinking: L.thinking, modes: L.modes, setMode: (id, m) => { L.modes[id] = m; },
+  L.el.replaceChildren(h('span', { class: 'ns-l' }, 'Worktree'), cards(plan, { selected: chosenOf(plan, L.picked), thinking: L.thinking, modes: L.modes, setMode: (id, m) => { L.modes[id] = m; },
     pick: (id) => { L.picked = id; drawLaunch(); } }));
 }
 function planLaunch(cwd, { ask = false } = {}) {

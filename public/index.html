@@ -316,36 +316,37 @@
   </form>
 </dialog>
 
-<dialog id="new-session" class="dialog wide">
+<dialog id="new-session" class="dialog wide ns" aria-labelledby="ns-t">
   <form id="ns-form">
-    <h2 id="ns-t">New session</h2>
-    <p id="ns-sub" class="ns-sub">Runs <span id="ns-agent">the agent</span> under the deck, so you can send, queue, interrupt and answer permission prompts from here.</p>
-    <label class="ns-l" for="ns-cwd">Folder</label>
-    <input id="ns-cwd" class="field" type="text" list="ns-cwds" spellcheck="false" autocomplete="off" required placeholder="/path/to/repo">
-    <datalist id="ns-cwds"></datalist>
-    <div id="ns-x-cwd" class="ns-x"></div>
-    <div id="ns-x-prompt" class="ns-x"></div>
-    <label class="ns-l" for="ns-prompt">First prompt</label>
+    <h2 id="ns-t" title="Runs under the deck, so you can send, queue, interrupt and answer permission prompts from here">New session <span id="ns-agent" class="ns-agent muted"></span></h2>
     <div id="ns-prompt-box" class="compose-box">
       <div class="ta-wrap">
-        <textarea id="ns-prompt" class="ns-prompt" rows="4" placeholder="What should it do? (⌘↩ to start)"></textarea>
+        <textarea id="ns-prompt" class="ns-prompt" rows="5" placeholder="What should it do?" aria-label="First prompt"></textarea>
         <button id="ns-clip" type="button" class="ib clip" aria-label="Attach files" title="Attach images, PDFs or text files. You can also paste or drop them here."><svg width="13" height="13"><use href="#i-clip"/></svg></button>
         <input id="ns-file" type="file" multiple hidden>
         <div id="ns-files" class="att-tray" hidden></div>
       </div>
     </div>
-    <div class="ns-row">
-      <div id="ns-harness-w"><label class="ns-l" for="ns-harness">Agent</label>
-        <select id="ns-harness" class="field"></select></div>
-      <div id="ns-model-w"><label class="ns-l" for="ns-model">Model</label>
-        <select id="ns-model" class="field"></select></div>
-      <div><label class="ns-l" for="ns-perm">Permissions</label>
-        <select id="ns-perm" class="field"></select></div>
-      <div id="ns-name-w"><label class="ns-l" for="ns-name">Name <span class="muted">(optional)</span></label>
-        <input id="ns-name" class="field" type="text" spellcheck="false" autocomplete="off"></div>
+    <div class="ns-grid">
+      <div id="ns-x-prompt" class="ns-x"></div>
+      <label class="ns-l" for="ns-cwd">Folder</label>
+      <div class="ns-c">
+        <input id="ns-cwd" class="field" type="text" list="ns-cwds" spellcheck="false" autocomplete="off" required placeholder="/path/to/repo">
+        <datalist id="ns-cwds"></datalist>
+      </div>
+      <div id="ns-x-cwd" class="ns-x"></div>
+      <span class="ns-l">Run with</span>
+      <div class="ns-c ns-run">
+        <span id="ns-harness-w"><select id="ns-harness" class="field" aria-label="Agent" title="Agent"></select></span>
+        <span id="ns-model-w"><select id="ns-model" class="field" aria-label="Model" title="Model"></select></span>
+        <span><select id="ns-perm" class="field" aria-label="Permissions" title="Permissions"></select></span>
+      </div>
+      <label class="ns-l" for="ns-name">Name</label>
+      <div class="ns-c"><input id="ns-name" class="field ns-name" type="text" spellcheck="false" autocomplete="off" placeholder="Optional"></div>
     </div>
     <p id="ns-err" class="ns-err" role="alert" hidden></p>
     <div class="dialog-a">
+      <span class="ns-kbd muted"><kbd>⌘</kbd><kbd>↩</kbd> to start</span>
       <button type="button" id="ns-cancel" class="btn">Cancel</button>
       <button type="submit" id="ns-go" class="btn primary">Start session</button>
     </div>

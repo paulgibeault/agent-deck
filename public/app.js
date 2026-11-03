@@ -2283,7 +2283,7 @@ function renderLaunchHarness(name, perm) {
   const hn = harnessOf(name);
   $('ns-harness').value = hn.name;
   $('ns-harness-w').hidden = harnesses.length < 2;
-  $('ns-agent').textContent = hn.label;
+  $('ns-agent').textContent = harnesses.length < 2 ? `· ${hn.label}` : '';
   $('ns-model-w').hidden = !hn.models;
   $('ns-perm').replaceChildren(...hn.modes.map(m => h('option', { value: m }, hn.modeLabels?.[m] || m)));
   $('ns-perm').value = hn.modes.includes(perm) ? perm : 'default';

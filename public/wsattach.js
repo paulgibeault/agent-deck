@@ -48,9 +48,13 @@ registerLaunchSection({
     const brief = h('input', { type: 'checkbox', id: 'ns-ws-brief' });
     const size = h('span', { class: 'muted ns-ws-n' });
     const text = h('textarea', { class: 'field ns-ws-t', rows: '9', spellcheck: 'false', 'aria-label': 'Briefing (sent after your prompt)' });
-    const fold = h('details', { class: 'ns-ws-p' }, h('summary', { title: 'What the agent gets after your prompt, as context; edit it here' }, 'Briefing, after your prompt', size), text);
-    const opts = h('span', { class: 'ns-ws-o' }, h('label', { class: 'ns-ws-c', title: 'Put the workstream’s goal, where it stands, the next step, active decisions and pinned items after your first prompt, as context' }, brief, 'Brief the agent'));
-    const row = h('div', { class: 'ns-ws' }, h('span', { class: 'ns-ws-l' }, 'Workstream'), btn, opts);
+    const fold = h('details', { class: 'ns-ws-p' }, h('summary', {}, 'Briefing'), text);
+    // The briefing's size doubles as the toggle for its preview: what the agent gets after your prompt, editable.
+    const peek = h('button', { type: 'button', class: 'ns-ws-peek', 'aria-expanded': 'false', title: 'Show the briefing: what the agent gets after your prompt, as context. You can edit it.',
+      onclick: () => { fold.open = !fold.open; } }, size, svgUse('i-down', 10));
+    fold.addEventListener('toggle', () => { peek.setAttribute('aria-expanded', String(fold.open)); peek.classList.toggle('open', fold.open); });
+    const opts = h('span', { class: 'ns-ws-o' }, h('label', { class: 'ns-ws-c', title: 'Put the workstream’s goal, where it stands, the next step, active decisions and pinned items after your first prompt, as context' }, brief, 'Brief the agent'), peek);
+    const row = h('div', { class: 'ns-ws' }, h('span', { class: 'ns-ws-l' }, 'Workstream'), h('div', { class: 'ns-ws-r' }, btn, opts));
     el.replaceChildren(row, fold);
     sec.brief = brief; sec.text = text;
 
@@ -60,7 +64,7 @@ registerLaunchSection({
       size.title = sec.max ? `about ${tokens(text.value.length)} of ${tokens(sec.max)} tokens (4 characters each)` : '';
       size.classList.toggle('over', !!sec.max && text.value.length > sec.max);
     };
-    const showBrief = () => { const ws = choice.get(); opts.hidden = !ws; fold.hidden = !ws || !brief.checked; };
+    const showBrief = () => { const ws = choice.get(); opts.hidden = !ws; peek.hidden = !brief.checked; fold.hidden = !ws || !brief.checked; };
     text.addEventListener('input', showSize);
     brief.addEventListener('change', showBrief);
 
