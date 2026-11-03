@@ -94,7 +94,7 @@ export const createWorkstream = (title, goal) => call('/api/workstreams', 'POST'
 
 // ------------------------------------------------------------ the popover
 let pop = null;
-export function openWorkstreamPicker(anchor, { sessionId = null, onPick = () => {}, current, none = true, create = true } = {}) {
+export function openWorkstreamPicker(anchor, { sessionId = null, onPick = () => {}, current, none = true, create = true, actions = [] } = {}) {
   pop?.remove();
   // Inside a modal dialog it has to be in the dialog, or the dialog makes it inert.
   const host = anchor.closest('dialog[open]') || document.body;
@@ -133,7 +133,7 @@ export function openWorkstreamPicker(anchor, { sessionId = null, onPick = () => 
   };
   const tipOf = (w) => [w.title, w.status, w.live ? `${w.live} live` : null, w.sessions ? `${w.sessions} session${w.sessions === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
 
-  const items = () => [...el.querySelectorAll('.wsp-i, .wsp-new')];
+  const items = () => [...el.querySelectorAll('.wsp-i, .wsp-act, .wsp-new')];
   function highlight() {
     items().forEach((b, i) => b.classList.toggle('hl', i === active));
     items()[active]?.scrollIntoView({ block: 'nearest' });
@@ -144,7 +144,8 @@ export function openWorkstreamPicker(anchor, { sessionId = null, onPick = () => 
     active = initialActive(matches);
     rows.replaceChildren(...shown.map(w => row(w.title || w.slug, w, { tip: tipOf(w) })));
     if (!shown.length) rows.append(h('div', { class: 'mm-note' }, list.length ? 'No match' : 'No workstreams yet'));
-    foot.replaceChildren();
+    foot.replaceChildren(...actions.map(a => h('button', { type: 'button', class: 'mm-i wsp-act', title: a.title || null, onclick: () => { close(); a.fn(); } },
+      h('span', { class: 'mm-ic' }, svgUse(a.icon || 'i-right', 12)), h('span', { class: 'mm-t' }, a.label))));
     if (none) foot.append(row(typeof none === 'string' ? none : 'None', null, { icon: 'i-x', cls: 'wsp-none' }));
     if (create) foot.append(form || h('button', { type: 'button', class: 'mm-i wsp-new', onclick: () => openForm() },
       h('span', { class: 'mm-ic' }, svgUse('i-plus', 12)), h('span', { class: 'mm-t' }, 'New workstream')));

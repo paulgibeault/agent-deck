@@ -61,6 +61,7 @@ svg { flex: none; }
 .btn:hover:not(:disabled) { background: var(--hover); }
 .btn:disabled { opacity: .5; }
 .btn.primary { background: var(--info); border-color: var(--info); color: #fff; }
+@media (prefers-color-scheme: dark) { .btn.primary { background: #3A72D6; border-color: #3A72D6; } }
 .btn.danger { background: var(--err); border-color: var(--err); color: #fff; }
 .btn.toggle { color: var(--muted); }
 .btn.toggle[aria-pressed="true"] { color: var(--fg); background: var(--bg3); }
@@ -868,13 +869,34 @@ a.btn.primary:hover { background: color-mix(in srgb, var(--info) 88%, #000); tex
 .rail-h .icon-btn { width: 26px; height: 26px; }
 .ov-h { position: relative; }
 .ov-new { position: absolute; top: 0; right: 0; width: 34px; height: 34px; }
-.dialog.wide { width: min(560px, calc(100vw - 32px)); max-width: none; }
+.dialog.wide { width: min(600px, calc(100vw - 32px)); max-width: none; }
 .dialog .ns-sub { font-size: 12.5px; margin-bottom: 14px; }
 .ns-l { display: block; margin: 10px 0 4px; font-size: 11.5px; font-weight: 500; color: var(--fg2); }
 #ns-form .field { width: 100%; }
-.ns-prompt { width: 100%; resize: vertical; padding: 8px 10px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--bg0); font: 13px/1.45 var(--sans); min-height: 84px; }
+.ns-prompt { width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--bg0); font: 13.5px/1.5 var(--sans); min-height: 110px; }
 .ns-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0 10px; margin-bottom: 16px; }
 select.field { font-family: var(--sans); padding-right: 6px; }
+/* New session: the prompt first, then a two-column form, labels on the left. */
+.dialog.ns { padding: 18px 20px 16px; }
+.ns h2 { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.ns-agent { font-size: 12px; font-weight: 400; }
+.ns-grid { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px 12px; align-items: center; margin: 14px 0 14px; }
+.ns-grid > .ns-l { margin: 0; align-self: center; }
+.ns-grid > .ns-x { grid-column: 1 / -1; margin: 0; }
+.ns-c { min-width: 0; }
+.ns-run { display: flex; gap: 6px; flex-wrap: wrap; }
+.ns-run > span { flex: 1 1 120px; min-width: 0; }
+.ns-run > span[hidden] { display: none; }
+#ns-form .ns-name { max-width: 280px; }
+.ns .dialog-a { align-items: center; }
+.ns-kbd { margin-right: auto; font-size: 11.5px; }
+.ns-kbd kbd { font: 10.5px var(--mono); padding: 0 4px; margin-right: 2px; border: 1px solid var(--line2); border-radius: 4px; background: var(--bg0); }
+/* A section row (launch.js slots) lines up with the form: its own label in column one. */
+.ns-x > .ns-sec { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 12px; align-items: start; }
+.ns-x > .ns-sec > * { grid-column: 2; }
+.ns-x > .ns-sec > .ns-ws { display: contents; }
+.ns-x > .ns-sec > .ns-ws > .ns-ws-l { grid-column: 1; align-self: center; }
+.ns-x > .ns-sec > .ns-ws > .ns-ws-r { grid-column: 2; }
 .ns-err { color: var(--err-fg) !important; font-size: 12.5px; white-space: pre-wrap; }
 
 /* ---------------------------------------------------------------- signal colours
@@ -1392,9 +1414,39 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .rail-ws { min-width: 22px; height: 22px; margin-right: -6px; }
 .rail-ws[aria-pressed="true"] { color: var(--info); }
 .wsp .mm-i.hl { background: var(--hover); }
-.sh-ws-w { display: inline-flex; align-items: center; }
-.sh-ws-more { min-width: 16px; width: 16px; opacity: 0; }
-.sh-ws-w:hover .sh-ws-more, .sh-ws-more:focus-visible { opacity: 1; }
+
+/* New session: the workstream row and the worktree choice, as chips in the form's second column. */
+.ns-x > .ns-sec > .ns-l { grid-column: 1; margin: 0; align-self: start; padding-top: 6px; }
+.ns-ws-r { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.ns-ws-peek { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.ns-ws-peek:hover { background: var(--hover); color: var(--fg2); }
+.ns-ws-peek svg { transition: transform .15s; }
+.ns-ws-peek.open svg { transform: rotate(180deg); }
+.ns-ws-p > summary { display: none !important; }
+.ns-ws-p:not([open]) { display: none; }
+.ns-ws-p { margin-top: 0; }
+#ns-form .ns-ws-t { margin-top: 0; }
+.ns .wt-pick { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.ns .wt-cards { order: 1; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+.ns .wt-head { order: 2; margin: 0 !important; font-size: 11.5px; color: var(--muted); }
+.ns .wt-pick > .note { order: 3; margin: 0; }
+.ns .wt-card { position: relative; align-items: center; padding: 5px 10px; border: 1px solid var(--line2); border-radius: 8px; background: var(--bg0); }
+.ns .wt-card input { position: absolute; opacity: 0; pointer-events: none; }
+.ns .wt-card:has(input:focus-visible) { outline: 2px solid var(--info); outline-offset: 1px; }
+.ns .wt-card.on { background: color-mix(in srgb, var(--info) 12%, var(--bg0)); border-color: color-mix(in srgb, var(--info) 60%, var(--line2)); box-shadow: none; }
+.ns .wt-pick.unchosen .wt-card { border-style: dashed; border-color: color-mix(in srgb, var(--need) 55%, var(--line2)); }
+.ns .wt-pick.unchosen .wt-head { color: var(--need-fg); }
+.ns .wt-card.same { color: var(--fg2); }
+#ns-form .ns-name { font-family: var(--sans); }
+
+/* Moving sessions between workstreams: the header chip opens the picker; on Home, drag a session onto a card. */
+.sh-ws-pick > svg:last-child { opacity: .55; margin-left: -1px; }
+.sh-ws-pick:hover > svg:last-child { opacity: 1; }
+.home .hm-card.drop-on { outline: 2px dashed var(--info); outline-offset: 2px; background: color-mix(in srgb, var(--info) 7%, var(--bg1)); }
+.ws-dragging .home .hm-card:not(.hm-new) { transition: outline-color .1s; }
+.ws-dragging .home .hm-card:not(.hm-new):not(.drop-on) { outline: 1px dashed var(--line2); outline-offset: 2px; }
+.home [draggable="true"] { -webkit-user-drag: element; }
+.hm-un-l li[draggable="true"], .hm-row[draggable="true"] { cursor: grab; }
 
 /* The live strip (public/livestrip.js): one line above the Events list while a message is being written. */
 .ev-live { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 3px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; overflow: hidden; }
