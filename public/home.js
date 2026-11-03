@@ -180,7 +180,13 @@ function patch(el, nodes) {
   const was = el.contains(f) ? f.closest('[data-key]') : null;
   const focusables = (c) => [...c.querySelectorAll('button, a[href], [tabindex]')];
   const at = was && was !== f ? focusables(was).indexOf(f) : -1;
-  el.replaceChildren(...nodes);
+  // Moving a node out of the DOM blurs whatever has focus in it, so the kept
+  // form never moves: everything else is rebuilt around it.
+  const k = keep ? nodes.indexOf(keep) : -1;
+  if (k >= 0) {
+    for (const c of [...el.children]) if (c !== keep) c.remove();
+    keep.before(...nodes.slice(0, k)); keep.after(...nodes.slice(k + 1));
+  } else el.replaceChildren(...nodes);
   if (!was || was === keep) return;
   const now = el.querySelector(`[data-key="${CSS.escape(was.dataset.key)}"]`);
   const target = (at >= 0 && now ? focusables(now)[at] : null) || now;
