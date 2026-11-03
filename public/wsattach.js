@@ -48,9 +48,13 @@ registerLaunchSection({
     const brief = h('input', { type: 'checkbox', id: 'ns-ws-brief' });
     const size = h('span', { class: 'muted ns-ws-n' });
     const text = h('textarea', { class: 'field ns-ws-t', rows: '9', spellcheck: 'false', 'aria-label': 'Briefing (sent after your prompt)' });
-    const fold = h('details', { class: 'ns-ws-p' }, h('summary', { title: 'What the agent gets after your prompt, as context; edit it here' }, 'Briefing, after your prompt', size), text);
-    const opts = h('span', { class: 'ns-ws-o' }, h('label', { class: 'ns-ws-c', title: 'Put the workstream’s goal, where it stands, the next step, active decisions and pinned items after your first prompt, as context' }, brief, 'Brief the agent'));
-    const row = h('div', { class: 'ns-ws' }, h('span', { class: 'ns-ws-l' }, 'Workstream'), btn, opts);
+    const fold = h('details', { class: 'ns-ws-p' }, h('summary', {}, 'Briefing'), text);
+    // The briefing's size doubles as the toggle for its preview: what the agent gets after your prompt, editable.
+    const peek = h('button', { type: 'button', class: 'ns-ws-peek', 'aria-expanded': 'false', title: 'Show the briefing: what the agent gets after your prompt, as context. You can edit it.',
+      onclick: () => { fold.open = !fold.open; } }, size, svgUse('i-down', 10));
+    fold.addEventListener('toggle', () => { peek.setAttribute('aria-expanded', String(fold.open)); peek.classList.toggle('open', fold.open); });
+    const opts = h('span', { class: 'ns-ws-o' }, h('label', { class: 'ns-ws-c', title: 'Put the workstream’s goal, where it stands, the next step, active decisions and pinned items after your first prompt, as context' }, brief, 'Brief the agent'), peek);
+    const row = h('div', { class: 'ns-ws' }, h('span', { class: 'ns-ws-l' }, 'Workstream'), h('div', { class: 'ns-ws-r' }, btn, opts));
     el.replaceChildren(row, fold);
     sec.brief = brief; sec.text = text;
 
@@ -60,7 +64,7 @@ registerLaunchSection({
       size.title = sec.max ? `about ${tokens(text.value.length)} of ${tokens(sec.max)} tokens (4 characters each)` : '';
       size.classList.toggle('over', !!sec.max && text.value.length > sec.max);
     };
-    const showBrief = () => { const ws = choice.get(); opts.hidden = !ws; fold.hidden = !ws || !brief.checked; };
+    const showBrief = () => { const ws = choice.get(); opts.hidden = !ws; peek.hidden = !brief.checked; fold.hidden = !ws || !brief.checked; };
     text.addEventListener('input', showSize);
     brief.addEventListener('change', showBrief);
 
@@ -113,22 +117,17 @@ registerHeaderSlot('workstream', (ctx) => {
     return ws ? h('span', { class: 'sh-ws', title: `Workstream ${nameOf(ws)} (its parent session’s)` }, svgUse('i-workstream', 13), h('span', {}, nameOf(ws))) : null;
   }
   const ws = s.workstream;
+  const homeOpen = async () => { const m = await homeModule(); m?.openWorkstream?.(ws.slug); };
   const pick = (anchor) => openWorkstreamPicker(anchor, {
     sessionId: ctx.id, current: ws?.slug ?? null,
+    actions: ws ? [{ label: `Open ${nameOf(ws)} on Home`, icon: 'i-home', fn: homeOpen }] : [],
     // Shown at once; the next snapshot says the same.
     onPick: (w) => { s.workstream = w; ctx.act.refresh?.(); },
   });
   if (!ws) return known.ready ? ib('i-workstream', 'Assign workstream', (e) => pick(e.currentTarget), { cls: 'sh-ws-add', size: 13, 'aria-haspopup': 'dialog' }) : null;
-  const open = async (e) => {
-    const anchor = e.currentTarget;
-    const m = await homeModule();
-    if (m?.openWorkstream) m.openWorkstream(ws.slug); else pick(anchor);
-  };
-  const change = (e) => { e.preventDefault(); pick(e.currentTarget.closest('.sh-ws-w') || e.currentTarget); };
-  return h('span', { class: 'sh-ws-w' },
-    h('button', { type: 'button', class: 'sh-ws', title: `Workstream ${nameOf(ws)}\nClick to open it · right-click to change`, onclick: open, oncontextmenu: change },
-      svgUse('i-workstream', 13), h('span', {}, nameOf(ws))),
-    ib('i-down', 'Change workstream', change, { cls: 'sh-ws-more', size: 10, 'aria-haspopup': 'dialog' }));
+  // The chip is a picker: click to move the session to another workstream (or none); opening it on Home is a row in it.
+  return h('button', { type: 'button', class: 'sh-ws sh-ws-pick', 'aria-haspopup': 'dialog', title: `Workstream ${nameOf(ws)}\nClick to change it or open it on Home`, onclick: (e) => pick(e.currentTarget) },
+    svgUse('i-workstream', 13), h('span', {}, nameOf(ws)), svgUse('i-down', 9));
 }, { replace: true });
 
 // ------------------------------------------------------------ rail filter

@@ -39,6 +39,55 @@ const badges = [];
  */
 export function registerCardBadge(fn) { badges.push(fn); return () => { const i = badges.indexOf(fn); if (i >= 0) badges.splice(i, 1); }; }
 
+// ------------------------------------------------------------ drag a session onto a workstream
+// Sources: rail rows (app.js calls dragSession), the dots on cards, Unaffiliated
+// rows and the Sessions tab. Targets: each card (assign) and Unaffiliated (none).
+// The grid holds still while a drag is on, so its targets stay put.
+const DT = 'application/x-deck-session';
+export function dragSession(e, s) {
+  if (!s || s.kind === 'agent') return;
+  e.dataTransfer.setData(DT, s.id);
+  e.dataTransfer.setData('text/plain', s.title || s.id);
+  e.dataTransfer.effectAllowed = 'move';
+  st.drag = s.id;
+  document.body.classList.add('ws-dragging');
+}
+function dragEnd() {
+  if (!st.drag) return;
+  st.drag = null;
+  document.body.classList.remove('ws-dragging');
+  grid?.querySelectorAll('.drop-on').forEach(el => el.classList.remove('drop-on'));
+  if (currentView() === 'home') render();
+}
+document.addEventListener('dragend', dragEnd, true);
+document.addEventListener('drop', () => setTimeout(dragEnd), true);
+/** Make `el` a drop target that puts the dragged session in `slug` (null: in none). */
+function dropTarget(el, slug) {
+  const ours = (e) => e.dataTransfer?.types?.includes(DT);
+  el.addEventListener('dragover', (e) => { if (!ours(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; el.classList.add('drop-on'); });
+  el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop-on'); });
+  el.addEventListener('drop', (e) => {
+    if (!ours(e)) return;
+    e.preventDefault(); el.classList.remove('drop-on');
+    moveSession(e.dataTransfer.getData(DT), slug);
+  });
+  return el;
+}
+const titleOf = (slug) => slug ? st.list.find(w => w.slug === slug)?.title || slug : 'no workstream';
+async function moveSession(id, slug, { undo = true } = {}) {
+  const s = ctx.byId(id);
+  const was = workstreamMap(st.list, sessions()).get(id) || null;
+  if (!s || was === slug) return;
+  try {
+    await call(`/api/sessions/${enc(id)}/workstream`, 'POST', { slug });
+    if ('workstream' in s) s.workstream = slug ? { slug, title: titleOf(slug) } : null;   // shown now; the next snapshot agrees
+    homeWorkstreamsChanged({ slug, was });
+    const msg = slug ? `Moved “${s.title}” to ${titleOf(slug)}` : `Took “${s.title}” out of ${titleOf(was)}`;
+    if (undo && ctx.toast) ctx.toast(msg, { label: 'Undo', fn: () => moveSession(id, was, { undo: false }) });
+  } catch (err) { toast(`Move failed: ${err.message}`); }
+}
+const dragProps = (s) => ({ draggable: 'true', ondragstart: (e) => { e.stopPropagation(); dragSession(e, s); } });
+
 // #30's PR chips (ghchips.js) and #35's workstream picker (wspicker.js), when
 // those have landed; plain links and a select of workstreams until then.
 let chipsMod;
@@ -152,7 +201,7 @@ export function homeWorkstreamsChanged(e) {
 
 // ------------------------------------------------------------ the grid
 function render() {
-  if (!root) return;
+  if (!root || st.drag) return;
   drawBar();
   if (st.error) { grid.replaceChildren(h('div', { class: 'hm-empty muted' }, `Workstreams: ${st.error}`)); return; }
   if (!st.loaded) return;
@@ -180,7 +229,13 @@ function patch(el, nodes) {
   const was = el.contains(f) ? f.closest('[data-key]') : null;
   const focusables = (c) => [...c.querySelectorAll('button, a[href], [tabindex]')];
   const at = was && was !== f ? focusables(was).indexOf(f) : -1;
-  el.replaceChildren(...nodes);
+  // Moving a node out of the DOM blurs whatever has focus in it, so the kept
+  // form never moves: everything else is rebuilt around it.
+  const k = keep ? nodes.indexOf(keep) : -1;
+  if (k >= 0) {
+    for (const c of [...el.children]) if (c !== keep) c.remove();
+    keep.before(...nodes.slice(0, k)); keep.after(...nodes.slice(k + 1));
+  } else el.replaceChildren(...nodes);
   if (!was || was === keep) return;
   const now = el.querySelector(`[data-key="${CSS.escape(was.dataset.key)}"]`);
   const target = (at >= 0 && now ? focusables(now)[at] : null) || now;
@@ -205,7 +260,7 @@ function drawBar() {
 
 const SIG_LABEL = { input: 'needs you', error: 'error', working: 'working', done: 'done', ended: 'ended' };
 function dot(s, sig, { big = false } = {}) {
-  return h('button', { type: 'button', class: `hm-dot${big ? ' big' : ''}`, title: `${s.title} · ${SIG_LABEL[sig] || sig}`, 'aria-label': `Open ${s.title} (${SIG_LABEL[sig] || sig})`,
+  return h('button', { type: 'button', class: `hm-dot${big ? ' big' : ''}`, title: `${s.title} · ${SIG_LABEL[sig] || sig}\nDrag onto another workstream to move it`, ...dragProps(s), 'aria-label': `Open ${s.title} (${SIG_LABEL[sig] || sig})`,
     onclick: (e) => { e.stopPropagation(); ctx.open(s.id); } }, h('span', { class: `dot sig-${sig}` }));
 }
 
@@ -253,17 +308,17 @@ function card(w) {
       h('span', { class: 'spacer' }),
       shown.length ? h('span', { class: 'hm-counts', title: shown.map(([k, , one]) => plural(c[k], one)).join(' · ') },
         shown.map(([k, icon]) => h('span', { class: 'hm-n' }, svgUse(icon, 11), c[k]))) : null));
-  return el;
+  return dropTarget(el, w.slug);
 }
 
 function unaffiliatedCard(un) {
-  return h('article', { class: 'hm-card hm-un', role: 'listitem', dataset: { key: '~unaffiliated' } },
+  return dropTarget(h('article', { class: 'hm-card hm-un', role: 'listitem', dataset: { key: '~unaffiliated' }, title: 'Drop a session here to take it out of its workstream' },
     h('div', { class: 'hm-c-h' }, h('h3', { class: 'hm-t muted' }, 'Unaffiliated'), h('span', { class: 'hm-q', title: `${plural(un.total, 'session')} in no workstream` }, un.total)),
-    h('ul', { class: 'hm-un-l' }, un.rows.map(({ s, live, sig }) => h('li', {},
+    h('ul', { class: 'hm-un-l' }, un.rows.map(({ s, live, sig }) => h('li', { ...dragProps(s) },
       h('span', { class: `dot sig-${sig}`, title: SIG_LABEL[sig] }),
       h('button', { type: 'button', class: 'hm-un-t', title: [s.title, s.project, s.gitBranch].filter(Boolean).join(' · '), onclick: () => ctx.open(s.id) }, s.title),
       h('span', { class: 'hm-ago', title: when(s.statusUpdatedAt || s.mtime) }, live ? '' : since(s.mtime)),
-      h('button', { type: 'button', class: 'linkish hm-assign', onclick: (e) => assign(e.currentTarget, s) }, 'Assign')))));
+      h('button', { type: 'button', class: 'linkish hm-assign', onclick: (e) => assign(e.currentTarget, s) }, 'Assign'))))), null);
 }
 
 function newCard() {
@@ -513,7 +568,7 @@ function sessionsTab(w) {
   return h('ul', { class: 'hm-rows' },
     known.map(s => {
       const sig = isLive(s) ? ctx.sigOf(s) : 'ended'; const rec = recordOf.get(s.id);
-      return h('li', { class: 'hm-row link', onclick: () => ctx.open(s.id), title: 'Open the session' },
+      return h('li', { class: 'hm-row link', onclick: () => ctx.open(s.id), title: 'Open the session', ...dragProps(s) },
         h('span', { class: `dot sig-${sig}`, title: SIG_LABEL[sig] }), ctx.backend(s),
         h('span', { class: 'hm-row-t' }, s.title, rec ? h('span', { class: 'hm-tagl', title: rec.summary || rec.file }, 'wrapped up') : null),
         s.pr?.url ? refChip({ kind: 'pr', ...s.pr }, null) : h('span', {}),
