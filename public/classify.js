@@ -349,9 +349,10 @@ export function classify(ev) {
       : { fam: 'you', icon: 'i-history', label: 'Queued', text: `Queued: ${ev.text || 'message'}`, sans: true };
     case 'turn_end': return { fam: 'muted', icon: 'i-check', label: 'Turn ended', text: ev.text || '' };
     case 'system': {
+      // Before the error check: a failed hook is a hook, marked failed, not an API error.
+      if (/hook/i.test(ev.subtype || '')) return { fam: 'muted', icon: 'i-hook', label: 'Hook', text: ev.text };
       if (ev.error) return { fam: 'err', icon: 'i-alert', label: 'API error', text: ev.text, sans: true };
       if (ev.subtype === 'task') return { fam: 'agent', icon: 'i-bg', label: 'Background task', text: ev.text, sans: true };
-      if (/hook/i.test(ev.subtype || '')) return { fam: 'muted', icon: 'i-hook', label: 'Hook', text: ev.text };
       const s = SYSTEM[ev.subtype] || { icon: 'i-info', label: ev.subtype || 'System' };
       return { fam: s.fam || 'muted', icon: s.icon, label: s.label, text: ev.text, sans: true };
     }
