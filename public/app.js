@@ -1,7 +1,9 @@
 // public/app.js — state, SSE wiring, panes. No build step, no dependencies.
 import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtTokens, fmtMs, fmtUsd, fmtTime, ago, relPath, basename,
   markdown, oneLine, tagFor, tagEl, rowHeight, svgUse, starIcon, ib, flashDone, renderSideBySide, lineDiff, codeBlock, langFor, highlightIn } from './events.js';
-import { activitySince, CADENCE, WEIGHT } from './activity.js';
+import { activitySince, milestoneOf, CADENCE, WEIGHT } from './activity.js';
+import { NOTE_KIND, notesOf, liveNotes, dismissNote, seenItems, markSeen, itemKey } from './briefnotes.js';
+import { agentTodos } from './todos.js';
 import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
 import { createFilesView, renderFileView } from './files.js';
 import { turnChanges, renderTurnList, renderTurnFileDiff } from './changes.js';
@@ -17,7 +19,7 @@ import './models.js';
 import './vault.js';
 import { railFilter } from './wsattach.js';
 import { workstreamsChanged } from './wspicker.js';
-import './ghchips.js';
+import { miniChip as ghMini, watchRefs } from './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
@@ -632,14 +634,16 @@ function narrateBrief(b) {
  * status line is the truth about now.
  */
 function briefLists(b, working = true) {
-  return [['Completed', b.done || []], ['In progress', working ? b.doing || [] : []], ['Planned', b.planned || []]];
+  return [['Completed', b.done || []], ['In progress', working ? b.doing || [] : []], ['To do', b.planned || []]];
 }
+/** The agent's own task list as the brief's three lists; items carry the event that last changed them. */
+function taskLists(t) { return [['Completed', t.done], ['In progress', t.doing], ['To do', t.todo]]; }
 function briefMarkdown(id) {
   const cur = state.briefs.get(id)?.brief;
   if (!cur) { const last = state.cache.get(id)?.brief?.lastText; return last ? `Last said: ${last}` : ''; }
   const parts = [cur.summary || ''];
   for (const [label, items] of briefLists(cur)) if (items.length) parts.push(`**${label}**`, items.map(x => `- ${x}`).join('\n'));
-  if (cur.watch?.text) parts.push(`**Watch:** ${cur.watch.text}`);
+  for (const n of notesOf(cur)) parts.push(`**${NOTE_KIND[n.kind]?.label || 'Note'}:** ${n.text}`);
   return parts.filter(Boolean).join('\n\n');
 }
 function readBrief(id) { const md = briefMarkdown(id); if (md) narration.read({ sessionId: id, kind: 'brief', markdown: md }); }
@@ -1057,7 +1061,7 @@ function cardBody(s) {
   const sum = pb?.brief?.summary;
   if (sum) rows.push(h('p', { class: 'hc-sum' }, oneLine(sum, 360)));
   else if (g.lastText && !g.asked) rows.push(h('p', { class: 'hc-sum muted' }, 'Last said · ', oneLine(g.lastText, 240)));
-  if (pb?.brief?.watch) rows.push(h('div', { class: 'hc-watch' }, h('b', {}, 'WATCH '), oneLine(pb.brief.watch.text, 200)));
+  for (const n of liveNotes(s.id, pb?.brief).slice(0, 2)) rows.push(h('div', { class: `hc-watch nk-${n.kind}` }, svgUse(NOTE_KIND[n.kind]?.icon || 'i-alert', 11, NOTE_KIND[n.kind]?.label), ' ', oneLine(n.text, 200)));
   if (pb?.brief?.progress) {
     const p = pb.brief.progress;
     rows.push(h('div', { class: 'hc-prog' }, h('span', {}, `${p.total} ${p.unit}: ` + p.segments.map(x => `${x.count} ${x.label}`).join(', ')),
@@ -1258,6 +1262,7 @@ $('overview').addEventListener('click', (e) => {
 });
 
 function goOverview() {
+  rememberBrief();
   state.selected = null; state.cursor = null;
   prefs.selected = null; savePrefs();
   showView('sessions');
@@ -1277,10 +1282,12 @@ initHome({
   sessions: () => [...state.snapshot.active, ...state.snapshot.recent, ...state.snapshot.closed],
   byId: (id) => state.byId.get(id),
   sigOf,
+  briefOf: (id) => state.briefs.get(id)?.brief || null,
   backend: (s) => backendGlyph(sessionHarness(s)),
-  open: (id, eventId = null) => {
+  // An event by id (a record's source), or by seq (a brief note's link).
+  open: (id, eventId = null, seq = null) => {
     if (!state.byId.has(id)) { toast('That session is no longer listed'); return; }
-    select(id).then(() => { const ev = eventId && findEvent(id, eventId); if (ev) jumpToSeq(ev.seq); });
+    select(id).then(() => { const at = (eventId && findEvent(id, eventId))?.seq ?? seq; if (at != null) jumpToSeq(at); });
   },
   back: () => state.selected ? select(state.selected) : goOverview(),
   toast,
@@ -1290,6 +1297,7 @@ initHome({
 async function select(id) {
   if (!state.byId.has(id) && !state.cache.has(id)) return;
   const changed = state.selected !== id;
+  if (changed) rememberBrief();
   state.selected = id;
   if (changed) { state.cursor = null; state.briefAt = null; setLive(true, true); }
   prefs.selected = id; savePrefs();
@@ -1639,7 +1647,86 @@ setInterval(() => { for (const e of document.querySelectorAll('.nl-e[data-starte
 // The brief box is rebuilt only when what it shows changes; the 5s header
 // refresh otherwise just updates its freshness line, so a brief being read
 // (or selected) is not torn down underneath the reader.
-let briefBoxCache = null;   // { key, el, at }
+let briefBoxCache = null;   // { key, el, at, id, items }
+let briefWatch = null;      // unwatches the PRs the brief's items link to
+let noteRev = 0, seenRev = 0;
+
+/** Remember what the brief showed, so the next visit can mark what is new since. */
+function rememberBrief() {
+  const b = briefBoxCache;
+  if (b?.id && b.items) { markSeen(b.id, b.items); seenRev++; }
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) rememberBrief(); });
+addEventListener('pagehide', rememberBrief);
+
+const PR_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/;
+/**
+ * The link on a list item: the PR chip when its event opened or merged one,
+ * the commit's short hash when it committed, else a quiet jump to the event.
+ * PRs found go into `refs`, so their chips stay current.
+ */
+function itemLink(id, seq, refs, done) {
+  if (!seq) return null;
+  const ev = state.cache.get(id)?.events.find(e => e.seq === seq);
+  const ms = ev ? milestoneOf(ev) : null;
+  if (ms && /^PR /.test(ms)) {
+    const m = PR_URL.exec(`${ev.tool.result?.text || ''} ${ev.tool.command || ev.tool.input?.command || ''}`);
+    if (m) { const r = { kind: 'pr', repo: m[1], number: Number(m[2]), url: `https://github.com/${m[1]}/pull/${m[2]}` }; refs.push(r); return ghMini(r); }
+  }
+  const sha = ms === 'commit' ? /\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,})\]/.exec(ev.tool.result?.text || '')?.[1] : null;
+  const glyph = ms === 'commit' ? 'i-commit' : ms === 'push' ? 'i-push' : ms === 'merge' ? 'i-merge' : null;
+  return h('button', { type: 'button', class: `dnn-go${glyph ? ' ms' : ''}`, title: ev ? `Open event #${seq}: ${tagFor(ev).label}` : `Open event #${seq}`, onclick: () => jumpToSeq(seq) },
+    glyph ? svgUse(glyph, 11) : null, sha ? h('span', {}, sha.slice(0, 7)) : glyph ? null : svgUse('i-right', 10));
+}
+
+// What settles a note: answer the question, put the failure or risk to the
+// agent (both via the prompt box, so you send it), record the decision.
+const NOTE_ACT = {
+  question: ['i-answer', 'Answer it in the prompt box', (id, s, n) => composeWith(`> ${n.text}\n\n`)],
+  failure: ['i-send', 'Ask the agent to fix it (fills the prompt box)', (id, s, n) => composeWith(`Please fix this before going on: ${n.text}`)],
+  risk: ['i-send', 'Raise it with the agent (fills the prompt box)', (id, s, n) => composeWith(`Before going on, about this: ${n.text} `)],
+  decision: ['i-workstream', 'Record it as a decision on the workstream', recordDecision],
+};
+function noteEl(id, s, n) {
+  const k = NOTE_KIND[n.kind] || NOTE_KIND.risk;
+  const ev = n.seq ? state.cache.get(id)?.events.find(e => e.seq === n.seq) : null;
+  const act = NOTE_ACT[n.kind] || NOTE_ACT.risk;
+  const li = h('li', { class: `bnote nk-${n.kind}`, tabindex: '0', 'aria-label': `${k.label}: ${n.text}`,
+    onkeydown: (e) => { if (e.key === 'Enter' && e.target === li) { e.preventDefault(); e.stopPropagation(); if (n.seq) jumpToSeq(n.seq); } } },
+    h('span', { class: 'bn-k', title: k.label }, svgUse(k.icon, 13, k.label)), h('span', { class: 'bn-t' }, n.text),
+    n.seq ? h('button', { type: 'button', class: 'bn-go', title: ev ? `Open event #${n.seq}: ${tagFor(ev).label}` : `Open event #${n.seq}`, onclick: () => jumpToSeq(n.seq) },
+      `#${n.seq}`, ev?.ts ? h('span', { class: 'bn-ago' }, fmtTime(ev.ts)) : null) : null,
+    h('span', { class: 'bn-acts' },
+      ib(act[0], act[1], () => act[2](id, s, n), { size: 12 }),
+      ib('i-x', 'Dismiss (here, in this browser)', () => { dismissNote(id, n); noteRev++; renderHeader(); }, { size: 11 })));
+  return li;
+}
+/** Put text in the prompt box for you to finish and send. */
+function composeWith(text) {
+  const el = $('compose');
+  if (el.disabled) { toast('This session is observe-only here, so it cannot be prompted from the deck'); return; }
+  el.value = el.value.trim() ? `${el.value.replace(/\s+$/, '')}\n\n${text}` : text;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.focus(); el.setSelectionRange(el.value.length, el.value.length);
+}
+async function recordDecision(id, s, n) {
+  const ws = (s.parentId ? state.byId.get(s.parentId) : s)?.workstream;
+  if (!ws?.slug) { toast('This session is not in a workstream; attach it to one to record decisions'); return; }
+  const ev = n.seq ? state.cache.get(id)?.events.find(e => e.seq === n.seq) : null;
+  try {
+    const r = await api.post(`/api/workstreams/${encodeURIComponent(ws.slug)}/decisions`, { title: n.text.slice(0, 160), source: `session ${id}${ev ? `, event ${ev.id}` : ''}` });
+    dismissNote(id, n); noteRev++; renderHeader();
+    toast(`Recorded as decision ${String(r.n ?? '').padStart(4, '0')} on ${ws.title || ws.slug}`);
+  } catch (e) { toast(`Could not record it: ${e.message}`); }
+}
+/** w / W: step through the brief's notes; Enter on one opens its event. */
+function stepNote(d) {
+  const items = [...document.querySelectorAll('#brief-box .bnote')];
+  if (!items.length) { toast('No notes in this brief'); return; }
+  const at = items.indexOf(document.activeElement);
+  const next = items[at < 0 ? (d > 0 ? 0 : items.length - 1) : (at + d + items.length) % items.length];
+  next.focus(); next.scrollIntoView({ block: 'nearest' });
+}
 function renderBriefBox(id, s, b) {
   const pb = state.briefs.get(id);
   const nb = pb?.brief;
@@ -1649,12 +1736,28 @@ function renderBriefBox(id, s, b) {
   const cur = all[i]?.brief, prev = all[i + 1]?.brief;
   const foot = briefFoot(id, s, pb, i, all);
 
-  const key = JSON.stringify([id, pb?.updatedAt, pb?.pending, pb?.error, phaseOf(s) === 'working', state.narrator.enabled, state.narrator.error?.message, prefs.briefCollapsed, i, all.length, nb ? null : b?.lastText]);
+  // The agent's task list, when it keeps one, fills the columns: exact and live between briefs.
+  const c = state.cache.get(id);
+  const tasks = !i && c?.loaded ? agentTodos(c.events) : null;
+  const fromTasks = !!tasks && (prefs.briefSource !== 'brief' || !cur);
+  const tasksKey = tasks ? taskLists(tasks).map(([, l]) => l.map(t => `${t.id}:${t.text}`).join('|')).join('/') : '';
+  const key = JSON.stringify([id, pb?.updatedAt, pb?.pending, pb?.error, phaseOf(s) === 'working', state.narrator.enabled, state.narrator.error?.message, prefs.briefCollapsed, i, all.length, nb ? null : b?.lastText,
+    tasksKey, fromTasks, noteRev, seenRev]);
   if (briefBoxCache?.key === key) { briefBoxCache.el.querySelector('.brief-f').replaceWith(foot); return briefBoxCache.el; }
   const landed = !i && briefBoxCache?.id === id && briefBoxCache.at && pb?.updatedAt > briefBoxCache.at;
 
   const box = h('section', { id: 'brief-box', class: `brief${prefs.briefCollapsed ? ' collapsed' : ''}${landed ? ' landed' : ''}${i ? ' earlier' : ''}`, 'aria-labelledby': 'brief-h' });
   const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, i ? 'Earlier brief' : 'Brief'), h('span', { class: 'spacer' }));
+  const working = !i && phaseOf(s) === 'working';
+  const lists = fromTasks ? taskLists(tasks)
+    : cur ? briefLists(cur, working).map(([label, items], k) => [label, items.map((x, j) => ({ text: x, seq: k === 0 ? cur.doneSeq?.[j] ?? null : null }))]) : [];
+  // Collapsed, the columns become their counts in the header; a click opens them.
+  if (prefs.briefCollapsed && lists.some(([, items]) => items.length)) {
+    const MINI = [['done', '✓'], ['doing', '●'], ['todo', '○']];
+    head.insertBefore(h('button', { type: 'button', class: 'dnn-mini', title: `${lists.map(([l, items]) => `${items.length} ${l.toLowerCase()}`).join(' · ')} · click to expand`,
+      onclick: () => { prefs.briefCollapsed = false; savePrefs(); renderHeader(); } },
+      ...lists.map(([, items], k) => h('span', { class: `dm-${MINI[k][0]}` }, MINI[k][1], ` ${items.length}`))), head.querySelector('.spacer'));
+  }
   if (all.length > 1) {
     const go = (j) => { state.briefAt = j ? { id, at: all[j].updatedAt } : null; renderHeader(); };
     head.append(h('span', { class: 'bhist' },
@@ -1662,6 +1765,8 @@ function renderBriefBox(id, s, b) {
       ib('i-right', 'Later brief', () => go(i - 1), { size: 13, disabled: !i || null }),
       i ? ib('i-latest', 'Latest brief', () => go(0), { size: 13 }) : null));
   }
+  if (tasks && cur) head.append(ib(fromTasks ? 'i-todo' : 'i-said', fromTasks ? 'Columns show the agent\'s task list · click for the brief\'s' : 'Columns show the brief\'s lists · click for the agent\'s task list',
+    () => { prefs.briefSource = fromTasks ? 'brief' : 'tasks'; savePrefs(); renderHeader(); }, { size: 13, cls: 'bsrc' }));
   if (nb) head.append(ib(prefs.briefCollapsed ? 'i-down' : 'i-up', prefs.briefCollapsed ? 'Expand brief' : 'Collapse brief', () => { prefs.briefCollapsed = !prefs.briefCollapsed; savePrefs(); renderHeader(); }, { size: 13 }));
   head.append(ib('i-speaker', 'Read the brief aloud (r)', () => readBrief(id), { size: 13 }));
   head.append(h('button', { type: 'button', class: 'ask-ico', 'aria-label': 'Ask about this session', title: 'Ask about this session', onclick: () => openAsk({ kind: 'brief', sessionId: id, label: 'Session brief', what: 'this session' }, { type: 'brief' }) }, starIcon(12)));
@@ -1680,24 +1785,39 @@ function renderBriefBox(id, s, b) {
     }
     box.append(h('div', { class: 'prog' }, legend, bar));
   }
-  // Completed · In progress · Planned. Items this brief added over the one
-  // before it are marked, so a refresh reads as a change rather than a rewrite.
-  const lists = cur ? briefLists(cur, !i && phaseOf(s) === 'working') : [];
+  // Completed · In progress · To do, side by side. Items are { text, seq }:
+  // seq, when known, is the event that shows them (a task's last update, a
+  // completed item's commit or PR). New marks what you have not seen: since
+  // you last looked at this session, else since the previous brief.
+  const seen = !i ? seenItems(id) : null;
+  const was = new Map(prev && !fromTasks ? briefLists(prev).map(([label, items]) => [label, new Set(items)]) : []);
+  const isNew = (label, x) => seen ? !seen.has(itemKey(label, x)) : !fromTasks && !!prev && !was.get(label)?.has(x);
+  const newTip = seen ? 'New since you last looked' : 'New since the previous brief';
+  const refs = [];
   if (lists.some(([, items]) => items.length)) {
-    // New in this list since the previous brief: an item that moved from In progress to Completed counts.
-    const was = new Map(prev ? briefLists(prev).map(([label, items]) => [label, new Set(items)]) : []);
-    const isNew = (label, x) => prev && !was.get(label)?.has(x);
-    box.append(h('div', { class: 'dnn' }, ...lists.map(([label, items]) => h('div', { class: `dnn-p${items.length ? '' : ' empty'}` }, h('h3', {}, label),
-      items.length ? h('ul', {}, ...items.map(x => h('li', { class: isNew(label, x) ? 'new' : null, title: isNew(label, x) ? 'New since the previous brief' : null }, x)))
-        : h('p', { class: 'muted' }, '—')))));
+    const COL = { 'Completed': ['done', 'Nothing yet'], 'In progress': ['doing', working ? 'Between steps' : 'Idle'], 'To do': ['todo', 'Nothing queued'] };
+    box.append(h('div', { class: `dnn${fromTasks ? ' tasks' : ''}` }, ...lists.map(([label, items]) => {
+      const [k, none] = COL[label];
+      return h('div', { class: `dnn-p dnn-${k}${items.length ? '' : ' empty'}`, role: 'group', 'aria-label': label },
+        h('h3', {}, h('span', { class: 'dnn-t' }, label), items.length ? h('span', { class: 'dnn-n' }, String(items.length)) : null),
+        items.length ? h('ul', {}, ...items.map(x => h('li', { class: isNew(label, x.text) ? 'new' : null, title: isNew(label, x.text) ? newTip : null },
+          h('span', { class: 'dnn-x' }, x.text), itemLink(id, x.seq, refs, k === 'done'))))
+          : h('p', { class: 'dnn-none' }, none));
+    })));
   }
-  if (cur?.watch) {
-    const w = h('div', { class: 'watch' }, h('span', { class: 'wk' }, 'WATCH'), h('span', { class: 'wt' }, cur.watch.text));
-    if (cur.watch.seq) w.append(h('button', { type: 'button', onclick: () => jumpToSeq(cur.watch.seq) }, 'Jump to event'));
-    box.append(w);
+  briefWatch?.(); briefWatch = refs.length ? watchRefs(refs, { sessionId: id }) : null;
+  // Notes: what may need you, most urgent first, each linked to its event and
+  // with the one action that settles it. Shown even when the brief is collapsed.
+  const allNotes = notesOf(cur), notes = liveNotes(id, cur);
+  if (allNotes.length) {
+    const ul = h('ul', { class: 'bnotes', 'aria-label': 'Notes' }, ...notes.map(n => noteEl(id, s, n)));
+    const gone = allNotes.length - notes.length;
+    if (gone) ul.append(h('li', { class: 'bn-gone' }, h('button', { type: 'button', title: 'Show the notes you dismissed',
+      onclick: () => { for (const n of allNotes) dismissNote(id, n, false); noteRev++; renderHeader(); } }, `${gone} dismissed`)));
+    box.append(ul);
   }
   box.append(foot);
-  briefBoxCache = { key, el: box, id, at: pb?.updatedAt || 0 };
+  briefBoxCache = { key, el: box, id, at: pb?.updatedAt || 0, items: !i ? lists.flatMap(([label, items]) => items.map(x => itemKey(label, x.text))) : null };
   return box;
 }
 
@@ -2734,6 +2854,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
   else if (e.key === 'Enter') { const ev = state.cursor && findEvent(state.selected, state.cursor); if (ev) showEventDetails(ev); }
   else if (e.key === 'l') { e.preventDefault(); state.live ? pickEvent() : setLive(true); }
+  else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); stepNote(e.key === 'W' ? -1 : 1); }
   else if (e.key === 'r') { e.preventDefault(); if (!readEvent(state.cursor && findEvent(state.selected, state.cursor))) readBrief(state.selected); }
   else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
   else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }

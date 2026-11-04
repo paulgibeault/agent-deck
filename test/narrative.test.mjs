@@ -94,7 +94,7 @@ test('BriefService: shown session gets a brief once, then only on new records', 
   const b = briefs.publicBrief('sess-1');
   assert.equal(b.brief.summary, 'Fixed the solver test.');
   assert.deepEqual(b.brief.progress, { unit: 'tests', total: 3, segments: [{ label: 'passing', count: 3, tone: 'done' }] });
-  assert.deepEqual(b.brief.watch, { text: 'one flaky test', seq: 4 });
+  assert.deepEqual(b.brief.notes, [{ kind: 'risk', text: 'one flaky test', seq: 4 }], 'an old watch reads as a risk note');
   assert.equal(b.stale, false);
   assert.ok(updates.some(u => u.pending) && updates.at(-1).pending === false);
 

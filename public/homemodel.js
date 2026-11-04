@@ -1,6 +1,7 @@
 // public/homemodel.js — what Home (home.js) shows and in what order, worked out
 // from stored workstreams and the deck's live sessions. No DOM, so node tests
 // import it; no model calls, so drawing Home costs nothing.
+import { liveNotes, NOTE_KINDS } from './briefnotes.js';
 
 /** Statuses on the grid by default; done and archived wait behind the filter. */
 export const SHOWN = ['active', 'paused'];
@@ -27,14 +28,40 @@ export function workstreamMap(list, sessions = []) {
   return map;
 }
 
+/** Note kinds that put a workstream with the needs-you ones: something failed, or the agent asks. */
+const URGENT = new Set(['failure', 'question']);
+const kindRank = (k) => { const i = NOTE_KINDS.indexOf(k); return i < 0 ? NOTE_KINDS.length : i; };
+
+/**
+ * The live (not dismissed) brief notes of some sessions: `bySession`, [{ s, notes }]
+ * for each one that has any, in the order given; and `all`, [{ s, n }] for every
+ * note, most urgent kind first and the sessions' order within a kind. `briefOf(id)`
+ * is app.js's: the session's current brief or null. `live` is briefnotes.js's
+ * liveNotes (in node it has no localStorage, so nothing reads as dismissed).
+ */
+export function sessionNotes(ss, briefOf, { live = liveNotes } = {}) {
+  const bySession = []; const all = [];
+  if (!briefOf) return { bySession, all };
+  for (const s of ss || []) {
+    const notes = live(s.id, briefOf(s.id));
+    if (!notes.length) continue;
+    bySession.push({ s, notes });
+    for (const n of notes) all.push({ s, n });
+  }
+  all.sort((a, b) => kindRank(a.n.kind) - kindRank(b.n.kind));
+  return { bySession, all };
+}
+
 const time = (v) => { const t = typeof v === 'number' ? v : Date.parse(v); return Number.isFinite(t) ? t : 0; };
 
 /**
  * Each workstream with what its card needs from live state: its live sessions
  * and their signals, whether one needs you, how many are working, and when
  * anything last happened (the record's `updated` or a session's activity).
+ * With `briefOf`, also its live sessions' brief notes (sessionNotes, sessions
+ * that need you first) and `flags`, how many of those are failures or questions.
  */
-export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstreamMap(list, sessions) } = {}) {
+export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstreamMap(list, sessions), briefOf = null, live: liveFn } = {}) {
   const bySlug = new Map();
   for (const s of sessions) {
     const slug = s && map.get(s.id);
@@ -44,7 +71,9 @@ export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstr
   return (list || []).map(w => {
     const mine = bySlug.get(w.slug) || [];
     const live = mine.filter(isLive).map(s => ({ s, sig: sigOf(s) }));
-    return { ...w, status: w.status || 'active', live,
+    const notes = sessionNotes([...live].sort((a, b) => NEEDS.has(b.sig) - NEEDS.has(a.sig)).map(x => x.s), briefOf, liveFn ? { live: liveFn } : {});
+    return { ...w, status: w.status || 'active', live, notes,
+      flags: notes.all.filter(x => URGENT.has(x.n.kind)).length,
       needs: live.filter(x => NEEDS.has(x.sig)).length,
       running: live.filter(x => x.sig === 'working').length,
       last: Math.max(time(w.updated), ...mine.map(s => time(s.statusUpdatedAt) || time(s.mtime))) };
@@ -52,14 +81,16 @@ export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstr
 }
 
 /**
- * The grid's order: needs-you first, then sessions running, then the rest;
- * within each, active before paused, then the most recent activity. A paused
- * workstream with a session waiting on you still rises: the wait is real.
+ * The grid's order: needs-you first (a session waiting on you, or a failure or
+ * open question in a live session's brief), then sessions running, then the
+ * rest; within each, active before paused, then the most recent activity. A
+ * paused workstream with a session waiting on you still rises: the wait is real.
  * Done and archived only with `all`.
  */
+const wants = (c) => c.needs > 0 || c.flags > 0;
 export function orderCards(cards, { all = false } = {}) {
   return cards.filter(c => all || SHOWN.includes(c.status)).sort((a, b) =>
-    (b.needs > 0) - (a.needs > 0) || (b.running > 0) - (a.running > 0)
+    wants(b) - wants(a) || (b.running > 0) - (a.running > 0)
     || (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || b.last - a.last || String(a.slug).localeCompare(String(b.slug)));
 }
 
