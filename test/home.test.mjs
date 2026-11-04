@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { workstreamMap, cardStates, orderCards, unaffiliated, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles, sessionRows, coalesce } from '../public/homemodel.js';
+import { workstreamMap, cardStates, orderCards, unaffiliated, sessionNotes, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles, sessionRows, coalesce } from '../public/homemodel.js';
 import { storeFor } from '../lib/workstreams.mjs';
 import { loadRoutes, matchRoute } from '../lib/routes.mjs';
 import { DeckState } from '../lib/deckstate.mjs';
@@ -50,6 +50,38 @@ test('cards use app.js’s signal when given one; a hidden or ended session is n
   const [c] = cardStates(list, sessions, { sigOf: (s) => s.id === 's1' ? 'input' : 'working' });
   assert.deepEqual(c.live.map(x => [x.s.id, x.sig]), [['s1', 'input']]);
   assert.equal(c.needs, 1);
+});
+
+test('brief notes roll up per workstream: live sessions only, most urgent kind first; in node nothing reads as dismissed', () => {
+  const briefs = {
+    a1: { notes: [{ kind: 'decision', text: 'Use the bare repo', seq: 4 }, { kind: 'question', text: 'Which port?', seq: 9 }] },
+    a2: { notes: [{ kind: 'failure', text: 'Tests fail on CI', seq: 12 }, { kind: 'question', text: 'Keep the flag?' }] },
+    a3: { watch: { text: 'Old-style watch', seq: 2 } },
+    gone: { notes: [{ kind: 'failure', text: 'From an ended session' }] },
+  };
+  const briefOf = (id) => briefs[id] || null;
+  const list = [{ slug: 'a', ids: ['a1', 'a2', 'a3', 'gone', 'none'] }, { slug: 'quiet', updated: iso(0), ids: ['q1'] }, { slug: 'decided', updated: iso(1), ids: ['d1'] }];
+  briefs.d1 = { notes: [{ kind: 'decision', text: 'Ship it' }, { kind: 'risk', text: 'Might break' }] };
+  const sessions = [live('a1', 'done'), live('a2', 'input'), live('a3', 'done'), recent('gone'), live('none', 'done'), live('q1', 'done'), live('d1', 'done')];
+  const cards = cardStates(list, sessions, { briefOf });
+  const a = cards.find(c => c.slug === 'a');
+  // Sessions that need you lead (a2), then the given order; a brief from before notes reads as one risk.
+  assert.deepEqual(a.notes.bySession.map(x => [x.s.id, x.notes.length]), [['a2', 2], ['a1', 2], ['a3', 1]]);
+  assert.deepEqual(a.notes.all.map(x => `${x.n.kind}:${x.s.id}`), ['failure:a2', 'risk:a3', 'question:a2', 'question:a1', 'decision:a1']);
+  assert.equal(a.flags, 3, 'failures and questions');
+  assert.equal(cards.find(c => c.slug === 'decided').flags, 0, 'decisions and risks do not flag');
+
+  // A workstream with a failure or question sorts with the needs-you ones; decisions and risks do not lift one.
+  const order = orderCards(cards).map(c => c.slug);
+  assert.deepEqual(order, ['a', 'quiet', 'decided']);
+  // Without briefOf (or a brief): no notes, no flags.
+  assert.deepEqual(cardStates(list, sessions)[0].notes, { bySession: [], all: [] });
+  assert.equal(cardStates(list, sessions)[0].flags, 0);
+
+  // Dismissed notes drop out (the browser's liveNotes, stood in for here).
+  const dismissed = sessionNotes([{ id: 'a2' }], briefOf, { live: (id, b) => b.notes.filter(n => n.kind !== 'failure') });
+  assert.deepEqual(dismissed.all.map(x => x.n.text), ['Keep the flag?']);
+  assert.deepEqual(sessionNotes([{ id: 'a1' }], null), { bySession: [], all: [] });
 });
 
 test('the session → workstream map: a summary’s own field (#35) wins over the list', () => {

@@ -7,7 +7,8 @@ import { h, ib, svgUse, ago, oneLine, markdown, basename, relPath } from './even
 import { registerView, showView, currentView } from './views.js';
 import { registerMenuItem } from './menu.js';
 import { openFile as vaultFile } from './vault.js';
-import { workstreamMap, cardStates, orderCards, unaffiliated, isLive, parseNotes, parseSource, decisionGroups, groupFiles, sessionRows, coalesce, SHOWN } from './homemodel.js';
+import { workstreamMap, cardStates, orderCards, unaffiliated, isLive, sessionNotes, parseNotes, parseSource, decisionGroups, groupFiles, sessionRows, coalesce, SHOWN } from './homemodel.js';
+import { NOTE_KIND, noteCounts } from './briefnotes.js';
 
 const $ = (id) => document.getElementById(id);
 let ctx = null;
@@ -184,7 +185,7 @@ let rerender = 0;
 /** The deck's sessions changed (app.js renderTree): redraw from what's here, no fetch. */
 export function homeSessionsChanged() {
   if (currentView() !== 'home' || rerender) return;
-  rerender = requestAnimationFrame(() => { rerender = 0; render(); if (st.open && st.open.tab === 'sessions') drawTab(); });
+  rerender = requestAnimationFrame(() => { rerender = 0; render(); if (st.open?.tab === 'sessions') drawTab(); else if (st.open?.tab === 'overview') redrawNotes(); });
 }
 let reloadT = null;
 const changed = new Set();
@@ -213,7 +214,7 @@ function render() {
   }
   const all = sessions();
   const map = workstreamMap(st.list, all);
-  const cards = orderCards(cardStates(st.list, all, { sigOf: ctx.sigOf, map }), { all: st.all });
+  const cards = orderCards(cardStates(st.list, all, { sigOf: ctx.sigOf, map, briefOf: ctx.briefOf }), { all: st.all });
   const un = unaffiliated(all, map, { sigOf: ctx.sigOf });
   const out = cards.map(card);
   if (un.total) out.push(unaffiliatedCard(un));
@@ -285,6 +286,47 @@ function refRow(refs) {
   return row;
 }
 
+// ------------------------------------------------------------ brief notes from the sessions
+/** Open a session at a note's event, when the note is linked to one. */
+const openNote = (s, n) => ctx.open(s.id, null, n.seq || null);
+const noteLine = ({ s, n }) => `${s.title}: ${n.text}`;
+/**
+ * A card's roll-up of its live sessions' brief notes: a glyph and count per kind,
+ * most urgent first. Each count opens the session with that kind's first note.
+ */
+function noteRow(notes) {
+  if (!notes?.all.length) return null;
+  const all = notes.all;
+  return h('div', { class: 'hm-flags', title: all.map(noteLine).join('\n') },
+    noteCounts(all.map(x => x.n)).map(({ kind, count, icon, label, plural: many }) => {
+      const mine = all.filter(x => x.n.kind === kind); const first = mine[0];
+      return h('button', { type: 'button', class: `hm-fl nk-${kind}`, 'aria-label': `${count} ${count === 1 ? label.toLowerCase() : many}: open ${first.s.title}`,
+        title: `${mine.map(noteLine).join('\n')}\nClick to open ${first.s.title}`,
+        onclick: (e) => { e.stopPropagation(); openNote(first.s, first.n); } }, svgUse(icon, 11), count);
+    }));
+}
+/** The expanded view's list: each live session's notes under its title, each opening the session at its event. */
+function notesSection(w) {
+  const ss = (w.sessions || []).map(id => ctx.byId(id)).filter(isLive);
+  const { bySession } = sessionNotes(ss, ctx.briefOf);
+  if (!bySession.length) return null;
+  const key = bySession.map(({ s, notes }) => [s.id, s.title, ...notes.map(n => `${n.kind}${n.seq}${n.text}`)].join('\u0001')).join('\u0002');
+  return h('section', { class: 'hm-sec hm-sn-sec', dataset: { notes: key } }, h('h4', {}, 'From the sessions'),
+    bySession.map(({ s, notes }) => h('div', { class: 'hm-sn-g' },
+      h('button', { type: 'button', class: 'linkish hm-sn-s', title: 'Open the session', onclick: () => ctx.open(s.id) }, s.title),
+      h('ul', { class: 'hm-rows' }, notes.map(n => h('li', { class: `hm-row link hm-sn nk-${n.kind}`, title: `${NOTE_KIND[n.kind]?.label || n.kind}${n.seq ? ' · open the event' : ' · open the session'}`,
+        onclick: () => openNote(s, n) }, svgUse(NOTE_KIND[n.kind]?.icon || 'i-flag', 12), h('span', { class: 'hm-sn-t' }, n.text)))))));
+}
+
+/** On a session tick, the Overview's notes alone, and only when they changed: its fields may be mid-edit. */
+function redrawNotes() {
+  const body = panel.querySelector('.hm-x-b'); const w = st.open?.detail;
+  if (!body || !w) return;
+  const cur = body.querySelector(':scope > .hm-sn-sec'); const fresh = notesSection(w);
+  if ((cur?.dataset.notes || '') === (fresh?.dataset.notes || '')) return;
+  if (cur && fresh) cur.replaceWith(fresh); else if (cur) cur.remove(); else body.prepend(fresh);
+}
+
 const COUNTS = [['decisions', 'i-check', 'decision', 'decisions'], ['notes', 'i-pencil', 'note', 'notes'], ['files', 'i-file', 'starred file', 'files'], ['sessions', 'i-sessions', 'session', 'sessions']];
 const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
@@ -302,6 +344,7 @@ function card(w) {
     w.goal ? h('p', { class: 'hm-goal', title: w.goal }, oneLine(w.goal, 300)) : null,
     refRow(prsOf(w)),
     w.next ? h('p', { class: 'hm-next', title: `Next step: ${w.next}` }, svgUse('i-right', 11), h('span', {}, oneLine(w.next, 400))) : null,
+    noteRow(w.notes),
     h('footer', { class: 'hm-f' },
       w.status !== 'active' ? h('span', { class: `hm-st st-${w.status}` }, w.status) : null,
       h('span', { class: 'hm-ago', title: w.last ? `Last activity ${when(w.last)}` : null }, since(w.last)),
@@ -490,6 +533,7 @@ function drawTab() {
 const SECTIONS = [['summary', 'Summary'], ['where', 'Where we are'], ['next', 'Next step'], ['questions', 'Open questions']];
 function overview(w) {
   return [
+    notesSection(w),
     ...SECTIONS.map(([k, label]) => h('section', { class: 'hm-sec' }, h('h4', {}, label), editable(k, w[k], { md: true, placeholder: `Add ${label.toLowerCase()}` }))),
     h('section', { class: 'hm-sec' }, h('h4', {}, 'Pinned'), editable('pinned', (w.pinned || []).join(', '), { single: true, placeholder: 'Issues, a milestone: #12, v2, …',
       view: () => { const p = st.open?.detail?.pinned || []; return p.length ? h('div', { class: 'hm-prs' }, p.map(pinChip)) : null; } })),

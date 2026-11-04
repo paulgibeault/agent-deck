@@ -129,3 +129,19 @@ form.hm-new.busy { opacity: .6; pointer-events: none; }
   .hm-ed.hm-x-goal { margin-left: 6px; }
   .hm-tabs { overflow-x: auto; }
 }
+
+/* Brief notes from a workstream's live sessions: a glyph and count per kind on
+   the card, and the notes themselves under each session in the Overview. */
+.hm-flags { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -4px; }
+.hm-fl { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 4px; border: 0; border-radius: 5px; background: none;
+  color: var(--nk, var(--muted)); font: 11px var(--sans); font-variant-numeric: tabular-nums; cursor: pointer; }
+.hm-fl:hover { background: var(--hover); }
+.hm-fl.nk-failure, .hm-sn.nk-failure { --nk: var(--err-fg); }
+.hm-fl.nk-risk, .hm-sn.nk-risk { --nk: var(--need-fg); }
+.hm-fl.nk-question, .hm-sn.nk-question { --nk: var(--turn-fg); }
+.hm-fl.nk-decision, .hm-sn.nk-decision { --nk: var(--info-fg); }
+.hm-sn-g + .hm-sn-g { margin-top: 6px; }
+.hm-sn-s { font-size: 12px; font-weight: 600; color: var(--fg2); }
+.hm-row.hm-sn { grid-template-columns: 14px minmax(0, 1fr); min-height: 26px; }
+.hm-sn > svg { color: var(--nk); }
+.hm-sn-t { min-width: 0; font-size: 12.5px; }
