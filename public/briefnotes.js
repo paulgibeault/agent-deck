@@ -11,8 +11,8 @@ export const NOTE_KIND = {
   decision: { icon: 'i-flag', label: 'Decision', plural: 'decisions' },
 };
 
-/** A brief's notes, most urgent first. A brief from before notes has one `watch`. */
-export function notesOf(b) { return b?.notes || (b?.watch ? [{ kind: 'risk', ...b.watch }] : []); }
+/** A brief's notes, most urgent first, at most two (briefs written before the cap may hold three). A brief from before notes has one `watch`. */
+export function notesOf(b) { return (b?.notes || (b?.watch ? [{ kind: 'risk', ...b.watch }] : [])).slice(0, 2); }
 
 /**
  * What identifies a note across refreshes. The model rewords notes, so one
