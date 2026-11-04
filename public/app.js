@@ -1280,6 +1280,7 @@ initHome({
   sessions: () => [...state.snapshot.active, ...state.snapshot.recent, ...state.snapshot.closed],
   byId: (id) => state.byId.get(id),
   sigOf,
+  briefOf: (id) => state.briefs.get(id)?.brief || null,
   backend: (s) => backendGlyph(sessionHarness(s)),
   open: (id, eventId = null) => {
     if (!state.byId.has(id)) { toast('That session is no longer listed'); return; }
