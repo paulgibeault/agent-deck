@@ -22,7 +22,8 @@ import { workstreamsChanged } from './wspicker.js';
 import { miniChip as ghMini, watchRefs } from './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
-import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
+import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession, openWorkstream } from './home.js';
+import { initWsDock, wsDockShow, wsDockChanged } from './wsdock.js';
 import { wrappedFilter } from './wrapup.js';
 import { createLiveStrip } from './livestrip.js';
 
@@ -174,6 +175,7 @@ function connect() {
   es.addEventListener('hello', () => api.get('/api/live').then(l => liveStrip.reset(l)).catch(() => {}));
   es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
   es.addEventListener('workstreams.changed', homeWorkstreamsChanged);
+  es.addEventListener('workstreams.changed', (e) => { let d = null; try { d = JSON.parse(e.data); } catch { /* none */ } wsDockChanged(d, state.byId.get(state.selected)); });
   es.addEventListener('hello', homeWorkstreamsChanged);
 }
 function setConn(on) {
@@ -1263,6 +1265,7 @@ $('overview').addEventListener('click', (e) => {
 
 function goOverview() {
   rememberBrief();
+  wsDockShow(null);
   state.selected = null; state.cursor = null;
   prefs.selected = null; savePrefs();
   showView('sessions');
@@ -1277,6 +1280,9 @@ registerView('sessions', {
   unmount: () => { $('overview').hidden = true; $('session-view').hidden = true; },
 });
 showView('sessions');
+// The selected session's workstream, in the rail under the session list.
+initWsDock({ api, byId: (id) => state.byId.get(id), sigOf, open: (id) => select(id), openWorkstream });
+
 // Home (home.js): workstream cards over the deck's live sessions.
 initHome({
   sessions: () => [...state.snapshot.active, ...state.snapshot.recent, ...state.snapshot.closed],
@@ -1303,6 +1309,7 @@ async function select(id) {
   prefs.selected = id; savePrefs();
   showView('sessions');
   $('overview').hidden = true; $('session-view').hidden = false;
+  wsDockShow(state.byId.get(id));
   renderTree();
   reportView();
   renderHeader();
@@ -1796,7 +1803,9 @@ function renderBriefBox(id, s, b) {
   const refs = [];
   if (lists.some(([, items]) => items.length)) {
     const COL = { 'Completed': ['done', 'Nothing yet'], 'In progress': ['doing', working ? 'Between steps' : 'Idle'], 'To do': ['todo', 'Nothing queued'] };
-    box.append(h('div', { class: `dnn${fromTasks ? ' tasks' : ''}` }, ...lists.map(([label, items]) => {
+    // An empty column keeps its place but gives its width to the full ones.
+    const cols = lists.map(([, items]) => items.length ? 'minmax(0, 1fr)' : 'minmax(84px, .45fr)').join(' ');
+    box.append(h('div', { class: `dnn${fromTasks ? ' tasks' : ''}`, style: `--dnn-cols: ${cols}` }, ...lists.map(([label, items]) => {
       const [k, none] = COL[label];
       return h('div', { class: `dnn-p dnn-${k}${items.length ? '' : ' empty'}`, role: 'group', 'aria-label': label },
         h('h3', {}, h('span', { class: 'dnn-t' }, label), items.length ? h('span', { class: 'dnn-n' }, String(items.length)) : null),
@@ -1809,13 +1818,11 @@ function renderBriefBox(id, s, b) {
   // Notes: what may need you, most urgent first, each linked to its event and
   // with the one action that settles it. Shown even when the brief is collapsed.
   const allNotes = notesOf(cur), notes = liveNotes(id, cur);
-  if (allNotes.length) {
-    const ul = h('ul', { class: 'bnotes', 'aria-label': 'Notes' }, ...notes.map(n => noteEl(id, s, n)));
-    const gone = allNotes.length - notes.length;
-    if (gone) ul.append(h('li', { class: 'bn-gone' }, h('button', { type: 'button', title: 'Show the notes you dismissed',
-      onclick: () => { for (const n of allNotes) dismissNote(id, n, false); noteRev++; renderHeader(); } }, `${gone} dismissed`)));
-    box.append(ul);
-  }
+  if (notes.length) box.append(h('ul', { class: 'bnotes', 'aria-label': 'Notes' }, ...notes.map(n => noteEl(id, s, n))));
+  // Dismissed notes wait behind a glyph in the header rather than a row of their own.
+  const gone = allNotes.length - notes.length;
+  if (gone) head.insertBefore(h('button', { type: 'button', class: 'bn-gone', title: `Show ${gone === 1 ? 'the note' : `the ${gone} notes`} you dismissed`,
+    onclick: () => { for (const n of allNotes) dismissNote(id, n, false); noteRev++; renderHeader(); } }, svgUse('i-eye', 12), String(gone)), head.querySelector('.spacer').nextSibling);
   box.append(foot);
   briefBoxCache = { key, el: box, id, at: pb?.updatedAt || 0, items: !i ? lists.flatMap(([label, items]) => items.map(x => itemKey(label, x.text))) : null };
   return box;
