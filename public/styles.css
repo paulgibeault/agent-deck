@@ -434,6 +434,14 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .dnn-doing li::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
 .dnn-todo li::before { border: 1.5px solid var(--muted); }
 .dnn li.new { color: var(--fg); background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.dnn li { display: flex; align-items: baseline; gap: 6px; }
+.dnn .dnn-x { flex: 1; min-width: 0; }
+.dnn .dnn-go { flex: none; display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 0 2px; color: var(--muted); font: 11px var(--mono); cursor: pointer; opacity: .55; }
+.dnn .dnn-go.ms { color: var(--info-fg); opacity: .9; }
+.dnn li:hover .dnn-go, .dnn .dnn-go:focus-visible { opacity: 1; }
+.dnn .dnn-go:hover { color: var(--info-fg); }
+.dnn .gh-mini { flex: none; }
+.brief-h .bsrc { color: var(--fg2); }
 .dnn-none { margin: 0; font-size: 12px; color: var(--muted); font-style: italic; }
 /* Notes beneath the columns: what may need you, each linked to its event. */
 .bnotes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -445,6 +453,13 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .bnote .bn-go { flex: none; display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 1px 2px; color: var(--info-fg); font: 11.5px var(--mono); cursor: pointer; white-space: nowrap; }
 .bnote .bn-go:hover { text-decoration: underline; }
 .bnote .bn-ago { color: var(--muted); }
+.bnote:focus-visible { outline: 2px solid var(--c); outline-offset: 1px; }
+.bnote .bn-acts { flex: none; display: inline-flex; align-items: center; gap: 0; margin: -3px -4px -3px 0; color: var(--fg2); opacity: .75; }
+.bnote .bn-acts .ib { color: inherit; }
+.bnote:hover .bn-acts, .bnote:focus-within .bn-acts { opacity: 1; }
+.bnotes .bn-gone { display: flex; justify-content: flex-end; }
+.bnotes .bn-gone button { border: 0; background: none; padding: 0 2px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.bnotes .bn-gone button:hover { color: var(--fg2); text-decoration: underline; }
 .brief.collapsed .prog, .brief.collapsed .dnn { display: none; }
 .brief-h .bhist { display: inline-flex; align-items: center; gap: 2px; }
 .brief-h .bhist .icon-btn { font-size: 15px; line-height: 1; }

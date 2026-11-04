@@ -43,3 +43,9 @@ test('brief: a note pointing at an event that does not exist keeps its text but 
   assert.deepEqual(b.notes, [{ kind: 'failure', text: 'Tests fail', seq: null }, { kind: 'question', text: 'Ship it?', seq: 3 }]);
   assert.deepEqual(normalize({ summary: 's' }).notes, []);
 });
+
+test('brief: a done item may name the event that shows it done; the list stays text', () => {
+  const b = normalize({ summary: 's', done: ['Wrote it', { text: 'Opened PR #58', seq: 40 }, { text: 'Committed', seq: 999 }, { text: ' ' }] }, new Set([40]));
+  assert.deepEqual(b.done, ['Wrote it', 'Opened PR #58', 'Committed']);
+  assert.deepEqual(b.doneSeq, [null, 40, null]);
+});
