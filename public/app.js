@@ -26,8 +26,17 @@ import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWor
 import { initWsDock, wsDockShow, wsDockChanged } from './wsdock.js';
 import { wrappedFilter } from './wrapup.js';
 import { createLiveStrip } from './livestrip.js';
+import { buildFlight, flightStrip, createFlightPanel, flightDigest } from './flightrec.js';
 
 const $ = (id) => document.getElementById(id);
+
+// The flight recorder's state (wired up under "flight recorder" below); declared early so startup renders can reach it.
+const flight = { f: null, cursor: undefined };
+const flightPanel = createFlightPanel({
+  onSelect: (id) => flightSelect(id),
+  onOpen: (id) => { const ev = findEvent(state.selected, id); if (ev) { jumpToSeq(ev.seq); } },
+  onAsk: () => askList('flight'),
+});
 
 // ------------------------------------------------------------ api
 async function req(path, opts) {
@@ -1313,7 +1322,7 @@ async function select(id) {
   renderTree();
   reportView();
   renderHeader();
-  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); liveStrip.render(); }
+  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); liveStrip.render(); flight.f = null; flightPanel.reset(); paintFlight(); }
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
@@ -2544,7 +2553,7 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); followLive(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderFlight(); followLive(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 // A Bash command's category depends only on its input, so it's safe to keep.
@@ -2695,6 +2704,7 @@ function renderRows(jump = false) {
   vrows.replaceChildren(frag);
   applyRing();
   paintSpeaking();
+  if (flight.cursor !== state.cursor) paintFlight();
 }
 vlist.addEventListener('scroll', () => {
   const atTop = vlist.scrollTop <= 30;
@@ -2722,6 +2732,55 @@ vlist.addEventListener('click', async (e) => {
   if (btn?.dataset.askRow) askEvent(ev);
 });
 function findEvent(sessionId, id) { return state.cache.get(sessionId)?.byId.get(id) || null; }
+
+// ------------------------------------------------------------ flight recorder
+// One row above the event list (flightrec.js): every event as a chip, the
+// context line behind, milestones on top. A click opens it in the details pane.
+const flightKey = () => `flight:${state.selected}`;
+function renderFlight() {
+  const id = state.selected;
+  const c = id && state.cache.get(id);
+  if (!c?.loaded) { flight.f = null; paintFlight(); return; }
+  const s = state.byId.get(id);
+  flight.f = buildFlight(c.events, {
+    live: phaseOf(s) === 'working' || !!s?.alive,
+    ctxSize: c.meta?.context?.size || null, ctxUsed: c.meta?.context?.used ?? null,
+    model: [c.meta?.model, deckOf(id)?.model].filter(Boolean).join(' '),
+  });
+  paintFlight();
+}
+function paintFlight() {
+  flight.cursor = state.cursor;
+  if (state.tab === 'events') flightStrip($('flight'), flight.f, { cursor: state.cursor });
+  if (state.detailsKey === flightKey() && flight.f) flightPanel.update(flight.f, { cursor: state.cursor });
+}
+function openFlight(focusId = null) {
+  if (!flight.f) return;
+  pickEvent();
+  state.detailsKey = flightKey(); syncDetailsPane();
+  const body = $('details-body');
+  if (body.firstChild !== flightPanel.el) { body.replaceChildren(flightPanel.el); body.scrollTop = 0; }
+  flightPanel.update(flight.f, { cursor: state.cursor });
+  if (focusId) flightSelect(focusId);
+  applyRing();
+}
+/** A pick in the flight recorder: the event list moves to it, the panel stays. */
+function flightSelect(id) {
+  const ev = findEvent(state.selected, id); if (!ev) return;
+  pickEvent();
+  if (!allKinds() || state.filter || state.starredOnly) { state.filter = ''; $('ev-filter').value = ''; state.starredOnly = false; setKinds([]); buildRows(); }
+  state.cursor = id;
+  const i = state.rows.findIndex(r => r.ev.id === id);
+  if (i >= 0) scrollToRow(i);
+  renderRows();
+  if (state.detailsKey === flightKey()) flightPanel.focus(id);
+}
+$('flight').addEventListener('click', (e) => {
+  if (e.target.closest('[data-ask-list]')) return;    // Ask: the session view's handler takes it
+  if (!e.target.closest('.fr-chart')) return;
+  openFlight(e.target.closest('[data-id]')?.dataset.id || null);
+});
+new ResizeObserver(() => { if (flight.f) paintFlight(); }).observe($('flight'));
 function setCursor(id) { state.cursor = id; renderRows(); }
 /**
  * Live: the event list sits on the newest event and an open details pane shows
@@ -2767,8 +2826,9 @@ function paintKind() {
   const all = allKinds();
   const more = !all && on.length > 3 ? [h('span', { class: 'kb-more' }, `+${on.length - 3}`)] : [];
   $('kind-ico').replaceChildren(...(state.starredOnly ? [glyph(STARRED)] : []), ...(all && !state.starredOnly ? [glyph(FILTER_ALL)] : all ? [] : on.slice(0, 3).map(glyph)), ...more);
-  const btn = $('kind-btn'); btn.classList.toggle('on', !all || !!state.starredOnly);
-  btn.title = `Showing: ${state.starredOnly ? 'Starred · ' : ''}${kindsLabel()}`; btn.setAttribute('aria-label', btn.title);
+  const btn = $('kind-btn'); btn.classList.toggle('on', !all || !!state.starredOnly || !!state.filter);
+  btn.classList.toggle('has-text', !!state.filter);
+  btn.title = `Showing: ${state.starredOnly ? 'Starred · ' : ''}${kindsLabel()}${state.filter ? ` · matching "${state.filter}"` : ''}`; btn.setAttribute('aria-label', btn.title);
 }
 function renderKindPop() {
   const n = state.kindCounts || {};
@@ -2779,7 +2839,8 @@ function renderKindPop() {
   }, glyph(f), h('span', { class: 'kp-n' }, count ? fmtTokens(count) : ''));
   const total = FILTERS.reduce((t, f) => t + (f.k === 'errors' ? 0 : n[f.k] || 0), 0);
   $('kind-pop').classList.toggle('some', !all);
-  $('kind-pop').replaceChildren(item(FILTER_ALL, 'all', all, total), h('span', { class: 'kp-sep', role: 'separator' }),
+  // Only the list is redrawn: the text box above it keeps its focus while rows rebuild.
+  $('kind-list').replaceChildren(item(FILTER_ALL, 'all', all, total), h('span', { class: 'kp-sep', role: 'separator' }),
     ...FILTERS.filter(f => n[f.k] || state.kinds.has(f.k) && !all).map(f => item(f, f.k, !all && state.kinds.has(f.k), n[f.k])),
     h('span', { class: 'kp-sep', role: 'separator' }), item(STARRED, 'starred', !!state.starredOnly, n.starred));
   return $('kind-pop');
@@ -2789,8 +2850,8 @@ $('kind-pop').addEventListener('toggle', (e) => {
   const r = $('kind-btn').getBoundingClientRect();
   const pop = renderKindPop();
   pop.style.top = `${r.bottom + 6}px`;
-  pop.style.left = `${Math.max(8, r.left + r.width / 2 - pop.offsetWidth / 2)}px`;
-  pop.querySelector('.kp-item')?.focus();
+  pop.style.left = `${Math.max(8, Math.min(innerWidth - pop.offsetWidth - 8, r.left + r.width / 2 - pop.offsetWidth / 2))}px`;
+  $('ev-filter').focus();
 });
 $('kind-pop').addEventListener('click', (e) => {
   const b = e.target.closest('.kp-item'); if (!b) return;
@@ -2807,7 +2868,8 @@ $('kind-pop').addEventListener('keydown', (e) => {
 paintKind();
 onStarsChange(() => scheduleRows()); // the Starred filter and its count
 $('follow').onclick = () => setLive(true);
-$('ev-filter').oninput = (e) => { state.filter = e.target.value; scheduleRows(); };
+$('ev-filter').oninput = (e) => { state.filter = e.target.value; paintKind(); scheduleRows(); };
+$('ev-filter').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('kind-pop').hidePopover(); } });
 
 function scrollToRow(i) {
   const top = state.offsets[i]; const hgt = rowHeight(state.rows[i].ev);
@@ -2863,7 +2925,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'l') { e.preventDefault(); state.live ? pickEvent() : setLive(true); }
   else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); stepNote(e.key === 'W' ? -1 : 1); }
   else if (e.key === 'r') { e.preventDefault(); if (!readEvent(state.cursor && findEvent(state.selected, state.cursor))) readBrief(state.selected); }
-  else if (e.key === '/') { e.preventDefault(); $('ev-filter').focus(); }
+  else if (e.key === '/') { e.preventDefault(); $('kind-pop').showPopover(); }
   else if (e.key === 'a') { e.preventDefault(); const ev = state.cursor && findEvent(state.selected, state.cursor); ev ? askEvent(ev) : openAsk({ kind: 'brief', sessionId: state.selected, label: 'Session brief', what: 'this session' }, { type: 'brief' }); }
   else if (e.key === '?') $('keys').showModal();
   else if (['1', '2', '3', '4', '5'].includes(e.key)) setTab(['events', 'files', 'changes', 'shell', 'bg'][+e.key - 1]);
@@ -2947,6 +3009,7 @@ function suggestionsFor(spec) {
   if (spec.kind === 'brief') return ['What should I worry about right now?', 'What happened in the last ten minutes?'];
   if (spec.kind === 'text') {
     const l = spec.label.toLowerCase();
+    if (l.startsWith('flight')) return ['How healthy is this session?', 'Where did it struggle or lose time?', 'What went wrong, and when?'];
     if (l.startsWith('file')) return ['What is this file for?', 'What did the agent change or rely on here?'];
     if (l.startsWith('diff')) return ['What does this change do?', 'Could this break anything?'];
     if (l.includes('changes')) return ['Summarize these changes', 'Is anything here risky or unfinished?'];
@@ -3065,6 +3128,11 @@ function askList(key, btn) {
       spec = { kind: 'text', label: 'Git changes', text: c?.repo ? `branch ${c.branch} ahead ${c.ahead ?? '?'} behind ${c.behind ?? '?'}\n${c.files.map(f => `${f.untracked ? '??' : (f.x + f.y).trim()} ${f.path} +${f.added ?? 0} -${f.deleted ?? 0}`).join('\n')}\nrecent commits:\n${c.commits.map(k => `${k.short} ${k.subject}`).join('\n')}` : 'not a git repository', what: 'these changes' };
       ring = { type: 'sel', sel: '#changes' }; break;
     }
+    case 'flight': {
+      if (!flight.f) return;
+      spec = { kind: 'text', label: 'Flight recorder', text: flightDigest(flight.f), what: "this session's flight" };
+      ring = { type: 'sel', sel: state.detailsKey?.startsWith('flight:') ? '#details-body .fr-big' : '#flight' }; break;
+    }
     case 'queue': spec = { kind: 'text', label: 'Prompt queue', text: (state.cache.get(state.selected)?.meta?.queue || []).map((x, i) => `${i + 1}. ${x.content}`).join('\n') || '(empty)', what: 'the prompt queue' }; ring = { type: 'sel', sel: '#queue' }; break;
     case 'active': case 'recent': spec = { kind: 'text', label: `${key === 'active' ? 'Active' : 'Recent'} sessions`, text: sessLines(railLists()[key]), what: `${key} sessions` }; ring = { type: 'sel', sel: `.bucket[data-bucket=${key}] ul` }; break;
     case 'ov-needs': spec = { kind: 'text', label: 'Sessions that need you', text: sessLines(state.snapshot.active.filter(s => needsYou(s) || recentErr(s))), what: 'what needs you' }; ring = { type: 'sel', sel: '[data-ov=needs]' }; break;
@@ -3095,7 +3163,7 @@ function setTab(name) {
   state.tab = name; prefs.tab = name; savePrefs();
   document.querySelectorAll('.tab-b').forEach(b => { b.classList.toggle('active', b.dataset.tab === name); b.setAttribute('aria-selected', String(b.dataset.tab === name)); });
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === `tab-${name}`));
-  if (name === 'events') renderRows();
+  if (name === 'events') { renderRows(); paintFlight(); }
   if (name === 'files' && state.selected) loadFiles();
   if (name === 'changes' && state.selected) { loadChanges(); renderTurns(); }
   if (name === 'shell') $('sh-cmd').focus();

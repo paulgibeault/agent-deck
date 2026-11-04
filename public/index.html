@@ -114,6 +114,8 @@
   <!-- Roadmap glyphs, placeholders until their features land. Star is i-star, worktree is i-worktree. -->
   <symbol id="i-home" viewBox="0 0 16 16"><path d="M2.5 7.6 8 3l5.5 4.6M4 6.6V13h8V6.6M6.8 13v-3.2h2.4V13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-sessions" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M5.75 2.75v10.5M8.25 6h3.5M8.25 9h3.5"/></g></symbol>
+  <!-- The flight recorder (flightrec.js): a run of chips under a rising line. -->
+  <symbol id="i-flight" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 11.5 5 8l3 2 6.5-6" stroke-width="1.5"/><path d="M2 14.5h2.5M6 14.5h1.5M9 14.5h4.5" stroke-width="1.8"/></g></symbol>
   <symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.5 14V2.5M3.5 3h8.75l-2 3 2 3H3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-git" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.75 14.25 8 8 14.25 1.75 8z"/><path d="M6 6l2 2 2-2M8 8v2.5"/></g></symbol>
   <symbol id="i-vault" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="10" rx="1.5"/><circle cx="8" cy="7.5" r="2.25"/><path d="M8 5.25v1M4 12.5v1.25M12 12.5v1.25"/></g></symbol>
@@ -206,9 +208,14 @@
 
       <section id="tab-events" class="tab active">
         <div class="toolbar">
-          <label class="search grow"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Filter events</span><input id="ev-filter" type="search" placeholder="Filter by text, tool or path" spellcheck="false"></label>
+          <div id="flight" class="flight" hidden></div>
+          <span class="spacer"></span>
           <button id="kind-btn" type="button" class="kind-btn" popovertarget="kind-pop" aria-haspopup="menu"><span id="kind-ico" class="kind-ico"></span><svg class="chev" width="9" height="9" aria-hidden="true"><use href="#i-down"/></svg><span id="err-count" class="kb-err"></span></button>
-          <div id="kind-pop" class="kind-pop" popover role="menu" aria-label="Show events"></div>
+          <!-- The filter: text and kinds, behind the one icon. -->
+          <div id="kind-pop" class="kind-pop" popover aria-label="Filter events">
+            <label class="search kp-search"><svg width="13" height="13" aria-hidden="true"><use href="#i-search"/><title>Search</title></svg><span class="sr">Filter events</span><input id="ev-filter" type="search" placeholder="Text, tool or path" spellcheck="false" autocomplete="off"></label>
+            <div id="kind-list" class="kind-list" role="menu" aria-label="Show events"></div>
+          </div>
           <button id="follow" type="button" class="live" aria-pressed="true"><span class="ldot"></span>Live</button>
           <button type="button" class="ask-ico lg" data-ask-list="events" aria-label="Ask about these events" title="Ask about these events"><svg width="13" height="13"><use href="#i-star"/></svg></button>
         </div>
