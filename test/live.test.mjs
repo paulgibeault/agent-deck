@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { ClaudeDriver } from '../lib/harness/claude.mjs';
 import { Live, hookEvent, liveView } from '../lib/live.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
-import { liveLine, tail } from '../public/livestrip.js';
+import { liveLine, tail, nextRow, clean } from '../public/livestrip.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-agent.mjs');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'deck-live-'));
@@ -123,4 +123,37 @@ test('liveLine: what the strip shows for each state', () => {
   assert.equal(tool.mono, true);
   assert.equal(tail('x'.repeat(300)).length, 161);
   assert.equal(liveView({ id: 's', msg: null, status: 'requesting', thinking: null, at: 1 }).blocks.length, 0);
+});
+
+test('nextRow: whole rows, held still until the next one is complete', () => {
+  const fit = () => 12;                       // twelve characters a row
+  const st = { key: null, start: 0, shown: null };
+  const step = (text) => nextRow(st, { key: 'k', chars: text.length, body: text }, fit);
+  // Before the first row fills, it fills in place.
+  assert.deepEqual(step('hello'), { text: 'hello', fresh: false });
+  // Past the first row: it shows whole, ending on a word.
+  assert.deepEqual(step('hello there friend'), { text: 'hello there', fresh: true });
+  // More text, but the row being written isn't complete: the shown row holds.
+  assert.deepEqual(step('hello there friend of'), { text: 'hello there', fresh: false });
+  // Several rows completed at once: only the newest complete one shows.
+  const r = step('hello there friend of mine, more words follow here');
+  assert.equal(r.fresh, true);
+  assert.ok(!/here$/.test(r.text) && r.text.length <= 12);
+  // A new block starts over.
+  assert.deepEqual(nextRow(st, { key: 'k2', chars: 3, body: 'new' }, fit), { text: 'new', fresh: false });
+});
+
+test('nextRow: carries on from the tail when it fell behind', () => {
+  const st = { key: 'k', start: 0, shown: 'x' };
+  const body = '…' + 'abcdefghij'.repeat(3);   // the last 30 of 1000 characters
+  const r = nextRow(st, { key: 'k', chars: 1000, body }, () => 10);
+  assert.equal(r.fresh, true);
+  assert.equal(r.text.length, 10);
+  assert.equal(st.start, 990);
+  assert.equal(nextRow(st, { key: 'k', chars: 0, body: '' }, () => 10), null);
+});
+
+test('clean: a tool call reads as text', () => {
+  assert.equal(clean('{"command": "a\\nb \\"c\\""}', true), '{"command": "a b "c""}');
+  assert.equal(clean('  two\n lines ', false), 'two lines');
 });
