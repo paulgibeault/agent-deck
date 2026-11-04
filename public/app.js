@@ -1748,6 +1748,16 @@ function renderBriefBox(id, s, b) {
 
   const box = h('section', { id: 'brief-box', class: `brief${prefs.briefCollapsed ? ' collapsed' : ''}${landed ? ' landed' : ''}${i ? ' earlier' : ''}`, 'aria-labelledby': 'brief-h' });
   const head = h('div', { class: 'brief-h' }, h('h2', { id: 'brief-h' }, i ? 'Earlier brief' : 'Brief'), h('span', { class: 'spacer' }));
+  const working = !i && phaseOf(s) === 'working';
+  const lists = fromTasks ? taskLists(tasks)
+    : cur ? briefLists(cur, working).map(([label, items], k) => [label, items.map((x, j) => ({ text: x, seq: k === 0 ? cur.doneSeq?.[j] ?? null : null }))]) : [];
+  // Collapsed, the columns become their counts in the header; a click opens them.
+  if (prefs.briefCollapsed && lists.some(([, items]) => items.length)) {
+    const MINI = [['done', '✓'], ['doing', '●'], ['todo', '○']];
+    head.insertBefore(h('button', { type: 'button', class: 'dnn-mini', title: `${lists.map(([l, items]) => `${items.length} ${l.toLowerCase()}`).join(' · ')} · click to expand`,
+      onclick: () => { prefs.briefCollapsed = false; savePrefs(); renderHeader(); } },
+      ...lists.map(([, items], k) => h('span', { class: `dm-${MINI[k][0]}` }, MINI[k][1], ` ${items.length}`))), head.querySelector('.spacer'));
+  }
   if (all.length > 1) {
     const go = (j) => { state.briefAt = j ? { id, at: all[j].updatedAt } : null; renderHeader(); };
     head.append(h('span', { class: 'bhist' },
@@ -1779,9 +1789,6 @@ function renderBriefBox(id, s, b) {
   // seq, when known, is the event that shows them (a task's last update, a
   // completed item's commit or PR). New marks what you have not seen: since
   // you last looked at this session, else since the previous brief.
-  const working = !i && phaseOf(s) === 'working';
-  const lists = fromTasks ? taskLists(tasks)
-    : cur ? briefLists(cur, working).map(([label, items], k) => [label, items.map((x, j) => ({ text: x, seq: k === 0 ? cur.doneSeq?.[j] ?? null : null }))]) : [];
   const seen = !i ? seenItems(id) : null;
   const was = new Map(prev && !fromTasks ? briefLists(prev).map(([label, items]) => [label, new Set(items)]) : []);
   const isNew = (label, x) => seen ? !seen.has(itemKey(label, x)) : !fromTasks && !!prev && !was.get(label)?.has(x);
