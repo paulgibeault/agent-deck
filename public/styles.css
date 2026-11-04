@@ -1513,10 +1513,11 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ev-live .lv-body { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ev-live .lv-body.mono { font-family: var(--mono); }
 .ev-live .lv-count { flex: none; font-variant-numeric: tabular-nums; }
-/* A new row arrives whole: a short fade-in, then it holds still (livestrip.js nextRow). */
-.ev-live .lv-body.lv-new { animation: lv-row .32s ease-out; }
-@keyframes lv-row { from { opacity: .15; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .ev-live .lv-ico, .ev-live .lv-body.lv-new { animation: none; } }
+/* Rows arrive whole and pulse: the old one fades out, the next fades in, then it holds still (livestrip.js createPacer). */
+.ev-live .lv-body { transition: opacity .3s ease-out; }
+.ev-live .lv-body.lv-out { opacity: 0; transition: opacity .18s ease-in; }
+.ev-live .lv-head[hidden], .ev-live .lv-count[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .ev-live .lv-ico { animation: none; } .ev-live .lv-body, .ev-live .lv-body.lv-out { transition: none; } }
 .ws-dock .wd-s ul:not(.wd-ss) { gap: 6px; }
 .ws-dock .wd-s ul:not(.wd-ss) li { padding-left: 8px; border-left: 2px solid var(--line2); }
 

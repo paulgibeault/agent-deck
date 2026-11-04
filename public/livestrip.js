@@ -93,6 +93,42 @@ export function nextRow(st, line, fit) {
   return { text: avail.slice(st.start - from), fresh: false };
 }
 
+/**
+ * Paces the rows: each one stays at least `hold` ms, then fades out (`out`
+ * ms), the newest waiting row is set, and it fades in. Rows that complete
+ * while one is showing replace each other in the wait, so the strip never
+ * falls behind and never flickers. A row still filling in (fresh: false)
+ * is written in place when nothing is waiting.
+ *   io: { set(text), fadeOut(), fadeIn(), now(), later(fn, ms) → cancel }
+ */
+export function createPacer(io, { hold = 1000, out = 180 } = {}) {
+  let shown = null, pending = null, fading = false, last = -Infinity, cancel = null;
+  function swap() {
+    cancel = null; fading = true; io.fadeOut();
+    cancel = io.later(() => {
+      cancel = null; fading = false;
+      shown = pending; pending = null; last = io.now();
+      io.set(shown); io.fadeIn();
+    }, out);
+  }
+  function schedule(now = false) {
+    if (cancel || fading) return;
+    cancel = io.later(swap, now ? 0 : Math.max(0, last + hold - io.now()));
+  }
+  return {
+    /** A row to show. `fresh`: a completed row (or a new block); `now`: skip the hold. */
+    show(text, { fresh = false, now = false } = {}) {
+      if (text === (pending ?? shown)) return;
+      if (!fresh && pending == null && !fading && !cancel) { shown = text; io.set(text); return; }
+      pending = text;
+      if (now && cancel && !fading) { cancel(); cancel = null; }
+      schedule(now);
+    },
+    reset() { cancel?.(); cancel = null; shown = pending = null; fading = false; last = -Infinity; },
+    get shown() { return shown; },
+  };
+}
+
 /** el: the strip's element; selected(): the session the Events list shows. */
 export function createLiveStrip(el, selected) {
   const views = new Map();   // session id -> latest live view
@@ -112,24 +148,39 @@ export function createLiveStrip(el, selected) {
       return lo;
     };
   }
+  // The line's parts are made once and kept: an update changes their text,
+  // so a fade in progress is never cut short by the next update.
+  const ico = h('span', { class: 'lv-ico', role: 'img' });
+  const head = h('span', { class: 'lv-head' });
+  const body = h('span', { class: 'lv-body' });
+  const count = h('span', { class: 'lv-count' });
+  let built = false, icon = null, mono = false;
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const pacer = createPacer({
+    set: (t) => { body.textContent = clean(t, mono); },
+    fadeOut: () => body.classList.add('lv-out'),
+    fadeIn: () => body.classList.remove('lv-out'),
+    now: () => performance.now(),
+    later: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
+  }, { out: 180 });
   function render() {
     const id = selected();
     const line = liveLine(views.get(id));
     el.hidden = !line;
-    if (!line) { el.replaceChildren(); row.key = null; return; }
+    if (!line) { el.replaceChildren(); built = false; row.key = null; pacer.reset(); body.textContent = ''; body.classList.remove('lv-out'); return; }
+    if (!built) { el.replaceChildren(ico, head, body, count); built = true; }
     const tip = line.count ? `${line.label} · ${line.count}` : line.label;
-    const body = h('span', { class: `lv-body${line.mono ? ' mono' : ''}` });
-    // replaceChildren() would print a null as the text "null": leave the missing parts out.
-    el.replaceChildren(...[
-      h('span', { class: 'lv-ico', role: 'img', 'aria-label': tip, title: tip }, glyph(line.icon)),
-      line.head ? h('span', { class: 'lv-head' }, line.head) : null,
-      body,
-      line.count ? h('span', { class: 'lv-count' }, line.count) : null,
-    ].filter(Boolean));
-    const r = nextRow(row, { ...line, key: `${id}|${line.key}` }, fitter(body, line.mono));
-    if (!r) return;
-    body.textContent = clean(r.text, line.mono);
-    if (r.fresh) body.classList.add('lv-new');
+    if (icon !== line.icon) { ico.replaceChildren(glyph(line.icon)); icon = line.icon; }
+    ico.setAttribute('aria-label', tip); ico.title = tip;
+    head.textContent = line.head || ''; head.hidden = !line.head;
+    count.textContent = line.count || ''; count.hidden = !line.count;
+    mono = !!line.mono; body.classList.toggle('mono', mono);
+    const key = `${id}|${line.key}`;
+    const block = key !== row.key;
+    const r = nextRow(row, { ...line, key }, fitter(body, mono));
+    if (!r) { if (block) pacer.show('', { fresh: true, now: true }); return; }
+    // A new block fades in straight away; a completed row waits its turn; a filling row writes in place.
+    pacer.show(r.text, { fresh: r.fresh || (block && pacer.shown != null), now: block || still() });
   }
   return {
     /** One `live` SSE message. */
