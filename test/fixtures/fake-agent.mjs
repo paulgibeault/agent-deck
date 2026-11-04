@@ -7,7 +7,9 @@
 // Prompt words steer it: "permission" asks to run a Bash command first,
 // "slow" works for 60s (interruptible), "crash" exits with an error, "fail"
 // ends the turn on a failed tool call, "background agent" starts a subagent
-// (task afake0001) that runs until stop_task stops it.
+// (task afake0001) that runs until stop_task stops it, "stream" writes the
+// reply as partial messages (with --include-partial-messages) and runs a hook
+// (with --include-hook-events).
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -107,6 +109,24 @@ async function turn(content) {
     tasks.add('afake0001');
     out({ type: 'system', subtype: 'task_started', task_id: 'afake0001', task_type: 'local_agent', description: 'Fake helper', is_backgrounded: true });
     out({ type: 'system', subtype: 'task_progress', task_id: 'afake0001', description: 'Running Fake step' });
+  }
+  if (/stream/.test(text)) {
+    const ev = (event) => out({ type: 'stream_event', event, session_id: id, parent_tool_use_id: null });
+    if (args.includes('--include-hook-events')) {
+      out({ type: 'system', subtype: 'hook_started', hook_id: 'hk1', hook_name: 'PostToolUse:Bash', hook_event: 'PostToolUse', session_id: id });
+      out({ type: 'system', subtype: 'hook_response', hook_id: 'hk1', hook_name: 'PostToolUse:Bash', hook_event: 'PostToolUse', output: 'lint ok\n', stdout: 'lint ok\n', stderr: '', exit_code: 0, outcome: 'success', session_id: id });
+    }
+    if (args.includes('--include-partial-messages')) {
+      out({ type: 'system', subtype: 'status', status: 'requesting', session_id: id });
+      ev({ type: 'message_start', message: { id: 'msg_stream', model } });
+      ev({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+      ev({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '', estimated_tokens: 42 } });
+      ev({ type: 'content_block_stop', index: 0 });
+      ev({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+      for (const w of ['Streaming ', 'a ', 'reply.']) { ev({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: w } }); await sleep(20); }
+      ev({ type: 'content_block_stop', index: 1 });
+      ev({ type: 'message_stop' });
+    }
   }
   let interrupted = false;
   if (/slow/.test(text)) {

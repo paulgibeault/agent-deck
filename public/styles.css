@@ -1158,7 +1158,7 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .fgit.g-M { color: var(--turn-fg); } .fgit.g-A, .fgit.g-U { color: var(--ok-fg); } .fgit.g-D { color: var(--err-fg); } .fgit.g-R { color: var(--info-fg); }
 .frow.res { padding-left: 8px; }
 .frow.res mark { background: none; color: var(--info-fg); font-weight: 600; }
-.frow.res .fdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); direction: rtl; text-align: left; }
+.frow.res .fdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); }
 /* File-kind glyphs. */
 .fi { flex: none; display: inline-flex; color: var(--muted); }
 .fk-dir { color: var(--fg2); }
@@ -1275,7 +1275,7 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ct-file .fi { flex: none; display: inline-flex; }
 .ct-name { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ct-file.shell .ct-name { font-weight: 400; color: var(--fg2); font-style: italic; }
-.ct-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; direction: rtl; text-align: left; }
+.ct-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; }
 .ct-new { font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--ok-fg); }
 .ct-x { font: 11px var(--mono); color: var(--muted); }
 .ct-del { font: 600 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--err-fg); }
@@ -1478,3 +1478,13 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ws-dragging .home .hm-card:not(.hm-new):not(.drop-on) { outline: 1px dashed var(--line2); outline-offset: 2px; }
 .home [draggable="true"] { -webkit-user-drag: element; }
 .hm-un-l li[draggable="true"], .hm-row[draggable="true"] { cursor: grab; }
+
+/* The live strip (public/livestrip.js): one line above the Events list while a message is being written. */
+.ev-live { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 3px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; overflow: hidden; }
+.ev-live[hidden] { display: none; }
+.ev-live .lv-ico { display: inline-flex; flex: none; color: var(--ok-fg); animation: pulse 1.6s ease-in-out infinite; }
+.ev-live .lv-head { flex: none; font-weight: 600; color: var(--fg); }
+.ev-live .lv-body { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-live .lv-body.mono { font-family: var(--mono); }
+.ev-live .lv-count { flex: none; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .ev-live .lv-ico { animation: none; } }

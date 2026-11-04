@@ -292,12 +292,20 @@ voices then appear under Voice. More in Microsoft's
 - **New session.** Pick a folder, write the first prompt, choose a model and
   a permission mode (ask me, accept edits, auto, plan only). The deck runs
   `claude -p --input-format stream-json --output-format stream-json
-  --permission-prompt-tool stdio`, and the session shows up like any other.
+  --permission-prompt-tool stdio --include-partial-messages
+  --include-hook-events`, and the session shows up like any other.
   There is no starting or stopping a session yourself: send a prompt to
   any session that is not running (the deck's or not) and the deck resumes
   it (`--resume <id>`) with that prompt, on the title bar's model and the
   permission mode it last ran with. A deck process idle for 30 minutes ends
   by itself; the next prompt starts it again.
+- **Live strip and hook runs** (sessions the deck launched). While a
+  message is being written, a line above Events shows its newest words, the
+  tool call being filled in, the thinking-token count, or that the CLI is
+  waiting on the model or compacting; it goes once the message ends and the
+  transcript takes over. Each hook run (its output, exit code and time) is a
+  Hook row in Events: no transcript holds those, so the deck keeps them in
+  `~/.agent-deck/side/<session>.jsonl`.
 - **Status.** The line just above the prompt box says whose move it is: **CLAUDE**
   (thinking, writing, running a tool, waiting on subagents, with a clock) or
   **YOU** (your turn, Claude asked you a question, or a permission prompt).
@@ -484,6 +492,7 @@ lib/daily.mjs         today's tokens and cost per backend, read incrementally
 lib/shell.mjs         pilot shell runner
 lib/agent.mjs         deck-launched sessions: queue, wake, idle stop, permissions
 lib/harness/claude.mjs  driver: `claude -p` stream-json
+lib/live.mjs          live strip (partial messages, status) and hook runs, kept in side files
 lib/harness/acp.mjs   driver: any ACP agent (opencode), one process for all sessions
 lib/harnesses.mjs     harnesses.json -> drivers
 lib/acp.mjs           ACP client: JSON-RPC 2.0 over stdio

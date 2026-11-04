@@ -24,6 +24,7 @@ import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
 import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
 import { wrappedFilter } from './wrapup.js';
+import { createLiveStrip } from './livestrip.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -169,6 +170,8 @@ function connect() {
   es.addEventListener('stars.changed', (e) => applyStarsChanged(JSON.parse(e.data)));
   es.addEventListener('workstreams.changed', (e) => workstreamsChanged(JSON.parse(e.data)));
   es.addEventListener('worktrees.setup', (e) => onWorktreeSetup(JSON.parse(e.data)));
+  es.addEventListener('live', (e) => liveStrip.update(JSON.parse(e.data)));
+  es.addEventListener('hello', () => api.get('/api/live').then(l => liveStrip.reset(l)).catch(() => {}));
   es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
   es.addEventListener('workstreams.changed', homeWorkstreamsChanged);
   es.addEventListener('hello', homeWorkstreamsChanged);
@@ -1303,7 +1306,7 @@ async function select(id) {
   renderTree();
   reportView();
   renderHeader();
-  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); }
+  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); liveStrip.render(); }
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
@@ -2652,6 +2655,7 @@ function buildRows() {
   if ($('kind-pop').matches(':popover-open')) renderKindPop();
 }
 const vlist = $('vlist'), vspacer = $('vspacer'), vrows = $('vrows');
+const liveStrip = createLiveStrip($('ev-live'), () => state.selected);
 function rowIndexAt(y) {
   const o = state.offsets; let lo = 0, hi = o.length - 1, ans = 0;
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (o[mid] <= y) { ans = mid; lo = mid + 1; } else hi = mid - 1; }

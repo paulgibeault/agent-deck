@@ -41,6 +41,7 @@ const SHELL = [
   '/wtpick.js',
   '/wrapup.js',
   '/wrapup.css',
+  '/livestrip.js',
   '/styles.css',
   '/manifest.webmanifest',
   '/vendor/highlight.min.js',
