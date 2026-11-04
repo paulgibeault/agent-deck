@@ -1281,9 +1281,10 @@ initHome({
   sigOf,
   briefOf: (id) => state.briefs.get(id)?.brief || null,
   backend: (s) => backendGlyph(sessionHarness(s)),
-  open: (id, eventId = null) => {
+  // An event by id (a record's source), or by seq (a brief note's link).
+  open: (id, eventId = null, seq = null) => {
     if (!state.byId.has(id)) { toast('That session is no longer listed'); return; }
-    select(id).then(() => { const ev = eventId && findEvent(id, eventId); if (ev) jumpToSeq(ev.seq); });
+    select(id).then(() => { const at = (eventId && findEvent(id, eventId))?.seq ?? seq; if (at != null) jumpToSeq(at); });
   },
   back: () => state.selected ? select(state.selected) : goOverview(),
   toast,
