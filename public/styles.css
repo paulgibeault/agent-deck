@@ -200,7 +200,28 @@ svg { flex: none; }
 .conn.restarting .cdot { background: var(--turn); animation: pulse 1s ease-in-out infinite; }
 .rail-search { padding: 0 12px 10px; }
 
-.tree { flex: 1; overflow: auto; padding: 0 6px 8px; }
+.tree { flex: 1 1 auto; min-height: 120px; overflow: auto; padding: 0 6px 8px; }
+/* The selected session's workstream fills the rail's spare room; a long session list squeezes it to its minimum. */
+.tree:has(+ .ws-dock:not([hidden])) { flex: 0 1 auto; }
+.ws-dock { flex: 1 1 180px; min-height: 140px; overflow: auto; display: flex; flex-direction: column; gap: 12px; margin: 0 8px 8px; padding: 10px 10px 12px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); font-size: 12px; color: var(--fg2); }
+.ws-dock[hidden] { display: none; }
+#deck.rail-min .ws-dock { display: none; }
+.ws-dock .wd-h { display: flex; align-items: center; gap: 7px; border: 0; background: none; padding: 0; text-align: left; font-size: 12.5px; font-weight: 600; color: var(--fg); cursor: pointer; }
+.ws-dock .wd-h:hover span { text-decoration: underline; }
+.ws-dock .wd-h svg { color: var(--info-fg); flex: none; }
+.ws-dock .wd-st { margin-left: auto; font-size: 10.5px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.ws-dock .wd-next { display: flex; gap: 6px; margin: 0; line-height: 1.45; color: var(--fg); }
+.ws-dock .wd-next svg { flex: none; margin-top: 3px; color: var(--ok-fg); }
+.ws-dock .wd-s h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 5px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ws-dock ul, .ws-dock ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ws-dock li { line-height: 1.4; }
+.ws-dock ol li { display: flex; gap: 6px; }
+.ws-dock .wd-n { flex: none; font: 10.5px var(--mono); color: var(--muted); padding-top: 1px; }
+.ws-dock .wd-more { margin: 4px 0 0; font-size: 11px; color: var(--muted); }
+.ws-dock .wd-ss button { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; padding: 2px 0; text-align: left; font-size: 12px; color: var(--fg2); cursor: pointer; min-width: 0; }
+.ws-dock .wd-ss button span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ws-dock .wd-ss button:hover { color: var(--fg); }
+.ws-dock .wd-links { display: flex; flex-wrap: wrap; gap: 4px; }
 .bucket h3 { display: flex; align-items: center; gap: 6px; margin: 0; padding: 10px 6px 4px 4px; }
 .bk-t { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 2px 4px; font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .bk-t .tri { transition: transform .12s; }
@@ -419,7 +440,7 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .tone-done { background: var(--info); } .tone-active { background: var(--ok); } .tone-working { background: color-mix(in srgb, var(--ok) 45%, var(--bg2)); }
 .tone-todo { background: var(--line2); } .tone-failed { background: var(--err); }
 /* Completed · In progress · To do: three columns, stacked only when the pane is narrow. */
-.dnn { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.dnn { display: grid; grid-template-columns: var(--dnn-cols, repeat(3, minmax(0, 1fr))); gap: 8px; }
 @container (max-width: 480px) { .dnn { grid-template-columns: minmax(0, 1fr); } .dnn-p.empty { display: none; } }
 .dnn-p { --c: var(--line2); display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px 10px 10px; border-radius: 8px; background: var(--bg1); border: 1px solid var(--line); border-top: 2px solid var(--c); }
 .dnn-done { --c: var(--info); } .dnn-doing { --c: var(--ok); } .dnn-todo { --c: var(--line2); }
@@ -460,9 +481,8 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .bnote .bn-acts { flex: none; display: inline-flex; align-items: center; gap: 0; margin: -3px -4px -3px 0; color: var(--fg2); opacity: .75; }
 .bnote .bn-acts .ib { color: inherit; }
 .bnote:hover .bn-acts, .bnote:focus-within .bn-acts { opacity: 1; }
-.bnotes .bn-gone { display: flex; justify-content: flex-end; }
-.bnotes .bn-gone button { border: 0; background: none; padding: 0 2px; font-size: 11px; color: var(--muted); cursor: pointer; }
-.bnotes .bn-gone button:hover { color: var(--fg2); text-decoration: underline; }
+.brief-h .bn-gone { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 2px 4px; border-radius: 6px; font-size: 11px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
+.brief-h .bn-gone:hover { color: var(--fg2); background: var(--bg1); }
 .brief.collapsed .prog, .brief.collapsed .dnn { display: none; }
 .brief-h .bhist { display: inline-flex; align-items: center; gap: 2px; }
 .brief-h .bhist .icon-btn { font-size: 15px; line-height: 1; }
@@ -1491,3 +1511,5 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ev-live .lv-body.mono { font-family: var(--mono); }
 .ev-live .lv-count { flex: none; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .ev-live .lv-ico { animation: none; } }
+.ws-dock .wd-s ul:not(.wd-ss) { gap: 6px; }
+.ws-dock .wd-s ul:not(.wd-ss) li { padding-left: 8px; border-left: 2px solid var(--line2); }
