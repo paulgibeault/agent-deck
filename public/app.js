@@ -629,14 +629,20 @@ function narrateBrief(b) {
  * status line is the truth about now.
  */
 function briefLists(b, working = true) {
-  return [['Completed', b.done || []], ['In progress', working ? b.doing || [] : []], ['Planned', b.planned || []]];
+  return [['Completed', b.done || []], ['In progress', working ? b.doing || [] : []], ['To do', b.planned || []]];
 }
+// The brief's notes, most urgent first. A brief from before notes has one `watch`.
+const NOTE_KIND = {
+  failure: { icon: 'i-x', label: 'Failure' }, risk: { icon: 'i-alert', label: 'Risk' },
+  question: { icon: 'i-q', label: 'Open question' }, decision: { icon: 'i-flag', label: 'Decision' },
+};
+function notesOf(b) { return b?.notes || (b?.watch ? [{ kind: 'risk', ...b.watch }] : []); }
 function briefMarkdown(id) {
   const cur = state.briefs.get(id)?.brief;
   if (!cur) { const last = state.cache.get(id)?.brief?.lastText; return last ? `Last said: ${last}` : ''; }
   const parts = [cur.summary || ''];
   for (const [label, items] of briefLists(cur)) if (items.length) parts.push(`**${label}**`, items.map(x => `- ${x}`).join('\n'));
-  if (cur.watch?.text) parts.push(`**Watch:** ${cur.watch.text}`);
+  for (const n of notesOf(cur)) parts.push(`**${NOTE_KIND[n.kind]?.label || 'Note'}:** ${n.text}`);
   return parts.filter(Boolean).join('\n\n');
 }
 function readBrief(id) { const md = briefMarkdown(id); if (md) narration.read({ sessionId: id, kind: 'brief', markdown: md }); }
@@ -1054,7 +1060,7 @@ function cardBody(s) {
   const sum = pb?.brief?.summary;
   if (sum) rows.push(h('p', { class: 'hc-sum' }, oneLine(sum, 360)));
   else if (g.lastText && !g.asked) rows.push(h('p', { class: 'hc-sum muted' }, 'Last said · ', oneLine(g.lastText, 240)));
-  if (pb?.brief?.watch) rows.push(h('div', { class: 'hc-watch' }, h('b', {}, 'WATCH '), oneLine(pb.brief.watch.text, 200)));
+  for (const n of notesOf(pb?.brief).slice(0, 2)) rows.push(h('div', { class: `hc-watch nk-${n.kind}` }, svgUse(NOTE_KIND[n.kind]?.icon || 'i-alert', 11, NOTE_KIND[n.kind]?.label), ' ', oneLine(n.text, 200)));
   if (pb?.brief?.progress) {
     const p = pb.brief.progress;
     rows.push(h('div', { class: 'hc-prog' }, h('span', {}, `${p.total} ${p.unit}: ` + p.segments.map(x => `${x.count} ${x.label}`).join(', ')),
@@ -1677,21 +1683,36 @@ function renderBriefBox(id, s, b) {
     }
     box.append(h('div', { class: 'prog' }, legend, bar));
   }
-  // Completed · In progress · Planned. Items this brief added over the one
-  // before it are marked, so a refresh reads as a change rather than a rewrite.
-  const lists = cur ? briefLists(cur, !i && phaseOf(s) === 'working') : [];
+  // Completed · In progress · To do, side by side. Items this brief added
+  // over the one before it are marked, so a refresh reads as a change rather
+  // than a rewrite.
+  const working = !i && phaseOf(s) === 'working';
+  const lists = cur ? briefLists(cur, working) : [];
   if (lists.some(([, items]) => items.length)) {
     // New in this list since the previous brief: an item that moved from In progress to Completed counts.
     const was = new Map(prev ? briefLists(prev).map(([label, items]) => [label, new Set(items)]) : []);
     const isNew = (label, x) => prev && !was.get(label)?.has(x);
-    box.append(h('div', { class: 'dnn' }, ...lists.map(([label, items]) => h('div', { class: `dnn-p${items.length ? '' : ' empty'}` }, h('h3', {}, label),
-      items.length ? h('ul', {}, ...items.map(x => h('li', { class: isNew(label, x) ? 'new' : null, title: isNew(label, x) ? 'New since the previous brief' : null }, x)))
-        : h('p', { class: 'muted' }, '—')))));
+    const COL = { 'Completed': ['done', 'Nothing yet'], 'In progress': ['doing', working ? 'Between steps' : 'Idle'], 'To do': ['todo', 'Nothing queued'] };
+    box.append(h('div', { class: 'dnn' }, ...lists.map(([label, items]) => {
+      const [k, none] = COL[label];
+      return h('div', { class: `dnn-p dnn-${k}${items.length ? '' : ' empty'}`, role: 'group', 'aria-label': label },
+        h('h3', {}, h('span', { class: 'dnn-t' }, label), items.length ? h('span', { class: 'dnn-n' }, String(items.length)) : null),
+        items.length ? h('ul', {}, ...items.map(x => h('li', { class: isNew(label, x) ? 'new' : null, title: isNew(label, x) ? 'New since the previous brief' : null }, x)))
+          : h('p', { class: 'dnn-none' }, none));
+    })));
   }
-  if (cur?.watch) {
-    const w = h('div', { class: 'watch' }, h('span', { class: 'wk' }, 'WATCH'), h('span', { class: 'wt' }, cur.watch.text));
-    if (cur.watch.seq) w.append(h('button', { type: 'button', onclick: () => jumpToSeq(cur.watch.seq) }, 'Jump to event'));
-    box.append(w);
+  // Notes: what may need you, most urgent first, each linked to its event.
+  // Shown even when the brief is collapsed.
+  const notes = notesOf(cur);
+  if (notes.length) {
+    const evs = state.cache.get(id)?.events || [];
+    box.append(h('ul', { class: 'bnotes', 'aria-label': 'Notes' }, ...notes.map(n => {
+      const k = NOTE_KIND[n.kind] || NOTE_KIND.risk;
+      const ev = n.seq ? evs.find(e => e.seq === n.seq) : null;
+      const link = !n.seq ? null : h('button', { type: 'button', class: 'bn-go', title: ev ? `Open event #${n.seq}: ${tagFor(ev).label}` : `Open event #${n.seq}`, onclick: () => jumpToSeq(n.seq) },
+        `#${n.seq}`, ev?.ts ? h('span', { class: 'bn-ago' }, fmtTime(ev.ts)) : null, svgUse('i-right', 11));
+      return h('li', { class: `bnote nk-${n.kind}` }, h('span', { class: 'bn-k', title: k.label }, svgUse(k.icon, 13, k.label)), h('span', { class: 'bn-t' }, n.text), link);
+    })));
   }
   box.append(foot);
   briefBoxCache = { key, el: box, id, at: pb?.updatedAt || 0 };

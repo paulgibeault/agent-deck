@@ -320,7 +320,9 @@ svg { flex: none; }
 .hc-t.mono { font: 11.5px var(--mono); }
 .hc-sum { margin: 0; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
 .hc-watch { padding: 5px 8px; border-radius: 6px; font-size: 12px; background: color-mix(in srgb, var(--turn) 9%, var(--bg1)); }
-.hc-watch b { font-size: 10px; letter-spacing: .06em; color: var(--turn-fg); }
+.hc-watch svg { vertical-align: -1px; color: var(--turn-fg); }
+.hc-watch.nk-failure { background: color-mix(in srgb, var(--err) 9%, var(--bg1)); } .hc-watch.nk-failure svg { color: var(--err-fg); }
+.hc-watch.nk-risk svg { color: var(--need-fg); } .hc-watch.nk-decision { background: color-mix(in srgb, var(--info) 8%, var(--bg1)); } .hc-watch.nk-decision svg { color: var(--info-fg); }
 .hc-prog { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
 .hc-subs, .hc-q { font-size: 12px; color: var(--fg2); }
 .hc-subs ul { margin: 3px 0 0; padding-left: 16px; color: var(--muted); }
@@ -416,25 +418,39 @@ button.sh-ws:hover { background: var(--hover); color: var(--fg); }
 .prog-b span { height: 6px; border-radius: 3px; min-width: 4px; }
 .tone-done { background: var(--info); } .tone-active { background: var(--ok); } .tone-working { background: color-mix(in srgb, var(--ok) 45%, var(--bg2)); }
 .tone-todo { background: var(--line2); } .tone-failed { background: var(--err); }
-/* Completed · In progress · Planned; stacked when the pane is narrow. */
-.dnn { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
-/* Stacked, an empty list says nothing, so it goes. */
-@container (max-width: 560px) { .dnn { grid-template-columns: minmax(0, 1fr); gap: 10px; } .dnn-p.empty { display: none; } }
-.dnn h3 { margin: 0 0 5px; font-size: 11px; font-weight: 500; color: var(--muted); }
-.dnn ul { margin: 0; padding: 0 0 0 14px; display: flex; flex-direction: column; gap: 3px; }
-.dnn p, .dnn li { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--fg2); }
-.watch { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.4; background: color-mix(in srgb, var(--turn) 9%, var(--bg1)); border: 1px solid color-mix(in srgb, var(--turn) 35%, var(--line)); }
-.watch .wk { flex: none; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--turn-fg); padding-top: 1px; }
-.watch .wt { flex: 1; color: var(--fg); }
-.watch button { flex: none; border: 0; background: none; padding: 0; color: var(--info-fg); font-size: 12px; }
-.brief.collapsed .prog, .brief.collapsed .dnn, .brief.collapsed .watch { display: none; }
+/* Completed · In progress · To do: three columns, stacked only when the pane is narrow. */
+.dnn { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@container (max-width: 480px) { .dnn { grid-template-columns: minmax(0, 1fr); } .dnn-p.empty { display: none; } }
+.dnn-p { --c: var(--line2); display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px 10px 10px; border-radius: 8px; background: var(--bg1); border: 1px solid var(--line); border-top: 2px solid var(--c); }
+.dnn-done { --c: var(--info); } .dnn-doing { --c: var(--ok); } .dnn-todo { --c: var(--line2); }
+.dnn-p.empty { background: transparent; }
+.dnn h3 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--fg2); }
+.dnn .dnn-n { margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: 9px; font-size: 10.5px; font-weight: 600; letter-spacing: 0; line-height: 16px; text-align: center; color: var(--muted); background: var(--bg2); font-variant-numeric: tabular-nums; }
+.dnn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dnn li { position: relative; margin: 0; padding: 1px 4px 1px 17px; border-radius: 4px; font-size: 12.5px; line-height: 1.4; color: var(--fg2); overflow-wrap: anywhere; }
+/* The marker says which column at a glance: a check, a live dot, an open ring. */
+.dnn li::before { content: ''; position: absolute; left: 3px; top: .5em; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; }
+.dnn-done li::before { top: .38em; width: 9px; height: 5px; border-radius: 0; border: solid var(--info); border-width: 0 0 2px 2px; transform: rotate(-45deg); left: 2px; }
+.dnn-doing li::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+.dnn-todo li::before { border: 1.5px solid var(--muted); }
+.dnn li.new { color: var(--fg); background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.dnn-none { margin: 0; font-size: 12px; color: var(--muted); font-style: italic; }
+/* Notes beneath the columns: what may need you, each linked to its event. */
+.bnotes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.bnote { --c: var(--turn); display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px 6px 10px; border-radius: 6px; font-size: 12.5px; line-height: 1.4;
+  background: color-mix(in srgb, var(--c) 8%, var(--bg1)); border-left: 3px solid var(--c); }
+.bnote.nk-failure { --c: var(--err); } .bnote.nk-risk { --c: var(--need); } .bnote.nk-question { --c: var(--turn); } .bnote.nk-decision { --c: var(--info); }
+.bnote .bn-k { flex: none; display: inline-flex; padding-top: 2px; color: var(--c); }
+.bnote .bn-t { flex: 1; min-width: 0; color: var(--fg); }
+.bnote .bn-go { flex: none; display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 1px 2px; color: var(--info-fg); font: 11.5px var(--mono); cursor: pointer; white-space: nowrap; }
+.bnote .bn-go:hover { text-decoration: underline; }
+.bnote .bn-ago { color: var(--muted); }
+.brief.collapsed .prog, .brief.collapsed .dnn { display: none; }
 .brief-h .bhist { display: inline-flex; align-items: center; gap: 2px; }
 .brief-h .bhist .icon-btn { font-size: 15px; line-height: 1; }
 .brief.earlier { border-style: dashed; }
 .brief.landed { animation: brief-land 1.6s ease-out; }
 @keyframes brief-land { from { border-color: var(--ok); } }
-.dnn li.new::marker { color: var(--ok); }
-.dnn li.new { color: var(--fg); }
 .brief-f { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: -2px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .brief-f .bf-l { display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
 .brief-f .bf-l b { font-weight: 500; color: var(--fg2); }

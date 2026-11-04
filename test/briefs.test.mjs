@@ -26,3 +26,20 @@ test('handoff: the brief goes in as Completed, In progress and Planned, each lab
   assert.match(text, /In progress:\n- Fixing Y/);
   assert.match(text, /Planned:\n- Ship Z/);
 });
+
+test('brief: notes are capped at 3, sorted most urgent first, with unknown kinds read as risks', () => {
+  const b = normalize({ summary: 's', notes: [
+    { kind: 'decision', text: 'Chose SQLite', seq: 2 },
+    { kind: 'question', text: 'Which port?', seq: 9 },
+    { kind: 'bogus', text: 'Force-pushed main', seq: 5 },
+    { kind: 'failure', text: 'never shown: over the cap', seq: 7 },
+    { kind: 'failure', text: ' ' },
+  ] });
+  assert.deepEqual(b.notes.map(n => `${n.kind}:${n.text}`), ['risk:Force-pushed main', 'question:Which port?', 'decision:Chose SQLite']);
+});
+
+test('brief: a note pointing at an event that does not exist keeps its text but loses its link', () => {
+  const b = normalize({ summary: 's', notes: [{ kind: 'failure', text: 'Tests fail', seq: 99 }, { kind: 'question', text: 'Ship it?', seq: 3 }] }, new Set([1, 2, 3]));
+  assert.deepEqual(b.notes, [{ kind: 'failure', text: 'Tests fail', seq: null }, { kind: 'question', text: 'Ship it?', seq: 3 }]);
+  assert.deepEqual(normalize({ summary: 's' }).notes, []);
+});
