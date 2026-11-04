@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { ClaudeDriver } from '../lib/harness/claude.mjs';
 import { Live, hookEvent, liveView } from '../lib/live.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
-import { liveLine, tail, nextRow, clean } from '../public/livestrip.js';
+import { liveLine, tail, nextRow, clean, createPacer } from '../public/livestrip.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-agent.mjs');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'deck-live-'));
@@ -156,4 +156,57 @@ test('nextRow: carries on from the tail when it fell behind', () => {
 test('clean: a tool call reads as text', () => {
   assert.equal(clean('{"command": "a\\nb \\"c\\""}', true), '{"command": "a b "c""}');
   assert.equal(clean('  two\n lines ', false), 'two lines');
+});
+
+/** A pacer on a fake clock: run(ms) moves time on and fires what is due. */
+function fakePacer(opts) {
+  let t = 0; const timers = []; const log = [];
+  const io = {
+    set: (x) => log.push(`set ${x}`), fadeOut: () => log.push('out'), fadeIn: () => log.push('in'),
+    now: () => t,
+    later: (fn, ms) => { const tm = { at: t + ms, fn, live: true }; timers.push(tm); return () => { tm.live = false; }; },
+  };
+  const run = (ms) => {
+    const end = t + ms;
+    for (;;) {
+      const due = timers.filter(x => x.live && x.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      due.live = false; t = due.at; due.fn();
+    }
+    t = end;
+  };
+  return { p: createPacer(io, opts), log, run };
+}
+
+test('createPacer: rows fade out and in, each held, newest wins', () => {
+  const { p, log, run } = fakePacer({ hold: 1000, out: 200 });
+  p.show('fill'); p.show('filling');              // the first row writes in place while it fills
+  assert.deepEqual(log, ['set fill', 'set filling']);
+  log.length = 0;
+  p.show('row one', { fresh: true });           // nothing held yet: it swaps at once
+  run(0); assert.deepEqual(log, ['out']);
+  run(200); assert.deepEqual(log, ['out', 'set row one', 'in']);
+  log.length = 0;
+  p.show('row two', { fresh: true });
+  p.show('row three', { fresh: true });         // completes during the hold: replaces row two in the wait
+  run(999); assert.deepEqual(log, []);          // row one holds for a full second
+  run(1); assert.deepEqual(log, ['out']);
+  p.show('row four', { fresh: true });          // arrives mid-fade: it is the one set
+  run(200); assert.deepEqual(log, ['out', 'set row four', 'in']);
+  assert.equal(p.shown, 'row four');
+  log.length = 0;
+  p.show('row four', { fresh: true }); run(5000); assert.deepEqual(log, []);   // no change, no pulse
+});
+
+test('createPacer: a new block skips the hold; reset drops what waits', () => {
+  const { p, log, run } = fakePacer({ hold: 1000, out: 200 });
+  p.show('a', { fresh: true }); run(200);
+  log.length = 0;
+  p.show('b', { fresh: true }); p.show('new block', { fresh: true, now: true });
+  run(0); assert.deepEqual(log, ['out']);
+  run(200); assert.deepEqual(log, ['out', 'set new block', 'in']);
+  log.length = 0;
+  p.show('c', { fresh: true }); p.reset(); run(5000);
+  assert.deepEqual(log, []);
+  p.show('after'); assert.deepEqual(log, ['set after']);
 });
