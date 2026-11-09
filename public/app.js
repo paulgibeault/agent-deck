@@ -15,6 +15,7 @@ import { headerRows, headerEditing, fitHeader } from './header.js';
 import { menuItem, menuSec, registerMenuItem, menuItems } from './menu.js';
 import { registerView, showView } from './views.js';
 import { launchOpen, launchCwdChanged, launchCollect, launchDone } from './launch.js';
+import { launchDirs, dirLabels } from './launchdirs.js';
 import './models.js';
 import './vault.js';
 import { railFilter } from './wsattach.js';
@@ -2438,6 +2439,12 @@ function openLaunch() {
   $('ns-cwds').replaceChildren(...cwds.map(c => h('option', { value: c })));
   $('ns-cwd').value = prefs.launchCwd || state.byId.get(state.selected)?.cwd || cwds[0] || '';
   delete $('ns-cwd').dataset.once;
+  cwdChosen = false;
+  // Before the sections open and cwdSent is set: nothing has to follow this one.
+  const launchWs = state.byId.get(state.selected)?.workstream || null;
+  launchSlug = launchWs?.slug || null;
+  $('ns-cwd').value = launchFolders().mine[0] || $('ns-cwd').value;
+  drawLaunchDirs();
   $('ns-name').value = '';
   modelOptions($('ns-model'));
   $('ns-model').value = prefs.launchModel || '';
@@ -2447,11 +2454,34 @@ function openLaunch() {
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
   cwdSent = $('ns-cwd').value.trim();
-  launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected, workstream: state.byId.get(state.selected)?.workstream || null });
+  launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected, workstream: launchWs, workstreamChanged: launchWorkstream });
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
 }
 $('new-btn').onclick = () => openLaunch();
+
+// The folder follows the workstream until the pilot sets one themselves, and
+// never overrides a folder another feature opened the dialog on (vault.js).
+let cwdChosen = false, launchSlug = null;
+function setLaunchCwd(dir) { $('ns-cwd').value = dir; cwdNow(); drawLaunchDirs(); }
+function launchWorkstream(ws) {
+  launchSlug = ws?.slug || null;
+  const { mine } = launchFolders();
+  if (mine[0] && !cwdChosen && !$('ns-cwd').dataset.once && $('ns-cwd').value !== mine[0]) setLaunchCwd(mine[0]);
+  else drawLaunchDirs();
+}
+function launchFolders() {
+  const { active, recent, closed } = state.snapshot;
+  return launchDirs([...active, ...recent, ...closed], launchSlug, { remembered: prefs.workstreamCwd?.[launchSlug] });
+}
+function drawLaunchDirs() {
+  const { mine, other } = launchFolders();
+  const all = [...mine, ...other], labels = dirLabels(all), cur = $('ns-cwd').value.trim().replace(/\/+$/, '');
+  $('ns-dirs').replaceChildren(...all.map((d, i) => h('button', {
+    type: 'button', class: `ns-dir${i < mine.length ? ' mine' : ''}${d === cur ? ' on' : ''}`, title: tilde(d),
+    onclick: () => { cwdChosen = true; delete $('ns-cwd').dataset.once; setLaunchCwd(d); $('ns-prompt').focus(); },
+  }, i < mine.length ? svgUse('i-workstream', 11) : null, labels[i])));
+}
 
 // ------------------------------------------------------------ all sessions
 // A searchable list of every session the deck knows, closed ones included.
@@ -2501,7 +2531,7 @@ $('ns-cancel').onclick = () => $('new-session').close();
 let cwdTimer = null, cwdSent = null;
 const cwdNow = () => { clearTimeout(cwdTimer); const v = $('ns-cwd').value.trim(); if (v !== cwdSent) { cwdSent = v; launchCwdChanged(v); } };
 $('ns-cwd').addEventListener('change', cwdNow);
-$('ns-cwd').addEventListener('input', () => { clearTimeout(cwdTimer); cwdTimer = setTimeout(cwdNow, 350); });
+$('ns-cwd').addEventListener('input', () => { cwdChosen = true; drawLaunchDirs(); clearTimeout(cwdTimer); cwdTimer = setTimeout(cwdNow, 350); });
 const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), clip: $('ns-clip'), file: $('ns-file'), drop: $('ns-form'), toast });
 $('ns-prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('ns-form').requestSubmit(); } });
 $('ns-form').addEventListener('submit', async (e) => {
@@ -2524,7 +2554,10 @@ $('ns-form').addEventListener('submit', async (e) => {
   }
   try {
     const st = await api.post('/api/launch', body);
-    if (!$('ns-cwd').dataset.once) prefs.launchCwd = chosen.cwd;   // a Vault launch (vault.js) is not the new default
+    if (!$('ns-cwd').dataset.once) {   // a Vault launch (vault.js) is not the new default
+      prefs.launchCwd = chosen.cwd;
+      if (body.workstream) (prefs.workstreamCwd ||= {})[body.workstream] = chosen.cwd;
+    }
     prefs.launchPerm = chosen.permissionMode; prefs.launchHarness = chosen.harness; savePrefs(); renderModelPicker();
     state.deck.set(st.id, st);
     launchDone(st, body);
