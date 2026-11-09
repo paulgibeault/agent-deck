@@ -33,13 +33,32 @@ export function liveLine(v) {
     const k = BLOCK[b.type] || { icon: 'i-code', label: b.type };
     if (b.type === 'thinking' || b.type === 'redacted_thinking') {
       const n = v.thinking ?? b.tokens;
-      return { ...at, icon: k.icon, label: k.label, body: b.text || '', mono: false, count: n ? `~${fmtTokens(n)} tokens` : null };
+      return { ...at, icon: k.icon, label: k.label, body: b.text || '', mono: false, count: n ? `~${fmtTokens(n)} tokens` : null, thinking: true };
     }
     if (b.type === 'tool_use' || b.type === 'server_tool_use') return { ...at, icon: k.icon, label: `${k.label} ${b.name || 'a tool'}`, body: b.text || '', mono: true, head: b.name || null };
     return { ...at, icon: k.icon, label: k.label, body: b.text || '', mono: false };
   }
   const s = STATUS[v.status];
   return s ? { icon: s.icon, label: s.label, body: '', mono: false } : null;
+}
+
+// Thinking usually sends no text, only token estimates. In a 6-minute think
+// they were never more than 1.8s apart, so 10s without one is out of the ordinary.
+export const STALL_MS = 10_000;
+const span = (ms) => { const s = Math.floor(ms / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+
+/** One update for session `id`: starts its clock on a new thinking block, marks it heard from, or drops it. */
+export function noteThinking(clocks, id, line, now) {
+  if (!line?.thinking) { clocks.delete(id); return; }
+  const c = clocks.get(id);
+  if (c?.key === line.key) c.last = now; else clocks.set(id, { key: line.key, since: now, last: now });
+}
+
+/** What the count shows: tokens, time thinking, and a hint once updates have stopped. */
+export function thinkingMeter(line, c, now) {
+  const stalled = now - c.last >= STALL_MS;
+  const text = [line.count, now - c.since >= 1000 ? span(now - c.since) : null, stalled ? `no updates for ${span(now - c.last)}` : null].filter(Boolean).join(' · ');
+  return { text, stalled };
 }
 
 /** The end of what is being written: the line shows its newest words. */
@@ -132,6 +151,8 @@ export function createPacer(io, { hold = 1000, out = 180 } = {}) {
 /** el: the strip's element; selected(): the session the Events list shows. */
 export function createLiveStrip(el, selected) {
   const views = new Map();   // session id -> latest live view
+  const clocks = new Map();  // session id -> the thinking block's { key, since, last } (noteThinking)
+  let ticking = null;        // the once-a-second redraw, while thinking shows
   const row = { key: null, start: 0, shown: null };
   let ctx = null;
   /** How many leading characters of s fit the body's width, measured in its font. */
@@ -163,17 +184,31 @@ export function createLiveStrip(el, selected) {
     now: () => performance.now(),
     later: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
   }, { out: 180 });
+  function drawCount(line, id) {
+    const c = line.thinking && clocks.get(id);
+    const m = c ? thinkingMeter(line, c, performance.now()) : { text: line.count || '', stalled: false };
+    count.textContent = m.text; count.hidden = !m.text;
+    count.classList.toggle('lv-stalled', m.stalled);
+  }
+  function tick(on) {
+    if (on && !ticking) ticking = setInterval(() => {
+      const id = selected(), line = liveLine(views.get(id));
+      if (line) drawCount(line, id);
+    }, 1000);
+    else if (!on && ticking) { clearInterval(ticking); ticking = null; }
+  }
   function render() {
     const id = selected();
     const line = liveLine(views.get(id));
     el.hidden = !line;
+    tick(!!line?.thinking);
     if (!line) { el.replaceChildren(); built = false; row.key = null; pacer.reset(); body.textContent = ''; body.classList.remove('lv-out'); return; }
     if (!built) { el.replaceChildren(ico, head, body, count); built = true; }
     const tip = line.count ? `${line.label} · ${line.count}` : line.label;
     if (icon !== line.icon) { ico.replaceChildren(glyph(line.icon)); icon = line.icon; }
     ico.setAttribute('aria-label', tip); ico.title = tip;
     head.textContent = line.head || ''; head.hidden = !line.head;
-    count.textContent = line.count || ''; count.hidden = !line.count;
+    drawCount(line, id);
     mono = !!line.mono; body.classList.toggle('mono', mono);
     const key = `${id}|${line.key}`;
     const block = key !== row.key;
@@ -187,10 +222,23 @@ export function createLiveStrip(el, selected) {
     update(v) {
       if (!v?.id) return;
       if (v.gone) views.delete(v.id); else views.set(v.id, v);
+      noteThinking(clocks, v.id, v.gone ? null : liveLine(v), performance.now());
       if (v.id === selected()) render();
     },
     /** A fresh connection: what is live now replaces what was. */
-    reset(list = []) { views.clear(); for (const v of list) if (v?.id) views.set(v.id, v); render(); },
+    reset(list = []) {
+      views.clear();
+      const known = new Map(clocks);
+      clocks.clear();
+      for (const v of list) {
+        if (!v?.id) continue;
+        views.set(v.id, v);
+        // A reconnect is not news from the model: a block already on the clock keeps its times.
+        const line = liveLine(v), c = known.get(v.id);
+        if (line?.thinking && c?.key === line.key) clocks.set(v.id, c); else noteThinking(clocks, v.id, line, performance.now());
+      }
+      render();
+    },
     render,
   };
 }

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { ClaudeDriver } from '../lib/harness/claude.mjs';
 import { Live, hookEvent, liveView } from '../lib/live.mjs';
 import { SessionIndex } from '../lib/sessions.mjs';
-import { liveLine, tail, nextRow, clean, createPacer } from '../public/livestrip.js';
+import { liveLine, tail, nextRow, clean, createPacer, noteThinking, thinkingMeter, STALL_MS } from '../public/livestrip.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-agent.mjs');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'deck-live-'));
@@ -209,4 +209,18 @@ test('createPacer: a new block skips the hold; reset drops what waits', () => {
   p.show('c', { fresh: true }); p.reset(); run(5000);
   assert.deepEqual(log, []);
   p.show('after'); assert.deepEqual(log, ['set after']);
+});
+
+test('thinking: the clock runs per block, and a hint appears only once updates stop', () => {
+  const clocks = new Map();
+  const line = { key: '0:thinking:', thinking: true, count: '~1.5k tokens' };
+  noteThinking(clocks, 's', line, 0);
+  assert.deepEqual(thinkingMeter(line, clocks.get('s'), 500), { text: '~1.5k tokens', stalled: false });
+  noteThinking(clocks, 's', line, 134_000);
+  assert.deepEqual(thinkingMeter(line, clocks.get('s'), 134_500), { text: '~1.5k tokens · 2m 14s', stalled: false });
+  assert.deepEqual(thinkingMeter(line, clocks.get('s'), 134_000 + STALL_MS), { text: '~1.5k tokens · 2m 24s · no updates for 10s', stalled: true });
+  noteThinking(clocks, 's', { ...line, key: '1:thinking:' }, 200_000);
+  assert.equal(clocks.get('s').since, 200_000);
+  noteThinking(clocks, 's', null, 201_000);
+  assert.equal(clocks.has('s'), false);
 });
