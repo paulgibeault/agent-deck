@@ -10,6 +10,14 @@
 //           stop · git · agent (delegate) · web (external) · muted (system) · err
 import { modelLabel } from './pricing.js';
 
+// By default the API sends no reasoning text; how long and how much is still known.
+function thoughtLine(ev) {
+  const ms = ev.inference?.thinkingMs, n = ev.usage?.output_tokens_details?.thinking_tokens;
+  const s = Math.round((ms || 0) / 1000);
+  const took = !(ms >= 1000) ? null : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  return ['Thought', took, n ? `~${n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n} tokens` : null].filter(Boolean).join(' · ');
+}
+
 // ------------------------------------------------------------ bash commands
 /**
  * Split a shell command into simple commands on unquoted ; && || | and
@@ -342,7 +350,7 @@ export function classify(ev) {
       ? { fam: 'said', icon: 'i-answer', label: 'Answer', text: ev.text, sans: true }
       : { fam: 'said', icon: 'i-said', label: 'Said', text: ev.text, sans: true };
     case 'thinking': return { fam: 'muted', icon: 'i-think', label: 'Thinking', sans: true,
-      text: ev.redacted ? 'Thought (redacted)' : ev.text ? ev.text : 'Thought (not recorded)' };
+      text: ev.redacted ? 'Thought (redacted)' : ev.text ? ev.text : thoughtLine(ev) };
     case 'prompt': return { fam: 'you', icon: 'i-user', label: 'You', text: ev.text };
     case 'queue': return ev.op === 'remove'
       ? { fam: 'muted', icon: 'i-x', label: 'Withdrawn', text: `Withdrawn: ${ev.text || 'queued message'}`, sans: true }
