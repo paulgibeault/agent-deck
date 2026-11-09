@@ -71,6 +71,7 @@ registerLaunchSection({
     let seq = 0;   // only the latest choice fills the briefing
     async function show(ws) {
       const my = ++seq;
+      ctx.workstreamChanged?.(ws);
       btn.replaceChildren(svgUse('i-workstream', 13), h('span', {}, ws ? nameOf(ws) : 'None'));
       btn.title = ws ? `${nameOf(ws)} · click to change` : 'Not in a workstream · click to pick one';
       btn.classList.toggle('none', !ws);
