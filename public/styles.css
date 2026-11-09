@@ -1513,6 +1513,7 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ev-live .lv-body { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ev-live .lv-body.mono { font-family: var(--mono); }
 .ev-live .lv-count { flex: none; font-variant-numeric: tabular-nums; }
+.ev-live .lv-count.lv-stalled { color: var(--fg); }
 /* Rows arrive whole and pulse: the old one fades out, the next fades in, then it holds still (livestrip.js createPacer). */
 .ev-live .lv-body { transition: opacity .3s ease-out; }
 .ev-live .lv-body.lv-out { opacity: 0; transition: opacity .18s ease-in; }

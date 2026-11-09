@@ -650,7 +650,7 @@ export function renderDetails(ev, detail, ctx) {
   if (ev.kind === 'text') {
     body.append(section('Assistant', { actions: [ctx.readAloud ? ib('i-speaker', 'Read aloud (r)', () => ctx.readAloud(ev), { size: 13 }) : null, copyBtn(ev.text)], ask: evSpec(null, 'this message') }, h('div', { class: 'md', html: markdown(ev.text) })));
   } else if (ev.kind === 'thinking') {
-    body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || '(not recorded: the transcript keeps only the signature for this block)')));
+    body.append(section('Thinking', { actions: [ev.text ? copyBtn(ev.text) : null], ask: ev.text ? evSpec(null, 'this reasoning') : null }, h('pre', { class: 'plain muted' }, ev.redacted ? '(redacted by the API)' : ev.text || `No reasoning text: the API does not send it unless asked.${ev.inference?.thinkingMs >= 1000 ? ` Thought for ${fmtMs(ev.inference.thinkingMs)}.` : ''}`)));
   } else if (ev.kind === 'prompt') {
     body.append(section(ev.to ? `For the subagent ${ev.to.title || ev.to.id}` : 'Prompt', { actions: [copyBtn(ev.text)], ask: evSpec('Prompt', 'this prompt') }, h('pre', { class: 'plain' }, ev.text)));
     if (ev.attachments?.length) body.append(section('Attachments', { actions: imageActs(ev, ev.attachments.filter(a => a.kind === 'image' && a.kept !== false)) }, renderPromptAttachments(ev)));

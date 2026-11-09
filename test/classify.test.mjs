@@ -83,7 +83,9 @@ test('classify gives every event a family, icon and body', () => {
   assert.equal(todo.text, '1/3 done · Doing b');
   assert.equal(classify({ kind: 'text', text: 'hi', answer: true }).icon, 'i-answer');
   assert.equal(classify({ kind: 'text', text: 'hi' }).icon, 'i-said');
-  assert.equal(classify({ kind: 'thinking', text: '' }).text, 'Thought (not recorded)');
+  assert.equal(classify({ kind: 'thinking', text: '' }).text, 'Thought');
+  assert.equal(classify({ kind: 'thinking', text: '', inference: { thinkingMs: 83_400 }, usage: { output_tokens_details: { thinking_tokens: 1840 } } }).text, 'Thought · 1m 23s · ~1.8k tokens');
+  assert.equal(classify({ kind: 'thinking', text: '', inference: { thinkingMs: 519 }, usage: { output_tokens_details: { thinking_tokens: 20 } } }).text, 'Thought · ~20 tokens');
   assert.equal(classify({ kind: 'system', error: true, text: 'overloaded' }).fam, 'err');
   assert.equal(classify({ kind: 'raw', text: '{}' }).fam, 'muted');
   assert.equal(mcpServer('plugin_engineering_github'), 'github');
