@@ -204,27 +204,6 @@ svg { flex: none; }
 .rail-search { padding: 0 12px 10px; }
 
 .tree { flex: 1 1 auto; min-height: 120px; overflow: auto; padding: 0 6px 8px; }
-/* The selected session's workstream fills the rail's spare room; a long session list squeezes it to its minimum. */
-.tree:has(+ .ws-dock:not([hidden])) { flex: 0 1 auto; }
-.ws-dock { flex: 1 1 180px; min-height: 140px; overflow: auto; display: flex; flex-direction: column; gap: 12px; margin: 0 8px 8px; padding: 10px 10px 12px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); font-size: 12px; color: var(--fg2); }
-.ws-dock[hidden] { display: none; }
-#deck.rail-min .ws-dock { display: none; }
-.ws-dock .wd-h { display: flex; align-items: center; gap: 7px; border: 0; background: none; padding: 0; text-align: left; font-size: 12.5px; font-weight: 600; color: var(--fg); cursor: pointer; }
-.ws-dock .wd-h:hover span { text-decoration: underline; }
-.ws-dock .wd-h svg { color: var(--info-fg); flex: none; }
-.ws-dock .wd-st { margin-left: auto; font-size: 10.5px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-.ws-dock .wd-next { display: flex; gap: 6px; margin: 0; line-height: 1.45; color: var(--fg); }
-.ws-dock .wd-next svg { flex: none; margin-top: 3px; color: var(--ok-fg); }
-.ws-dock .wd-s h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 5px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.ws-dock ul, .ws-dock ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ws-dock li { line-height: 1.4; }
-.ws-dock ol li { display: flex; gap: 6px; }
-.ws-dock .wd-n { flex: none; font: 10.5px var(--mono); color: var(--muted); padding-top: 1px; }
-.ws-dock .wd-more { margin: 4px 0 0; font-size: 11px; color: var(--muted); }
-.ws-dock .wd-ss button { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; padding: 2px 0; text-align: left; font-size: 12px; color: var(--fg2); cursor: pointer; min-width: 0; }
-.ws-dock .wd-ss button span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ws-dock .wd-ss button:hover { color: var(--fg); }
-.ws-dock .wd-links { display: flex; flex-wrap: wrap; gap: 4px; }
 .bucket h3 { display: flex; align-items: center; gap: 6px; margin: 0; padding: 10px 6px 4px 4px; }
 .bk-t { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 2px 4px; font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .bk-t .tri { transition: transform .12s; }
@@ -1519,8 +1498,6 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ev-live .lv-body.lv-out { opacity: 0; transition: opacity .18s ease-in; }
 .ev-live .lv-head[hidden], .ev-live .lv-count[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .ev-live .lv-ico { animation: none; } .ev-live .lv-body, .ev-live .lv-body.lv-out { transition: none; } }
-.ws-dock .wd-s ul:not(.wd-ss) { gap: 6px; }
-.ws-dock .wd-s ul:not(.wd-ss) li { padding-left: 8px; border-left: 2px solid var(--line2); }
 
 /* ---------------------------------------------------------------- flight recorder (flightrec.js) */
 /* One row above the event list: chips coloured by family and sized by duration, the context line behind, milestones on top. */

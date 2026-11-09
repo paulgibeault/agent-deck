@@ -23,8 +23,7 @@ import { workstreamsChanged } from './wspicker.js';
 import { miniChip as ghMini, watchRefs } from './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
-import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession, openWorkstream } from './home.js';
-import { initWsDock, wsDockShow, wsDockChanged } from './wsdock.js';
+import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
 import { wrappedFilter } from './wrapup.js';
 import { createLiveStrip } from './livestrip.js';
 import { buildFlight, flightStrip, createFlightPanel, flightDigest } from './flightrec.js';
@@ -185,7 +184,6 @@ function connect() {
   es.addEventListener('hello', () => api.get('/api/live').then(l => liveStrip.reset(l)).catch(() => {}));
   es.addEventListener('hello', () => starsReconnect()); // reload stars changed while we were away
   es.addEventListener('workstreams.changed', homeWorkstreamsChanged);
-  es.addEventListener('workstreams.changed', (e) => { let d = null; try { d = JSON.parse(e.data); } catch { /* none */ } wsDockChanged(d, state.byId.get(state.selected)); });
   es.addEventListener('hello', homeWorkstreamsChanged);
 }
 function setConn(on) {
@@ -1275,7 +1273,6 @@ $('overview').addEventListener('click', (e) => {
 
 function goOverview() {
   rememberBrief();
-  wsDockShow(null);
   state.selected = null; state.cursor = null;
   prefs.selected = null; savePrefs();
   showView('sessions');
@@ -1290,8 +1287,6 @@ registerView('sessions', {
   unmount: () => { $('overview').hidden = true; $('session-view').hidden = true; },
 });
 showView('sessions');
-// The selected session's workstream, in the rail under the session list.
-initWsDock({ api, byId: (id) => state.byId.get(id), sigOf, open: (id) => select(id), openWorkstream });
 
 // Home (home.js): workstream cards over the deck's live sessions.
 initHome({
@@ -1319,7 +1314,6 @@ async function select(id) {
   prefs.selected = id; savePrefs();
   showView('sessions');
   $('overview').hidden = true; $('session-view').hidden = false;
-  wsDockShow(state.byId.get(id));
   renderTree();
   reportView();
   renderHeader();
