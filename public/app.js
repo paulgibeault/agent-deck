@@ -4,6 +4,7 @@ import { renderRow, renderDetails, renderDiffDetails, inferenceCard, h, fmtToken
 import { activitySince, milestoneOf, CADENCE, WEIGHT } from './activity.js';
 import { NOTE_KIND, notesOf, liveNotes, dismissNote, seenItems, markSeen, itemKey } from './briefnotes.js';
 import { agentTodos } from './todos.js';
+import { wsStyle } from './wscolor.js';
 import { FILTERS, FILTER_ALL, filterCat } from './classify.js';
 import { createFilesView, renderFileView } from './files.js';
 import { turnChanges, renderTurnList, renderTurnFileDiff } from './changes.js';
@@ -486,7 +487,9 @@ function sessRow(s, nested = false, depth = 1) {
   const sub = isAgent || nested ? (meta ? [meta] : null)
     : [h('span', { class: 'fld', title: s.cwd ? `Folder: ${tilde(s.cwd)}` : 'Folder' }, svgUse('i-folder', 11), s.project || '?'), meta ? ` · ${meta}` : null];
   // No native tooltips: the hover card says all of it.
-  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}`, style: depth > 1 ? `--depth:${depth}` : null, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}`,
+  // A thin edge in its workstream's color (wscolor.js), the same as on Home and the header chip.
+  const ws = !isAgent && !nested ? s.workstream?.slug : null;
+  const btn = h('button', { type: 'button', class: `sess${isAgent || nested ? ' agent' : ''}${s.id === state.selected ? ' selected' : ''}${phase === 'ended' && !isAgent ? ' dim' : ''}${ws ? ' ws-c' : ''}`, style: [depth > 1 ? `--depth:${depth}` : null, wsStyle(ws)].filter(Boolean).join(';') || null, dataset: { id: s.id }, 'aria-label': `${s.title || s.id} · ${st?.head || SIG_LABEL[sig]}${isAgent ? '' : ` · ${backendOf(s).label}`}`,
     // Drag onto a workstream card on Home to move it there (home.js).
     ...(isAgent || nested ? {} : { draggable: 'true', ondragstart: (e) => dragSession(e, s) }) },
     h('span', { class: `dot sig-${sig}${st?.quiet ? ' quiet' : ''}` }),
@@ -1294,6 +1297,8 @@ initHome({
   byId: (id) => state.byId.get(id),
   sigOf,
   briefOf: (id) => state.briefs.get(id)?.brief || null,
+  selected: () => state.selected ? state.byId.get(state.selected) : null,
+  newSession: (workstream) => openLaunch({ workstream }),
   backend: (s) => backendGlyph(sessionHarness(s)),
   // An event by id (a record's source), or by seq (a brief note's link).
   open: (id, eventId = null, seq = null) => {
@@ -2426,7 +2431,7 @@ function renderLaunchHarness(name, perm) {
 }
 $('ns-harness').addEventListener('change', (e) => renderLaunchHarness(e.target.value, $('ns-perm').value));
 
-function openLaunch() {
+function openLaunch({ workstream = null } = {}) {
   const dlg = $('new-session');
   if (dlg.open) return;
   const cwds = [...new Set([...state.snapshot.active, ...state.snapshot.recent].map(s => s.cwd).filter(Boolean))].slice(0, 20);
@@ -2435,7 +2440,7 @@ function openLaunch() {
   delete $('ns-cwd').dataset.once;
   cwdChosen = false;
   // Before the sections open and cwdSent is set: nothing has to follow this one.
-  const launchWs = state.byId.get(state.selected)?.workstream || null;
+  const launchWs = workstream || state.byId.get(state.selected)?.workstream || null;
   launchSlug = launchWs?.slug || null;
   $('ns-cwd').value = launchFolders().mine[0] || $('ns-cwd').value;
   drawLaunchDirs();

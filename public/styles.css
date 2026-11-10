@@ -1620,3 +1620,10 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .ns-dir.mine { color: var(--fg2); }
 .ns-dir:hover { background: var(--hover); color: var(--fg2); }
 .ns-dir.on { background: var(--hover); color: var(--fg); }
+
+/* A workstream's identity color (wscolor.js sets --ws-h): even lightness across
+   hues, so no workstream shouts. Rail rows get a thin edge; the header chip's glyph takes it. */
+.ws-c, .hm-card { --ws: oklch(0.68 0.13 calc(var(--ws-h, 250) * 1deg)); }
+.sess.ws-c { position: relative; }
+.sess.ws-c::before { content: ''; position: absolute; left: 1px; top: 9px; bottom: 9px; width: 2.5px; border-radius: 2px; background: var(--ws); opacity: .85; }
+.sh-ws.ws-c > svg:first-child { color: var(--ws); }

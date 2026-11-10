@@ -8,8 +8,9 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { workstreamMap, cardStates, orderCards, unaffiliated, sessionNotes, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles, sessionRows, coalesce } from '../public/homemodel.js';
+import { workstreamMap, cardStates, orderCards, unaffiliated, sessionNotes, cardState, sectionOf, briefProgress, activityDays, QUIET_MS, parseNotes, parseRecord, parseSource, decisionGroups, groupFiles, sessionRows, coalesce } from '../public/homemodel.js';
 import { storeFor } from '../lib/workstreams.mjs';
+import { wsHue, wsStyle, HUES, assignHues } from '../public/wscolor.js';
 import { loadRoutes, matchRoute } from '../lib/routes.mjs';
 import { DeckState } from '../lib/deckstate.mjs';
 
@@ -228,4 +229,48 @@ test('the Vault tab route: the workstream’s pointers checked one by one, and i
   assert.equal(body.pointers[0].state, 'changed');
   await route.handler({}, {}, { m: [null, '..%2Fx'] });
   assert.equal(body.code, 400);
+});
+
+test('card state: failed, needs you, running, paused, new since you looked, quiet, idle; and the section each sits in', () => {
+  const list = [
+    { slug: 'err', updated: iso(5), ids: ['e1'] },
+    { slug: 'ask', updated: iso(5), ids: ['a1'] },
+    { slug: 'run', updated: iso(5), ids: ['w1'] },
+    { slug: 'pau', status: 'paused', updated: iso(5) },
+    { slug: 'new', updated: iso(5) },
+    { slug: 'old', updated: new Date(T - QUIET_MS - 60_000).toISOString() },
+    { slug: 'idle', updated: iso(30) },
+  ];
+  const sessions = [live('e1', 'error'), live('a1', 'input'), live('w1', 'working')];
+  const seen = (c) => c.slug === 'new' ? T - 10 * 60_000 : T;
+  const by = Object.fromEntries(cardStates(list, sessions, { seen, now: T }).map(c => [c.slug, c]));
+  assert.deepEqual(Object.fromEntries(Object.entries(by).map(([k, c]) => [k, c.state])),
+    { err: 'error', ask: 'input', run: 'working', pau: 'paused', new: 'fresh', old: 'quiet', idle: 'idle' });
+  assert.deepEqual(['err', 'ask', 'run', 'idle'].map(k => sectionOf(by[k])), ['needs', 'needs', 'running', 'rest']);
+  // A failure in a live session's brief marks the card as failed, even with the session itself fine.
+  assert.equal(cardState({ live: [], notes: { all: [{ n: { kind: 'failure' } }] }, needs: 0, flags: 1, running: 0, status: 'active' }), 'error');
+  assert.equal(cardStates([{ slug: 'x', updated: iso(5) }], [], { now: T })[0].state, 'idle', 'without seen, nothing reads as new');
+});
+
+test('card progress sums the live briefs; activity counts sessions per day', () => {
+  const briefs = { a: { done: ['x', 'y'], doing: ['z'], planned: [] }, b: { done: [], doing: [], planned: ['p', 'q'] }, c: { done: [], doing: [], planned: [] } };
+  assert.deepEqual(briefProgress([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'none' }], (id) => briefs[id] || null), { done: 2, doing: 1, todo: 2, sessions: 2 });
+  assert.equal(briefProgress([{ id: 'c' }], (id) => briefs[id]), null);
+  const day = 86_400_000;
+  const days = activityDays([{ startedAt: T - 2 * day, mtime: T }, { mtime: T - day }, { mtime: T - 30 * day }], T, 5);
+  assert.deepEqual(days, [0, 0, 1, 2, 1]);
+});
+
+test('workstream colors are stable per slug and spread out', () => {
+  assert.equal(wsHue('agent-deck'), wsHue('agent-deck'));
+  assert.ok(HUES.includes(wsHue('a')));
+  // Once the list is known, each takes a hue of its own; a new one leaves those already on their own hue alone.
+  const six = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'agent-deck'].map(slug => ({ slug }));
+  const before = assignHues(six);
+  assert.equal(new Set(before.values()).size, 6);
+  const after = assignHues([...six, { slug: 'zeta' }]);
+  assert.equal(new Set(after.values()).size, 7);
+  assert.equal(wsHue('zeta'), after.get('zeta'));
+  assert.equal(wsStyle(null), null);
+  assert.match(wsStyle('x'), /^--ws-h:\d+$/);
 });
