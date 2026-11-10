@@ -61,7 +61,7 @@ const time = (v) => { const t = typeof v === 'number' ? v : Date.parse(v); retur
  * With `briefOf`, also its live sessions' brief notes (sessionNotes, sessions
  * that need you first) and `flags`, how many of those are failures or questions.
  */
-export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstreamMap(list, sessions), briefOf = null, live: liveFn } = {}) {
+export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstreamMap(list, sessions), briefOf = null, live: liveFn, seen = null, now = Date.now() } = {}) {
   const bySlug = new Map();
   for (const s of sessions) {
     const slug = s && map.get(s.id);
@@ -72,12 +72,70 @@ export function cardStates(list, sessions = [], { sigOf = baseSig, map = workstr
     const mine = bySlug.get(w.slug) || [];
     const live = mine.filter(isLive).map(s => ({ s, sig: sigOf(s) }));
     const notes = sessionNotes([...live].sort((a, b) => NEEDS.has(b.sig) - NEEDS.has(a.sig)).map(x => x.s), briefOf, liveFn ? { live: liveFn } : {});
-    return { ...w, status: w.status || 'active', live, notes,
+    const c = { ...w, status: w.status || 'active', live, notes,
       flags: notes.all.filter(x => URGENT.has(x.n.kind)).length,
       needs: live.filter(x => NEEDS.has(x.sig)).length,
       running: live.filter(x => x.sig === 'working').length,
-      last: Math.max(time(w.updated), ...mine.map(s => time(s.statusUpdatedAt) || time(s.mtime))) };
+      last: Math.max(time(w.updated), ...mine.map(s => time(s.statusUpdatedAt) || time(s.mtime))),
+      progress: briefProgress(live.map(x => x.s), briefOf),
+      days: activityDays(mine, now) };
+    c.seenAt = seen?.(c) ?? null;
+    c.state = cardState(c, now);
+    return c;
   });
+}
+
+/** After this long with nothing happening, a workstream reads as quiet: its edge fades. */
+export const QUIET_MS = 7 * 86_400_000;
+/**
+ * One word for a card's color, most urgent first: error (a session failed, or a
+ * brief reports a failure), input (one waits on you, or a brief asks), working,
+ * paused, fresh (something happened since you last looked: `seenAt`), quiet
+ * (nothing for QUIET_MS), else idle. Done and archived keep their status.
+ */
+export function cardState(c, now = Date.now()) {
+  if (c.live?.some(x => x.sig === 'error') || c.notes?.all?.some(x => x.n.kind === 'failure')) return 'error';
+  if (c.needs > 0 || c.flags > 0) return 'input';
+  if (c.running > 0) return 'working';
+  if (c.status === 'done' || c.status === 'archived' || c.status === 'paused') return c.status;
+  if (c.seenAt != null && c.last > c.seenAt) return 'fresh';
+  if (c.last && now - c.last > QUIET_MS) return 'quiet';
+  return 'idle';
+}
+
+/** Where a card sits on Home: needs you, running, or the rest. */
+export const sectionOf = (c) => c.state === 'error' || c.state === 'input' ? 'needs' : c.state === 'working' ? 'running' : 'rest';
+
+/**
+ * The live sessions' briefs summed: how many things are done, in progress and
+ * still planned. Null when no brief lists anything.
+ */
+export function briefProgress(ss, briefOf) {
+  if (!briefOf) return null;
+  const p = { done: 0, doing: 0, todo: 0, sessions: 0 };
+  for (const s of ss || []) {
+    const b = briefOf(s.id); if (!b) continue;
+    const n = [b.done?.length || 0, b.doing?.length || 0, b.planned?.length || 0];
+    if (!n[0] && !n[1] && !n[2]) continue;
+    p.done += n[0]; p.doing += n[1]; p.todo += n[2]; p.sessions++;
+  }
+  return p.sessions ? p : null;
+}
+
+/** Activity per day over the last `n` days, oldest first: how many of the sessions ran on each (start through last write). */
+export function activityDays(ss, now = Date.now(), n = 14) {
+  const out = new Array(n).fill(0);
+  const day = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const today = day(now);
+  for (const s of ss || []) {
+    const end = time(s.mtime) || time(s.statusUpdatedAt); if (!end) continue;
+    const start = Math.min(end, time(s.startedAt) || end);
+    for (let i = 0; i < n; i++) {
+      const d0 = today - (n - 1 - i) * 86_400_000;
+      if (start < d0 + 86_400_000 && end >= d0) out[i]++;
+    }
+  }
+  return out;
 }
 
 /**

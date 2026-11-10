@@ -1,7 +1,7 @@
 // public/sw.js — keeps the app shell available when the backend is down, so
 // the installed app can open and offer to launch it. Network first: a running
 // server always wins and refreshes the copy. /api/* is never touched.
-const CACHE = 'deck-shell-v27';
+const CACHE = 'deck-shell-v28';
 // One file per line: features add theirs without colliding on one long line.
 const SHELL = [
   '/',
@@ -33,6 +33,7 @@ const SHELL = [
   '/wsattach.js',
   '/home.js',
   '/homemodel.js',
+  '/wscolor.js',
   '/briefnotes.js',
   '/todos.js',
   '/home.css',

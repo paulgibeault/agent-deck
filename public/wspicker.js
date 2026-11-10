@@ -12,6 +12,7 @@
 // Enter picks only a highlighted match; None and "+ New" take an arrow or a click.
 // rankWorkstreams, the key handling and launchChoice have no DOM, so the tests check them.
 import { h, svgUse } from './events.js';
+import { assignHues } from './wscolor.js';
 
 const STATUS_RANK = { active: 0, paused: 1, done: 2, archived: 3 };
 const words = (q) => String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -80,7 +81,7 @@ async function call(path, method = 'GET', body) {
 let cache = null;   // a promise of { sync, workstreams }, until something changes
 /** GET /api/workstreams, shared until a workstreams.changed (workstreamsChanged) drops it. */
 export function loadWorkstreams() {
-  cache ||= call('/api/workstreams').catch((e) => { cache = null; throw e; });
+  cache ||= call('/api/workstreams').then((d) => { assignHues(d?.workstreams); return d; }).catch((e) => { cache = null; throw e; });
   return cache;
 }
 const listeners = new Set();

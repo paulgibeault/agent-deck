@@ -1,4 +1,4 @@
-/* public/home.css — Home (home.js): the workstream grid, its cards, the
+/* public/home.css — Home (home.js): the workstream stack, its cards, the
    expanded view, and the Home/Sessions toggle. Tokens from styles.css. */
 
 /* The toggle, beside the status dot. */
@@ -14,37 +14,81 @@
 .hm-warn { color: var(--need-fg); }
 .hm-q { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* 1 to 4 columns: a card is at least 260px, and never narrower than a quarter. */
-.hm-grid { --gap: 14px; display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(max(260px, calc((100% - 3 * var(--gap)) / 4)), 1fr)); align-items: start; }
-.hm-card { position: relative; display: flex; flex-direction: column; gap: 7px; min-width: 0; padding: 13px 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg1); text-align: left; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+/* A vertical stack of full-width cards. Each card's left edge carries its
+   state (needs you, failed, running, new since you looked, paused, quiet);
+   the swatch by the title is the workstream's own color (wscolor.js). */
+.hm-grid { display: flex; flex-direction: column; gap: 8px; }
+.hm-sec-h { margin: 10px 0 -2px 2px; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.hm-sec-h:first-child { margin-top: 0; }
+.hm-sec-h.sec-needs { color: var(--need-fg); }
+.hm-card { --edge: var(--line2); position: relative; display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 10px 14px 10px 18px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg1); text-align: left; cursor: pointer; overflow: hidden; transition: border-color .12s, box-shadow .12s; }
+.hm-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--edge); }
 .hm-card:hover { border-color: var(--line2); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
-.hm-card.needs { border-color: color-mix(in srgb, var(--need) 55%, var(--line)); box-shadow: inset 3px 0 0 var(--need); }
-.hm-card.st-paused, .hm-card.st-done, .hm-card.st-archived { background: var(--bg2); }
+.hm-card.s-error { --edge: var(--err); border-color: color-mix(in srgb, var(--err) 40%, var(--line)); background: color-mix(in srgb, var(--err) 5%, var(--bg1)); }
+.hm-card.s-input { --edge: var(--need); border-color: color-mix(in srgb, var(--need) 45%, var(--line)); background: color-mix(in srgb, var(--need) 6%, var(--bg1)); }
+.hm-card.s-working { --edge: var(--work); }
+.hm-card.s-working::before { animation: hm-edge 1.6s ease-in-out infinite; }
+.hm-card.s-fresh { --edge: var(--ok); }
+.hm-card.s-paused { --edge: var(--turn); background: var(--bg2); }
+.hm-card.s-quiet { --edge: var(--line); }
+.hm-card.s-quiet .hm-t { color: var(--fg2); }
+.hm-card.s-done, .hm-card.s-archived { --edge: var(--line); background: var(--bg2); }
 .hm-card.st-done .hm-t, .hm-card.st-archived .hm-t { color: var(--fg2); }
-.hm-c-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.hm-t { flex: 1; min-width: 0; margin: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes hm-edge { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .hm-card.s-working::before { animation: none; } }
+
+.hm-c-h { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 22px; }
+.hm-sw { flex: none; width: 9px; height: 9px; border-radius: 3px; background: var(--ws); }
+.hm-t { flex: 0 1 auto; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-fresh { flex: none; width: 6px; height: 6px; border-radius: 3px; background: var(--ok); }
 .hm-badges { display: inline-flex; gap: 4px; }
 .hm-badges:empty { display: none; }
+.hm-c-h .hm-prs { flex: 0 100 auto; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
 .hm-dots { display: inline-flex; align-items: center; gap: 1px; flex: none; }
 .hm-dot { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 8px; background: none; }
 .hm-dot:hover { background: var(--hover); }
 .hm-dot.big .dot { width: 11px; height: 11px; border-radius: 6px; }
-.hm-goal { margin: 0; color: var(--fg2); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hm-next { display: flex; gap: 5px; margin: 0; font-size: 12px; color: var(--fg); }
-.hm-next > svg { margin-top: 3px; color: var(--muted); }
+.hm-goal { margin: 0 0 0 17px; color: var(--fg2); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-next { display: flex; gap: 5px; margin: 0 0 0 13px; font-size: 12.5px; color: var(--fg); }
+.hm-next > svg { flex: none; margin-top: 3px; color: var(--muted); }
 .hm-next > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hm-prs { display: flex; flex-wrap: wrap; gap: 4px; }
 .hm-pr { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: 5px; background: var(--bg2); color: var(--fg2); font: 11px var(--mono); }
 .hm-pr:hover { text-decoration: none; background: var(--bg3); }
-.hm-f { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 11px; color: var(--muted); }
-.hm-st { text-transform: lowercase; }
-.hm-st.st-paused { color: var(--turn-fg); }
-.hm-ago { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hm-counts { display: inline-flex; gap: 9px; }
+
+/* Live sessions: a pill each (dot and title), dots alone past three; then brief flags and the counts. */
+.hm-c-l { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 2px 0 0 13px; font-size: 11px; color: var(--muted); }
+.hm-pills { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.hm-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 240px; height: 22px; padding: 0 9px 0 7px; border: 1px solid var(--line); border-radius: 11px;
+  background: var(--bg1); color: var(--fg); font: 12px var(--sans); cursor: pointer; }
+.hm-pill:hover { background: var(--hover); border-color: var(--line2); }
+.hm-pill .dot { flex: none; }
+.hm-pill-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-pill.sig-input { border-color: color-mix(in srgb, var(--need) 55%, var(--line)); color: var(--need-fg); }
+.hm-pill.sig-error { border-color: color-mix(in srgb, var(--err) 50%, var(--line)); color: var(--err-fg); }
+.hm-counts { display: inline-flex; gap: 9px; flex: none; font-size: 11px; color: var(--muted); }
 .hm-n { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
 .hm-n svg { opacity: .8; }
 
+/* Right of the title: the last 14 days of activity, the age, and on hover the actions. */
+.hm-spark { display: inline-flex; align-items: flex-end; gap: 1.5px; flex: none; height: 14px; }
+.hm-spark i { width: 3px; height: calc(2px + 12px * var(--v)); border-radius: 1px; background: color-mix(in srgb, var(--ws) calc(25% + 75% * var(--v)), var(--line)); }
+.hm-st { text-transform: lowercase; font-size: 11px; color: var(--muted); }
+.hm-st.st-paused { color: var(--turn-fg); }
+.hm-ago { min-width: 24px; text-align: right; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hm-acts { display: inline-flex; gap: 2px; flex: none; margin-right: -6px; }
+.hm-acts .ib { width: 22px; height: 22px; opacity: 0; }
+.hm-card:hover .hm-acts .ib, .hm-card:focus-within .hm-acts .ib { opacity: .8; }
+.hm-acts .ib:hover, .hm-acts .ib:focus-visible { opacity: 1; }
+@media (hover: none) { .hm-acts .ib { opacity: .7; } }
+
+/* The live sessions' briefs summed: done, in progress, to do, along the card's foot. */
+.hm-prog { position: absolute; left: 4px; right: 0; bottom: 0; display: flex; height: 3px; opacity: .85; }
+.hm-prog .p-done { background: var(--ok); } .hm-prog .p-doing { background: var(--work); } .hm-prog .p-todo { background: var(--line2); }
+
 /* Unaffiliated: a short list of sessions, each with Assign. */
+.hm-un, .hm-new { --edge: transparent; }
 .hm-un { cursor: default; background: transparent; border-style: dashed; }
 .hm-un:hover { box-shadow: none; }
 .hm-un-l { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -56,7 +100,7 @@
 .hm-pick:popover-open { display: flex; flex-direction: row; gap: 6px; width: auto; align-items: center; }
 
 /* + New workstream, and its inline form. */
-.hm-new { flex-direction: row; align-items: center; justify-content: center; gap: 6px; min-height: 64px; border-style: dashed; background: transparent; color: var(--muted); font-size: 12.5px; }
+.hm-new { flex-direction: row; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding-left: 14px; border-style: dashed; background: transparent; color: var(--muted); font-size: 12.5px; }
 .hm-new:hover { color: var(--fg); }
 form.hm-new { flex-direction: column; align-items: stretch; cursor: default; color: var(--fg); }
 form.hm-new .field { width: 100%; font-family: var(--sans); }
@@ -64,7 +108,7 @@ form.hm-new.busy { opacity: .6; pointer-events: none; }
 .hm-new-a { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* First use: the repo. */
-.hm-setup { grid-column: 1 / -1; max-width: 620px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg1); display: flex; flex-direction: column; gap: 12px; }
+.hm-setup { max-width: 620px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg1); display: flex; flex-direction: column; gap: 12px; }
 .hm-setup h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
 .hm-setup p { margin: 0; line-height: 1.5; }
 .hm-setup code, .hm-cmd { font: 12px var(--mono); }
@@ -145,3 +189,7 @@ form.hm-new.busy { opacity: .6; pointer-events: none; }
 .hm-row.hm-sn { grid-template-columns: 14px minmax(0, 1fr); min-height: 26px; }
 .hm-sn > svg { color: var(--nk); }
 .hm-sn-t { min-width: 0; font-size: 12.5px; }
+
+/* A narrow pane keeps the title: the sparkline and the PR chips give way first. */
+.hm-grid { container-type: inline-size; }
+@container (max-width: 560px) { .hm-spark, .hm-c-h .hm-prs { display: none; } }

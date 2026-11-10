@@ -1,4 +1,4 @@
-// public/home.js — Home (#33): a grid of workstream cards, each opening into a
+// public/home.js — Home (#33): a stack of workstream cards, each opening into a
 // full view with tabs, an Unaffiliated card for sessions in no workstream, and
 // the Home/Sessions toggle beside the status dot (key h). Everything drawn here
 // comes from the workstreams store and the deck's live sessions: no model calls.
@@ -7,7 +7,8 @@ import { h, ib, svgUse, ago, oneLine, markdown, basename, relPath } from './even
 import { registerView, showView, currentView } from './views.js';
 import { registerMenuItem } from './menu.js';
 import { openFile as vaultFile } from './vault.js';
-import { workstreamMap, cardStates, orderCards, unaffiliated, isLive, sessionNotes, parseNotes, parseSource, decisionGroups, groupFiles, sessionRows, coalesce, SHOWN } from './homemodel.js';
+import { workstreamMap, cardStates, orderCards, unaffiliated, isLive, sessionNotes, parseNotes, parseSource, decisionGroups, groupFiles, sessionRows, coalesce, sectionOf, SHOWN } from './homemodel.js';
+import { wsStyle, assignHues } from './wscolor.js';
 import { NOTE_KIND, noteCounts } from './briefnotes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -31,6 +32,25 @@ const enc = encodeURIComponent;
 const since = (t) => t ? ago(Date.now() - t) : '';
 const when = (t) => t ? new Date(t).toLocaleString() : '';
 const sessions = () => ctx?.sessions() || [];
+
+// ------------------------------------------------------------ since you last looked
+// slug → { at, decisions }: when you last had the workstream in front of you
+// (its card open, or one of its sessions open in the session view), and how
+// many decisions it had then. A card first seen counts as seen as it is.
+const SEEN_KEY = 'deck.wsSeen';
+let seenMap = null;
+const seenAll = () => { if (!seenMap) { try { seenMap = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}; } catch { seenMap = {}; } } return seenMap; };
+function markSeen(slug, decisions, at = Date.now()) {
+  if (!slug) return;
+  const m = seenAll(); const was = m[slug];
+  m[slug] = { at: Math.max(at, was?.at || 0), decisions: decisions ?? was?.decisions ?? 0 };
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(m)); } catch { /* private mode */ }
+}
+const seenOf = (c) => {
+  const m = seenAll();
+  if (!m[c.slug]) markSeen(c.slug, c.counts?.decisions || 0, c.last || Date.now());
+  return m[c.slug].at;
+};
 
 // ------------------------------------------------------------ hooks for other features
 const badges = [];
@@ -143,7 +163,7 @@ function syncToggle(home = currentView() === 'home') {
 }
 
 function build(pane) {
-  grid = h('div', { class: 'hm-grid', role: 'list' });
+  grid = h('div', { class: 'hm-grid hm-stack', role: 'list' });
   scroller = h('div', { class: 'hm-scroll' }, h('div', { class: 'hm-bar' }), grid);
   panel = h('div', { class: 'hm-x', hidden: true, role: 'dialog', 'aria-modal': 'false' });
   root = h('section', { id: 'home-view', class: 'home', 'aria-label': 'Home', hidden: true }, scroller, panel);
@@ -174,7 +194,7 @@ const load = coalesce(async () => {
   st.stale = false;
   try {
     const r = await call('/api/workstreams?cards=1');
-    st.list = r.workstreams || []; st.sync = r.sync || null;
+    st.list = r.workstreams || []; st.sync = r.sync || null; assignHues(st.list);
     if (!st.sync?.ready && !st.setup) st.setup = await call('/api/workstreams/setup').catch(e => ({ suggest: { error: e.message } }));
     st.loaded = true; st.error = null;
   } catch (e) { st.error = e.message; st.loaded = true; }
@@ -184,7 +204,13 @@ const load = coalesce(async () => {
 let rerender = 0;
 /** The deck's sessions changed (app.js renderTree): redraw from what's here, no fetch. */
 export function homeSessionsChanged() {
-  if (currentView() !== 'home' || rerender) return;
+  // Watching a session counts as looking at its workstream (at most every half minute).
+  if (currentView() !== 'home') {
+    const slug = ctx?.selected?.()?.workstream?.slug;
+    if (slug && document.visibilityState === 'visible' && Date.now() - (seenAll()[slug]?.at || 0) > 30_000) markSeen(slug, st.list.find(w => w.slug === slug)?.counts?.decisions);
+    return;
+  }
+  if (rerender) return;
   rerender = requestAnimationFrame(() => { rerender = 0; render(); if (st.open?.tab === 'sessions') drawTab(); else if (st.open?.tab === 'overview') redrawNotes(); });
 }
 let reloadT = null;
@@ -214,9 +240,17 @@ function render() {
   }
   const all = sessions();
   const map = workstreamMap(st.list, all);
-  const cards = orderCards(cardStates(st.list, all, { sigOf: ctx.sigOf, map, briefOf: ctx.briefOf }), { all: st.all });
+  const cards = orderCards(cardStates(st.list, all, { sigOf: ctx.sigOf, map, briefOf: ctx.briefOf, seen: seenOf }), { all: st.all });
   const un = unaffiliated(all, map, { sigOf: ctx.sigOf });
-  const out = cards.map(card);
+  // A thin labelled break where the stack moves from one kind of card to the next, once there are two kinds.
+  const kinds = new Set(cards.map(sectionOf));
+  const out = []; let prev = null;
+  for (const c of cards) {
+    const k = sectionOf(c);
+    if (kinds.size > 1 && k !== prev) out.push(h('h2', { class: `hm-sec-h sec-${k}`, dataset: { key: `~sec-${k}` } }, SECTION_LABEL[k]));
+    prev = k;
+    out.push(card(c));
+  }
   if (un.total) out.push(unaffiliatedCard(un));
   out.push(newCard());
   patch(grid, out);
@@ -330,27 +364,85 @@ function redrawNotes() {
 const COUNTS = [['decisions', 'i-check', 'decision', 'decisions'], ['notes', 'i-pencil', 'note', 'notes'], ['files', 'i-file', 'starred file', 'files'], ['sessions', 'i-sessions', 'session', 'sessions']];
 const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
+const SECTION_LABEL = { needs: 'Needs you', running: 'Running', rest: 'Not running' };
+const STATE_TIP = { error: 'Something failed', input: 'Waiting on you', working: 'Running', paused: 'Paused', fresh: 'New since you last looked',
+  quiet: 'Nothing for a week or more', done: 'Done', archived: 'Archived', idle: null };
+const MAX_PILLS = 3;
+
+/** A live session on a card: its dot and title, opening it; past MAX_PILLS, the dot alone. */
+function pill(s, sig) {
+  return h('button', { type: 'button', class: `hm-pill sig-${sig}`, title: `${s.title} · ${SIG_LABEL[sig] || sig}\nDrag onto another workstream to move it`, ...dragProps(s),
+    'aria-label': `Open ${s.title} (${SIG_LABEL[sig] || sig})`, onclick: (e) => { e.stopPropagation(); ctx.open(s.id); } },
+    h('span', { class: `dot sig-${sig}` }), h('span', { class: 'hm-pill-t' }, s.title));
+}
+function pills(live) {
+  if (!live.length) return null;
+  return h('span', { class: 'hm-pills' }, live.slice(0, MAX_PILLS).map(x => pill(x.s, x.sig)),
+    live.length > MAX_PILLS ? h('span', { class: 'hm-dots' }, live.slice(MAX_PILLS).map(x => dot(x.s, x.sig))) : null);
+}
+/** The last 14 days as small ticks: how many of its sessions ran each day. */
+function spark(days) {
+  const max = Math.max(...days);
+  if (!max) return null;
+  const on = days.filter(Boolean).length;
+  const day = (i) => new Date(Date.now() - (days.length - 1 - i) * 86_400_000).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return h('span', { class: 'hm-spark', 'aria-label': `Active ${on} of the last ${days.length} days`,
+    title: `Active ${on} of the last ${days.length} days\n${days.map((n, i) => n ? `${day(i)}: ${plural(n, 'session')}` : null).filter(Boolean).join('\n')}` },
+    days.map(n => h('i', { style: `--v:${n ? 0.25 + 0.75 * n / max : 0}` })));
+}
+/** The live sessions' briefs summed, as a thin bar along the card's foot. */
+function progressBar(p) {
+  if (!p) return null;
+  const parts = [['done', p.done, 'done'], ['doing', p.doing, 'in progress'], ['todo', p.todo, 'to do']].filter(([, n]) => n);
+  return h('div', { class: 'hm-prog', title: `From ${plural(p.sessions, 'live session')}’ briefs: ${parts.map(([, n, l]) => `${n} ${l}`).join(' · ')}` },
+    parts.map(([k, n]) => h('span', { class: `p-${k}`, style: `flex-grow:${n}` })));
+}
+/** What is new since you last looked, for the fresh mark's tooltip. */
+function freshTip(w) {
+  const was = seenAll()[w.slug];
+  const d = (w.counts?.decisions || 0) - (was?.decisions || 0);
+  return ['New since you last looked', d > 0 ? plural(d, 'new decision') : null, `last activity ${since(w.last)} ago`].filter(Boolean).join(' · ');
+}
+async function setStatus(w, status) {
+  try {
+    await call(`/api/workstreams/${enc(w.slug)}`, 'PATCH', { status });
+    const i = st.list.findIndex(x => x.slug === w.slug);
+    if (i >= 0) st.list[i] = { ...st.list[i], status };
+    render();
+  } catch (e) { toast(`Save failed: ${e.message}`); }
+}
+
 function card(w) {
   const c = { ...(w.counts || {}), sessions: Math.max(w.sessions || 0, w.counts?.records || 0) };
   const shown = COUNTS.filter(([k]) => c[k]);
   const live = [...w.live].sort((a, b) => (b.sig === 'input' || b.sig === 'error') - (a.sig === 'input' || a.sig === 'error'));
-  const el = h('article', { class: `hm-card${w.needs ? ' needs' : ''}${w.status !== 'active' ? ` st-${w.status}` : ''}`, role: 'listitem', tabindex: '0', dataset: { key: w.slug },
-    'aria-label': `${w.title}${w.needs ? ', needs you' : ''}`,
+  const paused = w.status === 'paused';
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(e); };
+  const counts = shown.length ? h('span', { class: 'hm-counts', title: shown.map(([k, , one]) => plural(c[k], one)).join(' · ') },
+    shown.map(([k, icon]) => h('span', { class: 'hm-n' }, svgUse(icon, 11), c[k]))) : null;
+  // The live row only when something is live; otherwise the counts ride on the title row.
+  const lrow = live.length || w.notes?.all.length;
+  const el = h('article', { class: `hm-card s-${w.state}${w.status !== 'active' ? ` st-${w.status}` : ''}`, style: wsStyle(w.slug), role: 'listitem', tabindex: '0', dataset: { key: w.slug },
+    'aria-label': [w.title, STATE_TIP[w.state]].filter(Boolean).join(', '),
     onclick: () => openCard(w.slug, el), onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); e.stopPropagation(); openCard(w.slug, el); } } },
     h('div', { class: 'hm-c-h' },
+      h('span', { class: 'hm-sw', 'aria-hidden': 'true' }),
       h('h3', { class: 'hm-t', title: w.title }, w.title),
+      w.state === 'fresh' ? h('span', { class: 'hm-fresh', title: freshTip(w) }) : null,
       h('span', { class: 'hm-badges' }, badges.map(fn => { try { return fn(w); } catch { return null; } })),
-      live.length ? h('span', { class: 'hm-dots' }, live.map(x => dot(x.s, x.sig, { big: x.sig === 'input' || x.sig === 'error' }))) : null),
-    w.goal ? h('p', { class: 'hm-goal', title: w.goal }, oneLine(w.goal, 300)) : null,
-    refRow(prsOf(w)),
-    w.next ? h('p', { class: 'hm-next', title: `Next step: ${w.next}` }, svgUse('i-right', 11), h('span', {}, oneLine(w.next, 400))) : null,
-    noteRow(w.notes),
-    h('footer', { class: 'hm-f' },
-      w.status !== 'active' ? h('span', { class: `hm-st st-${w.status}` }, w.status) : null,
-      h('span', { class: 'hm-ago', title: w.last ? `Last activity ${when(w.last)}` : null }, since(w.last)),
       h('span', { class: 'spacer' }),
-      shown.length ? h('span', { class: 'hm-counts', title: shown.map(([k, , one]) => plural(c[k], one)).join(' · ') },
-        shown.map(([k, icon]) => h('span', { class: 'hm-n' }, svgUse(icon, 11), c[k]))) : null));
+      refRow(prsOf(w)),
+      lrow ? null : counts,
+      spark(w.days || []),
+      w.status !== 'active' ? h('span', { class: `hm-st st-${w.status}` }, w.status) : null,
+      h('span', { class: 'hm-ago', title: [STATE_TIP[w.state], w.last ? `Last activity ${when(w.last)}` : null].filter(Boolean).join('\n') || null }, since(w.last)),
+      h('span', { class: 'hm-acts' },
+        ctx.newSession ? ib('i-plus', 'New session in this workstream', stop(() => ctx.newSession({ slug: w.slug, title: w.title })), { size: 12 }) : null,
+        w.status === 'active' || paused ? ib(paused ? 'i-play' : 'i-pause', paused ? 'Resume' : 'Pause', stop(() => setStatus(w, paused ? 'active' : 'paused')), { size: 12 }) : null)),
+    w.goal ? h('p', { class: 'hm-goal', title: w.goal }, oneLine(w.goal, 300)) : null,
+    w.next ? h('p', { class: 'hm-next', title: `Next step: ${w.next}` }, svgUse('i-right', 11), h('span', {}, oneLine(w.next, 400))) : null,
+    lrow ? h('div', { class: 'hm-c-l' }, pills(live), noteRow(w.notes), h('span', { class: 'spacer' }), counts) : null,
+    progressBar(w.progress));
   return dropTarget(el, w.slug);
 }
 
@@ -456,6 +548,7 @@ const motion = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 async function openCard(slug, fromEl) {
   st.scroll = scroller.scrollTop;
+  markSeen(slug, st.list.find(w => w.slug === slug)?.counts?.decisions);
   st.open = { slug, detail: null, tab: st.open?.slug === slug ? st.open.tab : 'overview', extra: {} };
   panel.hidden = false; scroller.inert = true;
   panel.replaceChildren(h('div', { class: 'hm-x-load muted' }, 'Loading…'));

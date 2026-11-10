@@ -4,6 +4,7 @@
 // workstream. Registers itself; app.js imports it, forwards workstreams.changed
 // and asks railFilter() which sessions to show. The picker is wspicker.js.
 import { h, svgUse, ib } from './events.js';
+import { wsStyle } from './wscolor.js';
 import { registerLaunchSection } from './launch.js';
 import { registerHeaderSlot } from './header.js';
 import { openWorkstreamPicker, loadWorkstreams, onWorkstreamsChange, launchChoice } from './wspicker.js';
@@ -115,7 +116,7 @@ registerHeaderSlot('workstream', (ctx) => {
   if (ctx.act.refresh) redraws.add(ctx.act.refresh);   // the same function each time (app.js renderHeader)
   if (isAgent) {
     const ws = s.workstream || ctx.session(s.parentId)?.workstream;
-    return ws ? h('span', { class: 'sh-ws', title: `Workstream ${nameOf(ws)} (its parent session’s)` }, svgUse('i-workstream', 13), h('span', {}, nameOf(ws))) : null;
+    return ws ? h('span', { class: 'sh-ws ws-c', style: wsStyle(ws.slug), title: `Workstream ${nameOf(ws)} (its parent session’s)` }, svgUse('i-workstream', 13), h('span', {}, nameOf(ws))) : null;
   }
   const ws = s.workstream;
   const homeOpen = async () => { const m = await homeModule(); m?.openWorkstream?.(ws.slug); };
@@ -127,7 +128,7 @@ registerHeaderSlot('workstream', (ctx) => {
   });
   if (!ws) return known.ready ? ib('i-workstream', 'Assign workstream', (e) => pick(e.currentTarget), { cls: 'sh-ws-add', size: 13, 'aria-haspopup': 'dialog' }) : null;
   // The chip is a picker: click to move the session to another workstream (or none); opening it on Home is a row in it.
-  return h('button', { type: 'button', class: 'sh-ws sh-ws-pick', 'aria-haspopup': 'dialog', title: `Workstream ${nameOf(ws)}\nClick to change it or open it on Home`, onclick: (e) => pick(e.currentTarget) },
+  return h('button', { type: 'button', class: 'sh-ws sh-ws-pick ws-c', style: wsStyle(ws.slug), 'aria-haspopup': 'dialog', title: `Workstream ${nameOf(ws)}\nClick to change it or open it on Home`, onclick: (e) => pick(e.currentTarget) },
     svgUse('i-workstream', 13), h('span', {}, nameOf(ws)), svgUse('i-down', 9));
 }, { replace: true });
 
