@@ -1629,3 +1629,4 @@ table.bg-tbl .bg-act { max-width: 0; width: 25%; overflow: hidden; text-overflow
 .sess.ws-c { position: relative; }
 .sess.ws-c::before { content: ''; position: absolute; left: 1px; top: 9px; bottom: 9px; width: 2.5px; border-radius: 2px; background: var(--ws); opacity: .85; }
 .sh-ws.ws-c > svg:first-child { color: var(--ws); }
+.d-wait { padding: 16px; font-size: 12.5px; }

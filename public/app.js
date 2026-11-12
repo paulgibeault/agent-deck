@@ -1314,15 +1314,17 @@ async function select(id) {
   if (!state.byId.has(id) && !state.cache.has(id)) return;
   const changed = state.selected !== id;
   if (changed) rememberBrief();
+  // An open details pane stays open across the switch, showing the same kind of thing for this session.
+  const carry = changed && state.detailsKey && !state.ask ? { flight: state.detailsKey === flightKey(), live: state.live } : null;
   state.selected = id;
-  if (changed) { state.cursor = null; state.briefAt = null; setLive(true, true); }
+  if (changed) { state.cursor = null; state.briefAt = null; setLive(carry ? carry.live : true, true); }
   prefs.selected = id; savePrefs();
   showView('sessions');
   $('overview').hidden = true; $('session-view').hidden = false;
   renderTree();
   reportView();
   renderHeader();
-  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); liveStrip.render(); flight.f = null; flightPanel.reset(); paintFlight(); }
+  if (changed) { $('vrows').replaceChildren(); carryDetails(carry); renderPerms(); liveStrip.render(); flight.f = null; flightPanel.reset(); paintFlight(); }
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
@@ -2607,7 +2609,7 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderFlight(); followLive(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderFlight(); followLive(); settleCarried(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 // A Bash command's category depends only on its input, so it's safe to keep.
@@ -3017,6 +3019,26 @@ function closeDetails() {
   document.querySelectorAll('#files tr.selected, #changes tr.selected').forEach(r => r.classList.remove('selected'));
 }
 $('details-close').onclick = closeDetails;
+
+/**
+ * The session changed with the details pane open: it stays open, on this
+ * session. The flight recorder stays the flight recorder (paintFlight fills it
+ * once the session loads); anything else waits for the rows, then shows the
+ * newest event: live follows it (followLive), otherwise settleCarried picks it once.
+ */
+function carryDetails(carry) {
+  if (!carry) { showDetailsEmpty(); return; }
+  const body = $('details-body');
+  if (carry.flight) { state.detailsKey = flightKey(); body.replaceChildren(flightPanel.el); }
+  else { state.detailsKey = `carry:${state.selected}`; body.replaceChildren(h('div', { class: 'muted d-wait' }, 'Loading…')); }
+  body.scrollTop = 0; syncDetailsPane(); applyRing();
+}
+function settleCarried() {
+  if (state.detailsKey !== `carry:${state.selected}` || state.live) return;
+  const ev = state.rows.find(r => r.ev.kind !== 'turn_end' && !r.ev.id.startsWith('loading:'))?.ev;
+  if (!ev) return;
+  state.cursor = ev.id; showEventDetails(ev);
+}
 
 // While live, an open details pane tracks the newest event in the stream.
 function followLive() {
