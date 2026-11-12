@@ -2453,6 +2453,7 @@ function openLaunch({ workstream = null } = {}) {
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
   cwdSent = $('ns-cwd').value.trim();
+  checkFolder(cwdSent);
   launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected, workstream: launchWs, workstreamChanged: launchWorkstream });
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
@@ -2528,7 +2529,26 @@ $('ns-cancel').onclick = () => $('new-session').close();
 // Sections that depend on the folder (worktrees, workstreams) follow it as it changes.
 // Once per settled value: typing waits for a pause, a pick or a set value goes at once.
 let cwdTimer = null, cwdSent = null;
-const cwdNow = () => { clearTimeout(cwdTimer); const v = $('ns-cwd').value.trim(); if (v !== cwdSent) { cwdSent = v; launchCwdChanged(v); } };
+const cwdNow = () => { clearTimeout(cwdTimer); const v = $('ns-cwd').value.trim(); if (v !== cwdSent) { cwdSent = v; checkFolder(v); launchCwdChanged(v); } };
+// A folder that is not there yet is made when the session starts; the note
+// says so first, and only a folder the note named goes out as `createCwd`.
+let folderAt = { cwd: null, state: null };
+const FOLDER_NOTE = {
+  missing: ['i-plus', 'New folder, made when the session starts'],
+  blocked: ['i-alert', 'A file is in the way: not a folder'],
+  relative: ['i-alert', 'Use a full path, or start it with ~/'],
+};
+async function checkFolder(cwd) {
+  folderAt = { cwd, state: null };
+  const note = $('ns-cwd-note');
+  if (!cwd) { note.hidden = true; return; }
+  const r = await api.get(`/api/folder?path=${encodeURIComponent(cwd)}`).catch(() => null);
+  if (folderAt.cwd !== cwd) return;   // the field moved on while this was out
+  folderAt.state = r?.state || null;
+  const n = FOLDER_NOTE[folderAt.state];
+  note.hidden = !n;
+  if (n) { note.className = `ns-cwd-note ${folderAt.state}`; note.title = r.path || ''; note.replaceChildren(svgUse(n[0], 11), n[1]); }
+}
 $('ns-cwd').addEventListener('change', cwdNow);
 $('ns-cwd').addEventListener('input', () => { cwdChosen = true; drawLaunchDirs(); clearTimeout(cwdTimer); cwdTimer = setTimeout(cwdNow, 350); });
 const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), clip: $('ns-clip'), file: $('ns-file'), drop: $('ns-form'), toast });
@@ -2537,6 +2557,7 @@ $('ns-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const hn = harnessOf($('ns-harness').value);
   let body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: hn.models ? $('ns-model').value : '', permissionMode: $('ns-perm').value, name: $('ns-name').value.trim(), harness: hn.name };
+  if (folderAt.cwd === body.cwd && folderAt.state === 'missing') body.createCwd = true;
   if (launchFiles.busy()) { toast('Still reading the attachments…'); return; }
   const files = launchFiles.payload();
   if (files.length) body.attachments = files;
@@ -2572,6 +2593,7 @@ $('ns-form').addEventListener('submit', async (e) => {
       : err.message;
     $('ns-err').hidden = false;
     $('ns-go').disabled = false; $('ns-go').textContent = 'Start session';
+    if (/^no such folder/.test(err.message)) checkFolder(body.cwd);   // the note shows; Start again makes it
   }
 });
 function openLaunched(id) {

@@ -1,7 +1,10 @@
 // lib/launch.mjs: hooks around POST /api/launch.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { onLaunch, beforeLaunch, failedLaunch, afterLaunch } from '../lib/launch.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { onLaunch, beforeLaunch, failedLaunch, afterLaunch, resolveCwd, folderState, makeFolder, unmakeFolder } from '../lib/launch.mjs';
 
 test('launch hooks: before patches the body in order, after sees the result, a failing after is logged only', async (t) => {
   const seen = [];
@@ -45,4 +48,33 @@ test('launch hooks: a later before that throws undoes the earlier ones', async (
   t.after(() => offs.forEach(off => off()));
   await assert.rejects(beforeLaunch({ cwd: '/r', prompt: 'go' }), /unknown workstream/);
   assert.equal(made.size, 0, 'the worktree the first hook made was undone');
+});
+
+test('launch folder: ~ is home, a relative path is refused', () => {
+  assert.equal(resolveCwd('~/work/new/', '/Users/p'), '/Users/p/work/new');
+  assert.equal(resolveCwd('~', '/Users/p'), '/Users/p');
+  assert.equal(resolveCwd(' /a/b/../c '), '/a/c');
+  assert.equal(resolveCwd('work/new'), null);
+  assert.equal(resolveCwd(''), null);
+});
+
+test('launch folder: a missing folder is made with its parents, and unmade only while empty', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-launch-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'file'), 'x');
+  assert.equal(folderState(root), 'dir');
+  assert.equal(folderState(path.join(root, 'a', 'b')), 'missing');
+  assert.equal(folderState(path.join(root, 'file')), 'blocked');
+  assert.equal(folderState(path.join(root, 'file', 'sub')), 'blocked');
+
+  const made = makeFolder(path.join(root, 'a', 'b'));
+  assert.deepEqual(made, [path.join(root, 'a', 'b'), path.join(root, 'a')]);
+  assert.equal(folderState(path.join(root, 'a', 'b')), 'dir');
+  unmakeFolder(made);
+  assert.ok(!fs.existsSync(path.join(root, 'a')));
+
+  const again = makeFolder(path.join(root, 'a', 'b'));
+  fs.writeFileSync(path.join(root, 'a', 'b', 'kept'), 'x');
+  unmakeFolder(again);
+  assert.ok(fs.existsSync(path.join(root, 'a', 'b', 'kept')), 'a folder something was written to stays');
 });
