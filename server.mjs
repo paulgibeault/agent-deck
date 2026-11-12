@@ -29,7 +29,7 @@ import { handoffPrompt, returnPrompt } from './lib/handoff.mjs';
 import { refsFromEvents, GitHubInfo } from './lib/ghrefs.mjs';
 import { DailyUsage } from './lib/daily.mjs';
 import { loadRoutes, matchRoute } from './lib/routes.mjs';
-import { onLaunch, beforeLaunch, failedLaunch, afterLaunch } from './lib/launch.mjs';
+import { onLaunch, beforeLaunch, failedLaunch, afterLaunch, resolveCwd, folderState, makeFolder, unmakeFolder } from './lib/launch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -377,15 +377,26 @@ async function route(req, res, url) {
     catch (e) { return send(res, e.code || 502, { error: e.message }); }
   }
 
+  // What is at a folder the New session dialog was given: 'dir', 'missing' (a launch can make it) or 'blocked'.
+  if (p === '/api/folder' && req.method === 'GET') {
+    const dir = resolveCwd(q.get('path'));
+    return send(res, 200, dir ? { path: dir, state: folderState(dir) } : { path: null, state: 'relative' });
+  }
+
   if (p === '/api/launch' && req.method === 'POST') {
-    let body;
+    let body, made = [];
     try {
       const raw = await readBody(req, PROMPT_BODY_LIMIT);
       // Checked before the hooks, so none of them acts on a launch that cannot start.
       if (!raw?.prompt?.trim() && !raw?.attachments?.length) throw new Error('a first prompt is required');
-      if (!raw.cwd || !fs.existsSync(raw.cwd) || !fs.statSync(raw.cwd).isDirectory()) throw new Error(`not a directory: ${raw.cwd}`);
+      const cwd = resolveCwd(raw.cwd);
+      if (!cwd) throw new Error(`the folder must be a full path: ${raw.cwd || '(none)'}`);
+      const at = folderState(cwd);
+      if (at === 'blocked') throw new Error(`not a folder: ${cwd}`);
+      if (at === 'missing' && !raw.createCwd) throw new Error(`no such folder: ${cwd}`);
+      if (at === 'missing') made = makeFolder(cwd);
       // Features shape the launch from their own fields (lib/launch.mjs).
-      body = await beforeLaunch(raw);
+      try { body = await beforeLaunch({ ...raw, cwd }); } catch (e) { unmakeFolder(made); throw e; }
     } catch (e) { return send(res, e.code === 413 ? 413 : 400, { error: e.message }); }
     let st;
     try {
@@ -393,6 +404,7 @@ async function route(req, res, url) {
       st = await agents.launch({ cwd, prompt, attachments, model: model || undefined, permissionMode: permissionMode || 'default', name: name || undefined, harness: harness || undefined });
     } catch (e) {
       await failedLaunch(body, e);
+      unmakeFolder(made);
       return send(res, 400, { error: e.message });
     }
     send(res, 200, st);

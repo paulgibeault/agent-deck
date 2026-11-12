@@ -316,8 +316,9 @@ voices then appear under Voice. More in Microsoft's
   whichever tab is open; its header line collapses it and keeps the queue
   count in view. For deck sessions there is one send button (⌘↩): it sends
   when Claude is idle and queues while it works. The deck owns the queue and
-  writes the next prompt only when the turn ends, so items can be moved,
-  sent next or removed. Click a queued prompt to reword it in place: ⌘↩ or
+  writes only when the turn ends, so items can be moved, sent next or
+  removed; then everything queued goes out together, as one message (a
+  message for a subagent still goes as its own relay). Click a queued prompt to reword it in place: ⌘↩ or
   clicking away saves, Esc cancels, and the deck holds that prompt back
   while you type so a turn ending mid-edit does not send the old wording.
   **Send now** (the bolt, ⇧⌘↩) stops the current turn and sends everything

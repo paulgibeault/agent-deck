@@ -24,7 +24,7 @@ import { workstreamsChanged } from './wspicker.js';
 import { miniChip as ghMini, watchRefs } from './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
-import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
+import { initHome, goHome, toggleHome, homeShowing, homeOpenWorkstream, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
 import { wrappedFilter } from './wrapup.js';
 import { createLiveStrip } from './livestrip.js';
 import { buildFlight, flightStrip, createFlightPanel, flightDigest } from './flightrec.js';
@@ -1314,15 +1314,17 @@ async function select(id) {
   if (!state.byId.has(id) && !state.cache.has(id)) return;
   const changed = state.selected !== id;
   if (changed) rememberBrief();
+  // An open details pane stays open across the switch, showing the same kind of thing for this session.
+  const carry = changed && state.detailsKey && !state.ask ? { flight: state.detailsKey === flightKey(), live: state.live } : null;
   state.selected = id;
-  if (changed) { state.cursor = null; state.briefAt = null; setLive(true, true); }
+  if (changed) { state.cursor = null; state.briefAt = null; setLive(carry ? carry.live : true, true); }
   prefs.selected = id; savePrefs();
   showView('sessions');
   $('overview').hidden = true; $('session-view').hidden = false;
   renderTree();
   reportView();
   renderHeader();
-  if (changed) { $('vrows').replaceChildren(); showDetailsEmpty(); renderPerms(); liveStrip.render(); flight.f = null; flightPanel.reset(); paintFlight(); }
+  if (changed) { $('vrows').replaceChildren(); carryDetails(carry); renderPerms(); liveStrip.render(); flight.f = null; flightPanel.reset(); paintFlight(); }
   try { await loadSession(id); }
   catch (e) { toast(`Load failed: ${e.message}`); return; }
   if (state.selected !== id) return;
@@ -2453,6 +2455,7 @@ function openLaunch({ workstream = null } = {}) {
   $('ns-go').disabled = false;
   $('ns-go').textContent = 'Start session';
   cwdSent = $('ns-cwd').value.trim();
+  checkFolder(cwdSent);
   launchOpen({ cwd: $('ns-x-cwd'), prompt: $('ns-x-prompt') }, { cwd: () => $('ns-cwd').value.trim(), selected: state.selected, workstream: launchWs, workstreamChanged: launchWorkstream });
   dlg.showModal();
   ($('ns-cwd').value ? $('ns-prompt') : $('ns-cwd')).focus();
@@ -2528,7 +2531,26 @@ $('ns-cancel').onclick = () => $('new-session').close();
 // Sections that depend on the folder (worktrees, workstreams) follow it as it changes.
 // Once per settled value: typing waits for a pause, a pick or a set value goes at once.
 let cwdTimer = null, cwdSent = null;
-const cwdNow = () => { clearTimeout(cwdTimer); const v = $('ns-cwd').value.trim(); if (v !== cwdSent) { cwdSent = v; launchCwdChanged(v); } };
+const cwdNow = () => { clearTimeout(cwdTimer); const v = $('ns-cwd').value.trim(); if (v !== cwdSent) { cwdSent = v; checkFolder(v); launchCwdChanged(v); } };
+// A folder that is not there yet is made when the session starts; the note
+// says so first, and only a folder the note named goes out as `createCwd`.
+let folderAt = { cwd: null, state: null };
+const FOLDER_NOTE = {
+  missing: ['i-plus', 'New folder, made when the session starts'],
+  blocked: ['i-alert', 'A file is in the way: not a folder'],
+  relative: ['i-alert', 'Use a full path, or start it with ~/'],
+};
+async function checkFolder(cwd) {
+  folderAt = { cwd, state: null };
+  const note = $('ns-cwd-note');
+  if (!cwd) { note.hidden = true; return; }
+  const r = await api.get(`/api/folder?path=${encodeURIComponent(cwd)}`).catch(() => null);
+  if (folderAt.cwd !== cwd) return;   // the field moved on while this was out
+  folderAt.state = r?.state || null;
+  const n = FOLDER_NOTE[folderAt.state];
+  note.hidden = !n;
+  if (n) { note.className = `ns-cwd-note ${folderAt.state}`; note.title = r.path || ''; note.replaceChildren(svgUse(n[0], 11), n[1]); }
+}
 $('ns-cwd').addEventListener('change', cwdNow);
 $('ns-cwd').addEventListener('input', () => { cwdChosen = true; drawLaunchDirs(); clearTimeout(cwdTimer); cwdTimer = setTimeout(cwdNow, 350); });
 const launchFiles = attachable({ input: $('ns-prompt'), tray: $('ns-files'), clip: $('ns-clip'), file: $('ns-file'), drop: $('ns-form'), toast });
@@ -2537,6 +2559,7 @@ $('ns-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const hn = harnessOf($('ns-harness').value);
   let body = { cwd: $('ns-cwd').value.trim(), prompt: $('ns-prompt').value, model: hn.models ? $('ns-model').value : '', permissionMode: $('ns-perm').value, name: $('ns-name').value.trim(), harness: hn.name };
+  if (folderAt.cwd === body.cwd && folderAt.state === 'missing') body.createCwd = true;
   if (launchFiles.busy()) { toast('Still reading the attachments…'); return; }
   const files = launchFiles.payload();
   if (files.length) body.attachments = files;
@@ -2572,6 +2595,7 @@ $('ns-form').addEventListener('submit', async (e) => {
       : err.message;
     $('ns-err').hidden = false;
     $('ns-go').disabled = false; $('ns-go').textContent = 'Start session';
+    if (/^no such folder/.test(err.message)) checkFolder(body.cwd);   // the note shows; Start again makes it
   }
 });
 function openLaunched(id) {
@@ -2585,7 +2609,7 @@ function scheduleRows(jump = false) {
   if (rowsTimer) { if (jump) rowsTimer.jump = true; return; }
   const t = { jump };
   rowsTimer = t;
-  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderFlight(); followLive(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
+  requestAnimationFrame(() => { rowsTimer = null; buildRows(); renderFlight(); followLive(); settleCarried(); renderRows(t.jump); if (state.tab === 'changes') renderTurns(); });
 }
 const isErr = (ev) => (ev.kind === 'tool' && ev.tool.isError) || !!ev.error;
 // A Bash command's category depends only on its input, so it's safe to keep.
@@ -2944,7 +2968,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'j') { e.preventDefault(); jumpToNarration(); return; }
   if (e.key === 'b') { e.preventDefault(); $('bell-pop').showPopover(); return; }
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
-  if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
+  if (e.key === 'n') { e.preventDefault(); openLaunch({ workstream: homeOpenWorkstream() }); return; }
   if (e.key === 'h') { e.preventDefault(); toggleHome(); return; }
   if (e.key === 'H') { e.preventDefault(); openHistory(); return; }
   if (e.key === 'p') { e.preventDefault(); openProcs(); return; }
@@ -2995,6 +3019,26 @@ function closeDetails() {
   document.querySelectorAll('#files tr.selected, #changes tr.selected').forEach(r => r.classList.remove('selected'));
 }
 $('details-close').onclick = closeDetails;
+
+/**
+ * The session changed with the details pane open: it stays open, on this
+ * session. The flight recorder stays the flight recorder (paintFlight fills it
+ * once the session loads); anything else waits for the rows, then shows the
+ * newest event: live follows it (followLive), otherwise settleCarried picks it once.
+ */
+function carryDetails(carry) {
+  if (!carry) { showDetailsEmpty(); return; }
+  const body = $('details-body');
+  if (carry.flight) { state.detailsKey = flightKey(); body.replaceChildren(flightPanel.el); }
+  else { state.detailsKey = `carry:${state.selected}`; body.replaceChildren(h('div', { class: 'muted d-wait' }, 'Loading…')); }
+  body.scrollTop = 0; syncDetailsPane(); applyRing();
+}
+function settleCarried() {
+  if (state.detailsKey !== `carry:${state.selected}` || state.live) return;
+  const ev = state.rows.find(r => r.ev.kind !== 'turn_end' && !r.ev.id.startsWith('loading:'))?.ev;
+  if (!ev) return;
+  state.cursor = ev.id; showEventDetails(ev);
+}
 
 // While live, an open details pane tracks the newest event in the stream.
 function followLive() {

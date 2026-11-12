@@ -136,6 +136,12 @@ export async function openWorkstream(slug) {
   openCard(slug, grid.querySelector(`[data-key="${CSS.escape(slug)}"]`));
 }
 /** h, and the toggle: Home ↔ the session view as it was left. */
+/** The workstream open on Home, if any: a new session (n) goes into it. */
+export function homeOpenWorkstream() {
+  if (currentView() !== 'home' || !st.open) return null;
+  const w = st.open.detail || st.list.find(x => x.slug === st.open.slug);
+  return { slug: st.open.slug, title: w?.title || st.open.slug };
+}
 export function toggleHome() { currentView() === 'home' ? ctx.back() : goHome(); }
 export const homeShowing = () => { try { return localStorage.getItem('deck.home') === '1'; } catch { return false; } };
 
@@ -437,7 +443,7 @@ function card(w) {
       w.status !== 'active' ? h('span', { class: `hm-st st-${w.status}` }, w.status) : null,
       h('span', { class: 'hm-ago', title: [STATE_TIP[w.state], w.last ? `Last activity ${when(w.last)}` : null].filter(Boolean).join('\n') || null }, since(w.last)),
       h('span', { class: 'hm-acts' },
-        ctx.newSession ? ib('i-plus', 'New session in this workstream', stop(() => ctx.newSession({ slug: w.slug, title: w.title })), { size: 12 }) : null,
+        ctx.newSession ? ib('i-plus', 'New session in this workstream', stop(() => ctx.newSession({ slug: w.slug, title: w.title })), { size: 12, cls: 'hm-add' }) : null,
         w.status === 'active' || paused ? ib(paused ? 'i-play' : 'i-pause', paused ? 'Resume' : 'Pause', stop(() => setStatus(w, paused ? 'active' : 'paused')), { size: 12 }) : null)),
     w.goal ? h('p', { class: 'hm-goal', title: w.goal }, oneLine(w.goal, 300)) : null,
     w.next ? h('p', { class: 'hm-next', title: `Next step: ${w.next}` }, svgUse('i-right', 11), h('span', {}, oneLine(w.next, 400))) : null,
@@ -599,6 +605,7 @@ function drawOpen() {
       h('span', { class: 'hm-badges' }, badges.map(fn => { try { return fn(w); } catch { return null; } })),
       live.length ? h('span', { class: 'hm-dots' }, live.map(s => { const sig = ctx.sigOf(s); return dot(s, sig, { big: sig === 'input' || sig === 'error' }); })) : null,
       h('span', { class: 'spacer' }),
+      ctx.newSession ? ib('i-plus', 'New session in this workstream (n)', () => ctx.newSession({ slug: w.slug, title: w.title }), { cls: 'hm-x-add', size: 15 }) : null,
       statusSel),
     editable('goal', w.goal, { cls: 'hm-x-goal', placeholder: 'The goal, in a line' }),
     h('nav', { class: 'tabs hm-tabs', role: 'tablist', 'aria-label': 'Workstream' }, TABS.map(([k, label]) =>

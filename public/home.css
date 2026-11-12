@@ -80,6 +80,7 @@
 .hm-acts { display: inline-flex; gap: 2px; flex: none; margin-right: -6px; }
 .hm-acts .ib { width: 22px; height: 22px; opacity: 0; }
 .hm-card:hover .hm-acts .ib, .hm-card:focus-within .hm-acts .ib { opacity: .8; }
+.hm-acts .ib.hm-add { opacity: .45; }   /* a new session is the card's main act: findable without hovering */
 .hm-acts .ib:hover, .hm-acts .ib:focus-visible { opacity: 1; }
 @media (hover: none) { .hm-acts .ib { opacity: .7; } }
 
@@ -124,6 +125,7 @@ form.hm-new.busy { opacity: .6; pointer-events: none; }
 .hm-x-h { display: flex; align-items: center; gap: 10px; padding: 14px 24px 2px; min-width: 0; }
 .hm-x-t { flex: 0 1 auto; min-width: 0; margin: 0; font-size: 18px; font-weight: 650; }
 .hm-ed.hm-x-goal { margin: 0 24px 8px 54px; color: var(--fg2); }
+.hm-x-add { width: 26px; height: 26px; color: var(--fg2); }
 .hm-status { height: 26px; border: 1px solid var(--line2); border-radius: 6px; background: var(--bg1); color: var(--fg2); font-size: 12px; padding: 0 6px; }
 .hm-tabs { padding: 0 24px; background: transparent; }
 .hm-x-b { flex: 1; min-height: 0; overflow: auto; padding: 16px 24px 32px; }
