@@ -24,7 +24,7 @@ import { workstreamsChanged } from './wspicker.js';
 import { miniChip as ghMini, watchRefs } from './ghchips.js';
 import { onWorktreeSetup } from './worktrees.js';
 import { starOf, fileStar, applyStarsChanged, onStarsChange, starsReconnect } from './stars.js';
-import { initHome, goHome, toggleHome, homeShowing, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
+import { initHome, goHome, toggleHome, homeShowing, homeOpenWorkstream, homeSessionsChanged, homeWorkstreamsChanged, dragSession } from './home.js';
 import { wrappedFilter } from './wrapup.js';
 import { createLiveStrip } from './livestrip.js';
 import { buildFlight, flightStrip, createFlightPanel, flightDigest } from './flightrec.js';
@@ -2966,7 +2966,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'j') { e.preventDefault(); jumpToNarration(); return; }
   if (e.key === 'b') { e.preventDefault(); $('bell-pop').showPopover(); return; }
   if (e.key === 'Escape') { if (state.ask) closeAsk(); else if (state.selected) goOverview(); return; }
-  if (e.key === 'n') { e.preventDefault(); openLaunch(); return; }
+  if (e.key === 'n') { e.preventDefault(); openLaunch({ workstream: homeOpenWorkstream() }); return; }
   if (e.key === 'h') { e.preventDefault(); toggleHome(); return; }
   if (e.key === 'H') { e.preventDefault(); openHistory(); return; }
   if (e.key === 'p') { e.preventDefault(); openProcs(); return; }
