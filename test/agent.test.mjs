@@ -170,10 +170,11 @@ test('sending to a session that is not running resumes it; queued prompts outliv
   assert.equal(st.alive, false);
   await new Promise(r => setTimeout(r, 300));
   assert.equal(again.publicState(id).alive, false, 'nothing starts on its own');
-  // Play starts it with the first; the second follows when that turn ends.
+  // Play starts it with everything queued, as one message.
   await again.queueOp(id, { op: 'resume' });
   st = await until(again, id, x => x.alive && x.status === 'idle' && !x.queue.length);
-  assert.equal(st.turns, 2);
+  assert.equal(st.turns, 1);
+  assert.match(fs.readFileSync(path.join(claudeDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`), 'utf8'), /"content":"queued a\\n\\nqueued b"/);
 
   // An idle process ends by itself; that is not an error.
   const quick = new AgentManager({ bin: FAKE, wakeable, idleMs: 150 });
@@ -255,6 +256,33 @@ test('subagents: live state, messages relayed by the session, stop_task, no idle
   await assert.rejects(agents.stopTask(id, 'nope'), /No task found/);
   // Nothing left running: the idle end applies again.
   await until(agents, id, s => !s.alive, 3000);
+});
+
+test('queued prompts go out together in one turn; a relay to a subagent and a prompt being edited wait', async (t) => {
+  const agents = new AgentManager({ bin: FAKE });
+  t.after(() => agents.stopAll());
+  const { id } = await agents.launch({ cwd, prompt: 'start a background agent' });
+  let st = await until(agents, id, s => s.status === 'idle' && s.subagents.afake0001);
+  const turns = st.turns;
+  agents.send(id, 'slow one');
+  agents.send(id, 'first thought');
+  agents.send(id, 'pass this on', undefined, { to: { id: 'afake0001', title: 'Fake helper' } });
+  agents.send(id, 'second thought');
+  const later = agents.send(id, 'still rewording');
+  agents.queueOp(id, { op: 'editing', itemId: later.id });
+  agents.interrupt(id);
+  await until(agents, id, s => s.status === 'idle' && s.held);
+  agents.queueOp(id, { op: 'resume' });
+  // The session's prompts as one turn, then the relay as its own; the one being edited stays.
+  st = await until(agents, id, s => s.status === 'idle' && s.queue.length === 1 && s.turns === turns + 3);
+  assert.equal(st.queue[0].text, 'still rewording');
+  const file = path.join(claudeDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
+  const prompts = fs.readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => r.type === 'last-prompt').map(r => r.lastPrompt);
+  assert.equal(prompts.at(-2), 'first thought\n\nsecond thought');
+  assert.match(prompts.at(-1), /SendMessage \(to: "afake0001"[;)][\s\S]*pass this on$/);
+  agents.queueOp(id, { op: 'edit', itemId: later.id, text: 'reworded' });
+  st = await until(agents, id, s => s.status === 'idle' && !s.queue.length);
+  assert.equal(st.turns, turns + 4);
 });
 
 test('wireText: prompts pass through, a subagent message asks for a verbatim relay', () => {
